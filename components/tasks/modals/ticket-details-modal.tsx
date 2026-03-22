@@ -138,11 +138,13 @@ const executionLabel = (value: TicketDetailsForm["executionState"]) =>
   value.replaceAll("_", " ").replace(/^\w/, (char) => char.toUpperCase());
 
 const EXECUTION_STEPS: Array<{ key: TicketExecutionState; label: string }> = [
-  { key: "pending", label: "Pending" },
-  { key: "queued", label: "Queued" },
-  { key: "picked_up", label: "Picked up" },
-  { key: "running", label: "Running" },
+  { key: "open", label: "Open" },
+  { key: "planning", label: "Planning" },
+  { key: "awaiting_plan_approval", label: "Awaiting approval" },
+  { key: "ready_to_execute", label: "Ready" },
+  { key: "executing", label: "Executing" },
   { key: "done", label: "Done" },
+  { key: "failed", label: "Failed" },
 ];
 
 function ExecutionStepper({
@@ -152,7 +154,7 @@ function ExecutionStepper({
   state: TicketExecutionState;
   onChange: (state: TicketExecutionState) => void;
 }) {
-  const isTerminal = state === "cancelled" || state === "failed";
+  const isTerminal = state === "failed" || state === "done";
   const activeIndex = EXECUTION_STEPS.findIndex((s) => s.key === state);
 
   return (
@@ -257,8 +259,11 @@ export function TicketDetailsModal({
   const statusLower = statusTitle.trim().toLowerCase();
   const inProgressLane = statusLower === "in progress" || statusLower === "doing";
   const hasRuntimeAgent = Boolean(form.assignedAgentId && form.assignedAgentId.trim());
-  const executableState = form.executionState === "pending" || form.executionState === "queued";
-  const canBePickedUp = inProgressLane && hasRuntimeAgent && executableState;
+  const executableState =
+    form.executionState === "pending" ||
+    form.executionState === "queued" ||
+    form.executionState === "ready_to_execute";
+  const canBePickedUp = inProgressLane && hasRuntimeAgent && (executableState || (form.executionMode === "plan" && form.planApproved));
 
   const visibleSubtasks = hideComplete
     ? subtasks.filter((subtask) => !subtask.completed)
@@ -537,218 +542,174 @@ export function TicketDetailsModal({
                         </div>
                       </div>
 
-                      {/* Execution timeline */}
-                      <div className="space-y-1.5">
-                        <Label>Execution</Label>
-                        <ExecutionStepper
-                          state={form.executionState}
-                          onChange={(state) => onChange({ executionState: state })}
-                        />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Execution mode</Label>
+                          <Select value={form.executionMode} onValueChange={(value) => onChange({ executionMode: value as TicketDetailsForm["executionMode"] })}>
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="auto">Auto</SelectItem>
+                              <SelectItem value="manual">Manual</SelectItem>
+                              <SelectItem value="plan">Plan first</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-0.5">
+                          {mode === "edit" ? (
+                            <>
+                              <Button type="button" variant="outline" size="sm" onClick={onRetryNow}>
+                                Retry now
+                              </Button>
+                              <Button type="button" variant="destructive" size="sm" onClick={onCancelExecution}>
+                                Cancel execution
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
                       </div>
 
-                      {/* Retry / Cancel — edit mode only */}
-                      {mode === "edit" ? (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button type="button" variant="outline" size="sm" onClick={onRetryNow}>
-                            Retry now
-                          </Button>
-                          <Button type="button" variant="destructive" size="sm" onClick={onCancelExecution}>
-                            Cancel execution
-                          </Button>
+                      {form.executionMode === "plan" ? (
+                        <div className={cn("rounded-lg border px-3 py-2 text-xs", form.planApproved ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600" : "border-amber-500/30 bg-amber-500/10 text-amber-700") }>
+                          {form.planApproved ? "Plan approved — ticket can proceed." : "Plan mode will generate a plan and wait for approval."}
                         </div>
                       ) : null}
 
-                      {/* Auto-run */}
-                      <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium leading-none">Auto-run when scheduled</p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Automatically picks up and runs this ticket when the date arrives.
-                            </p>
-                          </div>
-                          <Checkbox
-                            id="ticket-auto-approve"
-                            checked={form.autoApprove}
-                            onCheckedChange={(checked) => onChange({ autoApprove: checked === true })}
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ticket-labels">Labels</Label>
+                          <Input
+                            id="ticket-labels"
+                            value={form.tagsText}
+                            placeholder="bug, ui, backend"
+                            onChange={(event) => onChange({ tagsText: event.target.value })}
                           />
                         </div>
-                      </div>
 
-                      {/* Labels */}
-                      <div className="space-y-1.5">
-                        <Label htmlFor="ticket-labels">Labels</Label>
-                        <Input
-                          id="ticket-labels"
-                          value={form.tagsText}
-                          placeholder="bug, ui, backend"
-                          onChange={(event) => onChange({ tagsText: event.target.value })}
-                        />
-                      </div>
-
-                      <Separator />
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="space-y-1.5">
                           <Label>Assignees</Label>
-                          <span className="text-xs text-muted-foreground">
-                            {selectedAssignees.length} assigned
-                          </span>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="outline" className="w-full justify-between" size="sm">
+                                <span>
+                                  {selectedAssignees.length > 0
+                                    ? `${selectedAssignees.length} selected`
+                                    : "Assign people"}
+                                </span>
+                                <MoreHorizontalIcon className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-72">
+                              {assignees.map((assignee) => (
+                                <DropdownMenuItem key={assignee.id} onClick={() => toggleAssignee(assignee.id)}>
+                                  {assignee.name}
+                                  {form.assigneeIds.includes(assignee.id) ? " ✓" : ""}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
-                        <div className="grid grid-cols-1 gap-2 pb-1 sm:grid-cols-2">
-                          {assignees.map((assignee) => (
-                            <AssigneeMiniCard
-                              key={assignee.id}
-                              name={assignee.name}
-                              initials={assignee.initials}
-                              subtitle="Assigned agent"
-                              selected={form.assigneeIds.includes(assignee.id)}
-                              onClick={() => toggleAssignee(assignee.id)}
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="ticket-description">Description</Label>
+                          <Textarea
+                            id="ticket-description"
+                            value={form.description}
+                            rows={mode === "create" ? 3 : 4}
+                            onChange={(event) => onChange({ description: event.target.value })}
+                            placeholder="Add a short summary or implementation notes..."
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label>Attachments</Label>
+                            <Input
+                              ref={attachmentInputRef}
+                              type="file"
+                              className="hidden"
+                              multiple
+                              onChange={(event) => {
+                                if (mode === "create") {
+                                  addCreateFiles(event.target.files);
+                                } else {
+                                  onUploadAttachments(event.target.files);
+                                }
+                                event.currentTarget.value = "";
+                              }}
                             />
-                          ))}
-                          {assignees.length === 0 && (
-                            <p className="text-xs text-muted-foreground">No agents available.</p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => attachmentInputRef.current?.click()}
+                              disabled={mode === "edit" ? attachmentsUploading : false}
+                            >
+                              <PlusIcon className="h-4 w-4" />
+                              Upload
+                            </Button>
+                          </div>
+
+                          {mode === "create" ? (
+                            createFiles.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No attachments selected.</p>
+                            ) : (
+                              <div className="space-y-2 rounded-lg border border-border/70 p-2">
+                                {createFiles.map((file, index) => (
+                                  <div
+                                    key={`${file.name}-${file.lastModified}-${index}`}
+                                    className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-1.5"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm">{file.name}</p>
+                                      <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                                    </div>
+                                    <Button variant="ghost" size="icon-sm" onClick={() => removeCreateFile(index)} aria-label={`Remove ${file.name}`}>
+                                      <Trash2Icon className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          ) : attachmentsLoading ? (
+                            <p className="text-xs text-muted-foreground">Loading attachments...</p>
+                          ) : attachments.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">No attachments yet.</p>
+                          ) : (
+                            <ScrollArea className="h-36 rounded-xl border border-border/70">
+                              <div className="space-y-2 p-2">
+                                {attachments.map((attachment) => {
+                                  const isImage = attachment.mimeType.startsWith("image/");
+                                  return (
+                                    <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          {isImage ? <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" /> : <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                                          <p className="truncate text-sm">{attachment.name}</p>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">{formatBytes(attachment.size)}</p>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        {isImage ? <Button variant="ghost" size="icon-sm" onClick={() => setPreviewAttachment(attachment)} aria-label={`Preview ${attachment.name}`}><EyeIcon className="h-4 w-4" /></Button> : null}
+                                        <Button variant="ghost" size="icon-sm" asChild>
+                                          <a href={attachment.url} download={attachment.name} target="_blank" rel="noopener noreferrer" aria-label={`Download ${attachment.name}`}>
+                                            <DownloadIcon className="h-4 w-4" />
+                                          </a>
+                                        </Button>
+                                        <Button variant="ghost" size="icon-sm" onClick={() => onDeleteAttachment(attachment.id)} aria-label={`Delete ${attachment.name}`}>
+                                          <Trash2Icon className="h-4 w-4 text-destructive" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </ScrollArea>
                           )}
                         </div>
-                      </div>
-
-                      <Separator />
-
-                      <div className="space-y-2">
-                        <Label htmlFor="ticket-description">Description</Label>
-                        <Textarea
-                          id="ticket-description"
-                          value={form.description}
-                          rows={4}
-                          onChange={(event) => onChange({ description: event.target.value })}
-                        />
-                      </div>
-
-                      <Separator />
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <Label>Attachments</Label>
-                          <Input
-                            ref={attachmentInputRef}
-                            type="file"
-                            className="hidden"
-                            multiple
-                            onChange={(event) => {
-                              if (mode === "create") {
-                                addCreateFiles(event.target.files);
-                              } else {
-                                onUploadAttachments(event.target.files);
-                              }
-                              event.currentTarget.value = "";
-                            }}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => attachmentInputRef.current?.click()}
-                            disabled={mode === "edit" ? attachmentsUploading : false}
-                          >
-                            <PlusIcon className="h-4 w-4" />
-                            {mode === "edit" && attachmentsUploading
-                              ? "Uploading..."
-                              : "Upload attachment"}
-                          </Button>
-                        </div>
-
-                        {mode === "create" ? (
-                          createFiles.length === 0 ? (
-                            <p className="text-xs text-muted-foreground">No attachments selected.</p>
-                          ) : (
-                            <div className="space-y-2 rounded-lg border border-border/70 p-2">
-                              {createFiles.map((file, index) => (
-                                <div
-                                  key={`${file.name}-${file.lastModified}-${index}`}
-                                  className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-1.5"
-                                >
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm">{file.name}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {formatBytes(file.size)}
-                                    </p>
-                                  </div>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    onClick={() => removeCreateFile(index)}
-                                    aria-label={`Remove ${file.name}`}
-                                  >
-                                    <Trash2Icon className="h-4 w-4 text-destructive" />
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        ) : attachmentsLoading ? (
-                          <p className="text-xs text-muted-foreground">Loading attachments...</p>
-                        ) : attachments.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No attachments yet.</p>
-                        ) : (
-                          <ScrollArea className="h-48 rounded-xl border border-border/70">
-                            <div className="space-y-2 p-2">
-                              {attachments.map((attachment) => {
-                                const isImage = attachment.mimeType.startsWith("image/");
-                                return (
-                                  <div
-                                    key={attachment.id}
-                                    className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2"
-                                  >
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        {isImage ? (
-                                          <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                        ) : (
-                                          <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                        )}
-                                        <p className="truncate text-sm">{attachment.name}</p>
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">
-                                        {formatBytes(attachment.size)}
-                                      </p>
-                                    </div>
-
-                                    <div className="flex items-center gap-1">
-                                      {isImage ? (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon-sm"
-                                          onClick={() => setPreviewAttachment(attachment)}
-                                          aria-label={`Preview ${attachment.name}`}
-                                        >
-                                          <EyeIcon className="h-4 w-4" />
-                                        </Button>
-                                      ) : null}
-                                      <Button variant="ghost" size="icon-sm" asChild>
-                                        <a
-                                          href={attachment.url}
-                                          download={attachment.name}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          aria-label={`Download ${attachment.name}`}
-                                        >
-                                          <DownloadIcon className="h-4 w-4" />
-                                        </a>
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        onClick={() => onDeleteAttachment(attachment.id)}
-                                        aria-label={`Delete ${attachment.name}`}
-                                      >
-                                        <Trash2Icon className="h-4 w-4 text-destructive" />
-                                      </Button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </ScrollArea>
-                        )}
                       </div>
                     </CardContent>
                   )}

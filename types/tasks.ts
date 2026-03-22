@@ -13,13 +13,19 @@ export type Assignee = {
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type TicketExecutionState =
+  | "open"
+  | "planning"
+  | "awaiting_plan_approval"
+  | "ready_to_execute"
+  | "executing"
+  | "done"
+  | "failed"
   | "pending"
   | "queued"
   | "picked_up"
-  | "running"
-  | "done"
-  | "cancelled"
-  | "failed";
+  | "running";
+
+export type TicketExecutionMode = "auto" | "manual" | "plan";
 
 export type Ticket = {
   id: string;
@@ -31,7 +37,9 @@ export type Ticket = {
   tags: string[];
   assigneeIds: string[];
   assignedAgentId?: string;
-  autoApprove?: boolean;
+  executionMode?: TicketExecutionMode;
+  planText?: string;
+  planApproved?: boolean;
   scheduledFor?: string | null;
   executionState?: TicketExecutionState;
   checklistDone: number;
@@ -125,7 +133,7 @@ export type CreateTicketForm = {
   tagsText: string;
   assigneeIds: string[];
   assignedAgentId: string;
-  autoApprove: boolean;
+  executionMode: TicketExecutionMode;
 };
 
 export type TicketDetailsForm = {
@@ -139,7 +147,9 @@ export type TicketDetailsForm = {
   tagsText: string;
   assigneeIds: string[];
   assignedAgentId: string;
-  autoApprove: boolean;
+  executionMode: TicketExecutionMode;
+  planText: string;
+  planApproved: boolean;
   executionState: TicketExecutionState;
   checklistDone: number;
   checklistTotal: number;
@@ -287,13 +297,13 @@ export const emptyCreateForm = (statusId: string): CreateTicketForm => ({
   title: "",
   description: "",
   statusId,
-  priority: "medium",
+  priority: "low",
   dueDate: "",
   scheduledFor: "",
   tagsText: "",
   assigneeIds: [],
   assignedAgentId: "",
-  autoApprove: false,
+  executionMode: "auto",
 });
 
 const MONTH_SHORT = [

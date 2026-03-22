@@ -19,6 +19,7 @@ type LogsExplorerProps = {
   page: number;
   pageCount: number;
   totalCount: number;
+  initialNowIso: string;
   onPageChange: (next: number) => void;
 };
 

@@ -31,13 +31,17 @@ export type ColumnRecord = {
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type TicketExecutionState =
-  | "pending"
-  | "queued"
-  | "picked_up"
-  | "running"
+  | "open"
+  | "planning"
+  | "awaiting_plan_approval"
+  | "ready_to_execute"
+  | "executing"
   | "done"
-  | "cancelled"
   | "failed";
+
+export type TicketLifecycleState = TicketExecutionState;
+
+export type TicketExecutionMode = "auto" | "manual" | "plan";
 
 export type TicketRecord = {
   id: string;
@@ -50,7 +54,9 @@ export type TicketRecord = {
   tags: string[];
   assigneeIds: string[];
   assignedAgentId: string;
-  autoApprove: boolean;
+  executionMode: TicketExecutionMode;
+  planText: string | null;
+  planApproved: boolean;
   scheduledFor: string | null;
   executionState: TicketExecutionState;
   checklistDone: number;
@@ -95,7 +101,9 @@ export type CreateTicketPayload = {
   tags?: string[];
   assigneeIds?: string[];
   assignedAgentId?: string;
-  autoApprove?: boolean;
+  executionMode?: TicketExecutionMode;
+  planText?: string | null;
+  planApproved?: boolean;
   scheduledFor?: string | null;
   checklistDone?: number;
   checklistTotal?: number;
@@ -113,7 +121,9 @@ export type UpdateTicketPatch = {
   tags?: string[];
   assigneeIds?: string[];
   assignedAgentId?: string;
-  autoApprove?: boolean;
+  executionMode?: TicketExecutionMode;
+  planText?: string | null;
+  planApproved?: boolean;
   scheduledFor?: string | null;
   executionState?: TicketExecutionState;
   checklistDone?: number;

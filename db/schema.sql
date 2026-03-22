@@ -45,7 +45,8 @@ create table if not exists boards (
   name text not null,
   description text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (workspace_id, name)
 );
 
 create table if not exists columns (
@@ -66,17 +67,79 @@ create table if not exists tickets (
   column_id uuid not null references columns(id) on delete cascade,
   title text not null,
   description text,
-  priority text not null default 'medium',
+  priority text not null default 'low',
   due_date date,
   tags text[] not null default '{}'::text[],
-  assignee_ids uuid[] not null default '{}'::uuid[],
+  assignee_ids text[] not null default '{}'::text[],
+  assigned_agent_id text not null default '',
+  auto_approve boolean not null default false,
+  scheduled_for timestamptz,
+  execution_state text not null default 'pending',
+  execution_mode text not null default 'auto',
+  lifecycle_status text not null default 'open',
+  plan_text text,
+  plan_approved boolean not null default false,
   checklist_done integer not null default 0,
   checklist_total integer not null default 0,
   comments_count integer not null default 0,
   attachments_count integer not null default 0,
   position integer not null default 0,
+  created_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+alter table tickets alter column assignee_ids type text[] using assignee_ids::text[];
+alter table tickets add column if not exists assigned_agent_id text not null default '';
+alter table tickets add column if not exists auto_approve boolean not null default false;
+alter table tickets add column if not exists scheduled_for timestamptz;
+alter table tickets add column if not exists execution_state text not null default 'pending';
+alter table tickets add column if not exists execution_mode text not null default 'auto';
+alter table tickets add column if not exists lifecycle_status text not null default 'open';
+alter table tickets add column if not exists plan_text text;
+alter table tickets add column if not exists plan_approved boolean not null default false;
+alter table tickets add column if not exists approved_by text;
+alter table tickets add column if not exists approved_at timestamptz;
+alter table tickets add column if not exists created_by text;
+
+create table if not exists ticket_attachments (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  name text not null,
+  url text not null,
+  mime_type text not null default 'application/octet-stream',
+  size integer not null default 0,
+  path text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists ticket_subtasks (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  title text not null,
+  completed boolean not null default false,
+  position integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists ticket_comments (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  author_id text,
+  author_name text not null default 'Operator',
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists ticket_activity (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references tickets(id) on delete cascade,
+  source text not null default 'Tasks',
+  event text not null,
+  details text not null default '',
+  level text not null default 'info',
+  occurred_at timestamptz not null default now()
 );
 
 create table if not exists agents (

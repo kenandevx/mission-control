@@ -11,7 +11,7 @@ export async function GET() {
   const encoder = new TextEncoder();
 
   let keepAlive: ReturnType<typeof setInterval> | null = null;
-  let unlisten: (() => Promise<void>) | null = null;
+  let listener: { unlisten: () => Promise<void> } | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -21,7 +21,7 @@ export async function GET() {
         controller.enqueue(encoder.encode(sse({ ok: true }, "ping")));
       }, 20000);
 
-      unlisten = await sql.listen("agent_logs", async (payload) => {
+      listener = await sql.listen("agent_logs", async (payload) => {
         const id = String(payload || "").trim();
         if (!id) return;
         const rows = await sql`
@@ -66,8 +66,8 @@ export async function GET() {
     async cancel() {
       if (keepAlive) clearInterval(keepAlive);
       keepAlive = null;
-      if (unlisten) await unlisten();
-      unlisten = null;
+      if (listener) await listener.unlisten();
+      listener = null;
     },
   });
 

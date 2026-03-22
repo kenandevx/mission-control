@@ -42,18 +42,25 @@ const priorityLabel = (priority: Ticket["priority"]) =>
   priority.charAt(0).toUpperCase() + priority.slice(1);
 
 const executionStateStyles: Record<string, string> = {
-  pending: "border-slate-500/30 bg-slate-500/10 text-slate-400",
-  queued: "border-blue-500/30 bg-blue-500/10 text-blue-400",
-  picked_up: "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
-  running: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  done: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  open: "border-slate-500/30 bg-slate-500/10 text-slate-400",
+  planning: "border-blue-500/30 bg-blue-500/10 text-blue-500",
+  awaiting_plan_approval: "border-amber-500/30 bg-amber-500/10 text-amber-500",
+  ready_to_execute: "border-cyan-500/30 bg-cyan-500/10 text-cyan-500",
+  executing: "border-indigo-500/30 bg-indigo-500/10 text-indigo-500",
+  done: "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
   failed: "border-destructive/30 bg-destructive/10 text-destructive",
-  cancelled: "border-zinc-500/30 bg-zinc-500/10 text-zinc-400",
 };
 
 const executionLabel = (value?: string) => {
   if (!value) return "Pending";
   return value.replaceAll("_", " ").replace(/^\w/, (char) => char.toUpperCase());
+};
+
+const approvalStateStyles: Record<string, string> = {
+  pending: "border-amber-500/30 bg-amber-500/10 text-amber-500",
+  approved: "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
+  rejected: "border-destructive/30 bg-destructive/10 text-destructive",
+  none: "border-slate-500/30 bg-slate-500/10 text-slate-400",
 };
 
 export function TicketCard({
@@ -102,6 +109,17 @@ export function TicketCard({
               >
                 <span className={cn("mr-1 h-1.5 w-1.5 rounded-full", priorityDot[ticket.priority])} />
                 {priorityLabel(ticket.priority)}
+              </Badge>
+            ) : null}
+            {ticket.executionMode === "plan" ? (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "h-5 px-1.5 py-0 text-[11px] font-medium",
+                  approvalStateStyles[ticket.planApproved ? "approved" : "pending"] || approvalStateStyles.pending,
+                )}
+              >
+                {ticket.planApproved ? "Plan approved" : "Plan pending"}
               </Badge>
             ) : null}
             {ticket.tags.length > 0

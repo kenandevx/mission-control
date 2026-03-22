@@ -18,6 +18,9 @@ import { type Assignee, type BoardState, type Ticket } from "@/types/tasks";
 import { KanbanColumn } from "./kanban-column";
 import { TicketCard } from "../shared/ticket-card";
 import { Card, CardContent } from "@/components/ui/card";
+import { PlusIcon } from "lucide-react";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { GhostIcon } from "lucide-react";
 
 type Props = {
   board: BoardState;
@@ -245,8 +248,12 @@ export function KanbanView({
                     />
                   ))}
                 {(visibleTicketIdsByColumn[activeColumnId] ?? []).length === 0 && (
-                  <div className="flex h-12 items-center justify-center rounded-md border-2 border-dashed text-xs text-muted-foreground">
-                    Empty list
+                  <div className="flex min-h-24 flex-col items-center justify-center rounded-md border-2 border-dashed border-border/60 px-4 py-6 text-center text-muted-foreground">
+                    <div className="mb-2 rounded-full bg-muted/60 p-2">
+                      <GhostIcon className="h-4 w-4" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground/80">No tickets here</p>
+                    <p className="mt-1 text-xs">Drop a ticket into this list to start working.</p>
                   </div>
                 )}
               </CardContent>

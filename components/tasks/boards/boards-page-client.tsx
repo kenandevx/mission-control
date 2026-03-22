@@ -39,11 +39,23 @@ import {
 } from "@/types/tasks";
 import {
   ChevronLeftIcon,
+  Clock3Icon,
   MoreHorizontalIcon,
   PlusIcon,
   SearchIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
+
+type LiveLog = {
+  id: string;
+  ticket_id?: string;
+  ticket_title?: string;
+  source?: string;
+  event?: string;
+  details?: string;
+  level?: string;
+  occurred_at?: string;
+};
 
 type Props = {
   initialBoardId: string | null;
@@ -63,6 +75,9 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
   const [boardSearch, setBoardSearch] = useState("");
   const [workspaceOpen, setWorkspaceOpen] = useState(Boolean(initialBoardId));
   const [openedTicketFromQuery, setOpenedTicketFromQuery] = useState<string | null>(null);
+  const [boardActivity, setBoardActivity] = useState<LiveLog[]>([]);
+  const [boardActivityLoading, setBoardActivityLoading] = useState(false);
+  const [heartbeatEtaSec, setHeartbeatEtaSec] = useState(20);
   const boardParam = searchParams.get("board");
   const ticketParam = searchParams.get("ticket");
 
@@ -92,8 +107,10 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
       assigneeIds: tasks.createForm.assigneeIds,
       scheduledFor: tasks.createForm.scheduledFor,
       assignedAgentId: tasks.createForm.assignedAgentId,
-      autoApprove: tasks.createForm.autoApprove,
-      executionState: "pending",
+      executionMode: tasks.createForm.executionMode,
+      planText: "",
+      planApproved: false,
+      executionState: "open",
       checklistDone: 0,
       checklistTotal: 0,
       comments: 0,
@@ -178,6 +195,44 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
     setOpenedTicketFromQuery(ticketParam);
   }, [openedTicketFromQuery, tasks, ticketParam, workspaceOpen]);
 
+  useEffect(() => {
+    if (!workspaceOpen || !tasks.activeBoardId) {
+      setBoardActivity([]);
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const load = async () => {
+      setBoardActivityLoading(true);
+      try {
+        const response = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "listBoardActivity", boardId: tasks.activeBoardId, limit: 20 }),
+        });
+        const data = await response.json();
+        if (!cancelled) {
+          setBoardActivity(Array.isArray(data.rows) ? data.rows : []);
+        }
+      } finally {
+        if (!cancelled) setBoardActivityLoading(false);
+      }
+    };
+
+    void load();
+    timer = setInterval(() => {
+      setHeartbeatEtaSec((current) => (current <= 1 ? 20 : current - 1));
+      void load();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [tasks.activeBoardId, workspaceOpen]);
+
   return (
     <SidebarProvider
       style={
@@ -248,9 +303,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                       <DropdownMenuItem onClick={tasks.openCreateListModal}>
                         Add list
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={tasks.openCreateBoardModal}>
-                        Add board
-                      </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={() => tasks.openEditBoardModal(tasks.activeBoardId)}>
                         Edit board
@@ -300,16 +352,11 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
             <div className="hidden items-center gap-2 md:flex">
               {workspaceOpen ? (
                 <>
-                  <Button variant="outline" size="sm" onClick={tasks.openCreateBoardModal}>
-                    <PlusIcon className="h-4 w-4" />
-                    Add board
-                  </Button>
-
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm">Board</Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenuContent align="end" className="w-56">
                       <DropdownMenuItem onClick={() => tasks.openEditBoardModal(tasks.activeBoardId)}>
                         Edit board
                       </DropdownMenuItem>
@@ -325,19 +372,22 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  <Button
-                    size="sm"
-                    className="ml-12"
-                    onClick={() => tasks.openCreateModal(tasks.board.columnOrder[0] ?? "")}
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                    Create ticket
-                  </Button>
-
-                  <Button variant="outline" size="sm" onClick={tasks.openCreateListModal}>
-                    <PlusIcon className="h-4 w-4" />
-                    Add list
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="gap-1.5">
+                        <PlusIcon className="h-4 w-4" />
+                        Add
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuItem onClick={() => tasks.openCreateModal(tasks.board.columnOrder[0] ?? "")}>
+                        Create ticket
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={tasks.openCreateListModal}>
+                        Add list
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -346,7 +396,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                         Filter
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenuContent align="end" className="w-56">
                       <DropdownMenuRadioGroup
                         value={tasks.sort}
                         onValueChange={(value) => tasks.setSort(value as SortMode)}
@@ -357,16 +407,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                           </DropdownMenuRadioItem>
                         ))}
                       </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="text-muted-foreground">
-                        View
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                      <DropdownMenuSeparator />
                       <DropdownMenuRadioGroup
                         value={tasks.view}
                         onValueChange={(value) => tasks.setView(value as ViewMode)}
@@ -381,10 +422,18 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                   </DropdownMenu>
                 </>
               ) : (
-                <Button variant="outline" size="sm" onClick={tasks.openCreateBoardModal}>
-                  <PlusIcon className="h-4 w-4" />
-                  Add board
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5">
+                      <PlusIcon className="h-4 w-4" />
+                      Add board
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={tasks.openCreateBoardModal}>Create board</DropdownMenuItem>
+                    <DropdownMenuItem onClick={tasks.openCreateListModal}>Create list</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
           </div>
@@ -503,81 +552,107 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
           </div>
         ) : (
           <div className="flex flex-1 flex-col overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2 sm:px-4 lg:px-6">
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">{tasks.activeBoardName}</span>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {tasks.totalVisible} ticket{tasks.totalVisible !== 1 ? "s" : ""}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(() => {
-                  const allTickets = Object.values(tasks.board.tickets);
-                  const queued = allTickets.filter((ticket) => ticket.executionState === "queued").length;
-                  const running = allTickets.filter(
-                    (ticket) => ticket.executionState === "running" || ticket.executionState === "picked_up",
-                  ).length;
-                  const failed = allTickets.filter((ticket) => ticket.executionState === "failed").length;
-                  const blocked = allTickets.filter(
-                    (ticket) => (ticket.executionState === "pending" || ticket.executionState === "queued") && !ticket.assignedAgentId,
-                  ).length;
-
-                  return (
-                    <>
-                      <Badge variant="outline" className="text-[10px]">Queued: {queued}</Badge>
-                      <Badge variant="outline" className="text-[10px]">Running: {running}</Badge>
-                      <Badge variant="outline" className="text-[10px]">Failed: {failed}</Badge>
-                      <Badge variant="outline" className="text-[10px]">Blocked: {blocked}</Badge>
-                    </>
-                  );
-                })()}
+            <div className="border-b px-3 py-2 sm:px-4 lg:px-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">{tasks.activeBoardName}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {tasks.totalVisible} ticket{tasks.totalVisible !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Clock3Icon className="h-3.5 w-3.5" />
+                  <span>Heartbeat in {heartbeatEtaSec}s</span>
+                </div>
               </div>
             </div>
 
-            <div
-              className={cn(
-                "min-h-0 flex-1 overflow-auto px-3 py-4 sm:px-4 lg:px-6",
-                tasks.view === "kanban" && "overflow-x-auto",
-              )}
-            >
-              {tasks.view === "kanban" && (
-                <KanbanView
-                  board={tasks.board}
-                  assigneeById={tasks.assigneeById}
-                  visibleTicketIdsByColumn={tasks.visibleTicketIdsByColumn}
-                  onAddTask={tasks.openCreateModal}
-                  canDeleteList={tasks.canDeleteList}
-                  onDeleteList={tasks.handleDeleteList}
-                  onTicketClick={tasks.openDetailsModal}
-                  onTicketCopy={tasks.handleCopyTicket}
-                  onTicketDelete={tasks.handleDeleteTicket}
-                  moveColumn={tasks.moveColumn}
-                  moveTicket={tasks.moveTicket}
-                />
-              )}
-              {tasks.view === "list" && (
-                <ListView
-                  tickets={tasks.sortedFilteredTickets}
-                  board={tasks.board}
-                  assigneeById={tasks.assigneeById}
-                  onTicketClick={tasks.openDetailsModal}
-                  onTicketCopy={tasks.handleCopyTicket}
-                  onTicketDelete={tasks.handleDeleteTicket}
-                  searchQuery={tasks.searchQuery}
-                  onClearSearch={tasks.clearSearch}
-                />
-              )}
-              {tasks.view === "grid" && (
-                <GridView
-                  tickets={tasks.sortedFilteredTickets}
-                  assigneeById={tasks.assigneeById}
-                  searchQuery={tasks.searchQuery}
-                  onTicketClick={tasks.openDetailsModal}
-                  onTicketCopy={tasks.handleCopyTicket}
-                  onTicketDelete={tasks.handleDeleteTicket}
-                  onClearSearch={tasks.clearSearch}
-                />
-              )}
+            <div className="grid min-h-0 flex-1 gap-4 overflow-hidden px-3 py-4 sm:px-4 lg:grid-cols-[1fr_340px] lg:px-6">
+              <div className="min-h-0 overflow-auto">
+                <div className="flex flex-wrap items-center gap-1.5 pb-3">
+                  {(() => {
+                    const allTickets = Object.values(tasks.board.tickets);
+                    const queued = allTickets.filter((ticket) => ticket.executionState === "ready_to_execute").length;
+                    const running = allTickets.filter((ticket) => ticket.executionState === "executing" || ticket.executionState === "done").length;
+                    const failed = allTickets.filter((ticket) => ticket.executionState === "failed").length;
+                    const blocked = allTickets.filter((ticket) => (ticket.executionState === "open" || ticket.executionState === "planning" || ticket.executionState === "awaiting_plan_approval") && !ticket.assignedAgentId).length;
+                    return (
+                      <>
+                        <Badge variant="outline" className="text-[10px]">Queued: {queued}</Badge>
+                        <Badge variant="outline" className="text-[10px]">Running: {running}</Badge>
+                        <Badge variant="outline" className="text-[10px]">Failed: {failed}</Badge>
+                        <Badge variant="outline" className="text-[10px]">Blocked: {blocked}</Badge>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className={cn("min-h-0 overflow-auto", tasks.view === "kanban" && "overflow-x-auto")}>
+                  {tasks.view === "kanban" && (
+                    <KanbanView
+                      board={tasks.board}
+                      assigneeById={tasks.assigneeById}
+                      visibleTicketIdsByColumn={tasks.visibleTicketIdsByColumn}
+                      onAddTask={tasks.openCreateModal}
+                      canDeleteList={tasks.canDeleteList}
+                      onDeleteList={tasks.handleDeleteList}
+                      onTicketClick={tasks.openDetailsModal}
+                      onTicketCopy={tasks.handleCopyTicket}
+                      onTicketDelete={tasks.handleDeleteTicket}
+                      moveColumn={tasks.moveColumn}
+                      moveTicket={tasks.moveTicket}
+                    />
+                  )}
+                  {tasks.view === "list" && (
+                    <ListView
+                      tickets={tasks.sortedFilteredTickets}
+                      board={tasks.board}
+                      assigneeById={tasks.assigneeById}
+                      onTicketClick={tasks.openDetailsModal}
+                      onTicketCopy={tasks.handleCopyTicket}
+                      onTicketDelete={tasks.handleDeleteTicket}
+                      searchQuery={tasks.searchQuery}
+                      onClearSearch={tasks.clearSearch}
+                    />
+                  )}
+                  {tasks.view === "grid" && (
+                    <GridView
+                      tickets={tasks.sortedFilteredTickets}
+                      assigneeById={tasks.assigneeById}
+                      searchQuery={tasks.searchQuery}
+                      onTicketClick={tasks.openDetailsModal}
+                      onTicketCopy={tasks.handleCopyTicket}
+                      onTicketDelete={tasks.handleDeleteTicket}
+                      onClearSearch={tasks.clearSearch}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <aside className="hidden min-h-0 overflow-hidden rounded-lg border border-border/60 bg-background/70 p-3 lg:flex lg:flex-col">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Board activity</h3>
+                  <span className="text-[10px] text-muted-foreground">Live feed</span>
+                </div>
+                <div className="space-y-2 overflow-auto">
+                  {boardActivityLoading && boardActivity.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Loading activity...</p>
+                  ) : boardActivity.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No board activity yet.</p>
+                  ) : (
+                    boardActivity.slice(0, 10).map((entry) => (
+                      <div key={entry.id} className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">{entry.event}</p>
+                          <span className="text-[10px] text-muted-foreground">{entry.level}</span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{entry.details || entry.ticket_title || "—"}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{entry.ticket_title ? `${entry.ticket_title} • ` : ""}{entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ""}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </aside>
             </div>
           </div>
         )}
@@ -619,7 +694,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
             tagsText: patch.tagsText ?? prev.tagsText,
             assigneeIds: patch.assigneeIds ?? prev.assigneeIds,
             assignedAgentId: patch.assignedAgentId ?? prev.assignedAgentId,
-            autoApprove: patch.autoApprove ?? prev.autoApprove,
           }))
         }
         onUploadAttachments={() => {}}

@@ -87,9 +87,9 @@ const createEmptyBoard = (): BoardState => ({
 });
 
 const toneFromColorKey = (colorKey: string | null): Column["tone"] => {
-  if (colorKey === "success") return "success";
-  if (colorKey === "warning") return "warning";
-  if (colorKey === "info") return "info";
+  if (colorKey === "success" || colorKey === "emerald") return "success";
+  if (colorKey === "warning" || colorKey === "amber") return "warning";
+  if (colorKey === "info" || colorKey === "blue") return "info";
   return "neutral";
 };
 
@@ -122,12 +122,14 @@ const toTicket = (row: TicketRecord): Ticket => ({
   title: row.title,
   description: row.description,
   statusId: row.columnId,
-  priority: isTicketPriority(row.priority) ? row.priority : "medium",
+  priority: isTicketPriority(row.priority) ? row.priority : "low",
   dueDate: formatDueDateInput(row.dueDate),
   tags: row.tags,
   assigneeIds: row.assigneeIds,
   assignedAgentId: row.assignedAgentId,
-  autoApprove: row.autoApprove,
+  executionMode: row.executionMode,
+  planText: row.planText ?? "",
+  planApproved: row.planApproved,
   scheduledFor: formatDueDateInput(row.scheduledFor),
   executionState: row.executionState,
   checklistDone: row.checklistDone,
@@ -429,7 +431,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       !sameText(createForm.tagsText, createSnapshot.tagsText) ||
       createForm.assigneeIds.join(",") !== createSnapshot.assigneeIds.join(",") ||
       createForm.assignedAgentId !== createSnapshot.assignedAgentId ||
-      createForm.autoApprove !== createSnapshot.autoApprove,
+      createForm.executionMode !== createSnapshot.executionMode,
     [createForm, createSnapshot],
   );
 
@@ -445,7 +447,9 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       !sameText(detailsForm.tagsText, detailsSnapshot.tagsText) ||
       detailsForm.assigneeIds.join(",") !== detailsSnapshot.assigneeIds.join(",") ||
       detailsForm.assignedAgentId !== detailsSnapshot.assignedAgentId ||
-      detailsForm.autoApprove !== detailsSnapshot.autoApprove ||
+      detailsForm.executionMode !== detailsSnapshot.executionMode ||
+      detailsForm.planText !== detailsSnapshot.planText ||
+      detailsForm.planApproved !== detailsSnapshot.planApproved ||
       detailsForm.executionState !== detailsSnapshot.executionState
     );
   }, [detailsForm, detailsSnapshot]);
@@ -514,8 +518,10 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       tagsText: ticket.tags.join(", "),
       assigneeIds: validAssigneeIds(ticket.assigneeIds),
       assignedAgentId: ticket.assignedAgentId ?? "",
-      autoApprove: Boolean(ticket.autoApprove),
-      executionState: ticket.executionState ?? "pending",
+      executionMode: ticket.executionMode ?? "auto",
+      planText: ticket.planText ?? "",
+      planApproved: Boolean(ticket.planApproved),
+      executionState: ticket.executionState ?? "open",
       checklistDone: ticket.checklistDone,
       checklistTotal: ticket.checklistTotal,
       comments: ticket.comments,
@@ -1346,10 +1352,12 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         dueDate: createForm.dueDate || null,
         tags,
         assigneeIds,
-        assignedAgentId: createForm.assignedAgentId,
-        autoApprove: createForm.autoApprove,
-        scheduledFor: createForm.dueDate || null,
-        executionState: "pending",
+        assignedAgentId: createForm.assignedAgentId || assigneeIds[0] || "",
+        executionMode: createForm.executionMode,
+        planText: "",
+        planApproved: false,
+        scheduledFor: createForm.scheduledFor || null,
+        executionState: "open",
         checklistDone: 0,
         checklistTotal: 0,
         comments: 0,
@@ -1381,11 +1389,13 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       description: createForm.description.trim(),
       priority: createForm.priority,
       dueDate: toIsoDueDate(createForm.dueDate),
-      scheduledFor: toIsoDueDate(createForm.dueDate),
+      scheduledFor: toIsoDueDate(createForm.scheduledFor),
       tags,
       assigneeIds,
-      assignedAgentId: createForm.assignedAgentId,
-      autoApprove: createForm.autoApprove,
+      assignedAgentId: createForm.assignedAgentId || assigneeIds[0] || "",
+      executionMode: createForm.executionMode,
+      planText: "",
+      planApproved: false,
       checklistDone: 0,
       checklistTotal: 0,
       attachmentsCount: 0,
@@ -1416,7 +1426,9 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
           priority: created.priority,
           dueDate: formatDueDateInput(created.dueDate),
           assignedAgentId: created.assignedAgentId,
-          autoApprove: created.autoApprove,
+          executionMode: created.executionMode,
+          planText: created.planText ?? "",
+          planApproved: created.planApproved,
           scheduledFor: formatDueDateInput(created.scheduledFor),
           executionState: created.executionState,
           checklistDone: created.checklistDone,
@@ -1801,10 +1813,24 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         dueDate: detailsForm.dueDate || null,
         tags,
         assigneeIds,
-        assignedAgentId: detailsForm.assignedAgentId,
-        autoApprove: detailsForm.autoApprove,
-        scheduledFor: detailsForm.dueDate || null,
-        executionState: detailsForm.executionState,
+        assignedAgentId: detailsForm.assignedAgentId || assigneeIds[0] || "",
+        executionMode: detailsForm.executionMode,
+        planText: detailsForm.planText,
+        planApproved: detailsForm.planApproved,
+        scheduledFor: detailsForm.scheduledFor || null,
+        executionState: detailsForm.executionMode === "plan"
+          ? detailsForm.planApproved
+            ? "ready_to_execute"
+            : "awaiting_plan_approval"
+          : detailsForm.executionState === "pending"
+            ? "open"
+            : detailsForm.executionState === "queued"
+              ? "ready_to_execute"
+              : detailsForm.executionState === "picked_up" || detailsForm.executionState === "running"
+                ? "executing"
+                : detailsForm.executionState === "done"
+                  ? "executing"
+                  : detailsForm.executionState,
         checklistDone: detailsForm.checklistDone,
         checklistTotal: detailsForm.checklistTotal,
         comments: detailsForm.comments,
@@ -1835,12 +1861,26 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         description: detailsForm.description.trim(),
         priority: detailsForm.priority,
         dueDate: toIsoDueDate(detailsForm.dueDate),
-        scheduledFor: toIsoDueDate(detailsForm.dueDate),
+        scheduledFor: toIsoDueDate(detailsForm.scheduledFor),
         tags,
         assigneeIds,
-        assignedAgentId: detailsForm.assignedAgentId,
-        autoApprove: detailsForm.autoApprove,
-        executionState: detailsForm.executionState,
+        assignedAgentId: detailsForm.assignedAgentId || assigneeIds[0] || "",
+        executionMode: detailsForm.executionMode,
+        planText: detailsForm.planText,
+        planApproved: detailsForm.planApproved,
+        executionState: detailsForm.executionMode === "plan"
+          ? detailsForm.planApproved
+            ? "ready_to_execute"
+            : "awaiting_plan_approval"
+          : detailsForm.executionState === "pending"
+            ? "open"
+            : detailsForm.executionState === "queued"
+              ? "ready_to_execute"
+              : detailsForm.executionState === "picked_up" || detailsForm.executionState === "running"
+                ? "executing"
+                : detailsForm.executionState === "done"
+                  ? "executing"
+                  : detailsForm.executionState,
         checklistDone: detailsForm.checklistDone,
         checklistTotal: detailsForm.checklistTotal,
         commentsCount: detailsForm.comments,
@@ -1966,7 +2006,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     })?.id;
 
     const nextExecutionState: TicketDetailsForm["executionState"] =
-      action === "retry" ? "queued" : "cancelled";
+      action === "retry" ? "ready_to_execute" : "failed";
     const nextStatusId =
       action === "retry" && inProgressColumnId ? inProgressColumnId : detailsForm.statusId;
 
@@ -2013,11 +2053,11 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         detailsForm.id,
         action === "retry" ? "Retry requested" : "Execution cancelled",
         action === "retry"
-          ? "Manually re-queued for immediate retry."
-          : "Execution was manually cancelled.",
+          ? "Marked as ready to execute immediately."
+          : "Execution marked as failed/cancelled by operator.",
         action === "retry" ? "warning" : "warning",
       );
-      toast.success(action === "retry" ? "Ticket queued for retry." : "Ticket execution cancelled.");
+      toast.success(action === "retry" ? "Ticket marked ready to execute." : "Ticket execution marked failed.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to apply execution action.";
       toast.error(message);
