@@ -4,20 +4,15 @@ import { DataTable } from "@/components/dashboard/data-table";
 import { SectionCards } from "@/components/dashboard/section-cards";
 import { ActivityLogs } from "@/components/dashboard/activity-logs";
 import { SiteHeader } from "@/components/dashboard/site-header";
-import { SetupModal } from "@/components/dashboard/setup-modal";
-import { getDashboardData, getSetupStatus } from "@/lib/db/server-data";
+import { getDashboardData } from "@/lib/db/server-data";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [{ boardId, board, tickets, activityLogs, chartData, logs24h }, setupCompleted] = await Promise.all([
-    getDashboardData(),
-    getSetupStatus(),
-  ]);
+  const { boardId, board, tickets, activityLogs, chartData, logs24h } = await getDashboardData();
 
   return (
-    <>
       <SidebarProvider style={{ "--sidebar-width": "calc(var(--spacing) * 72)", "--header-height": "calc(var(--spacing) * 14)" } as React.CSSProperties}>
         <AppSidebar variant="inset" initialUser={null} />
         <SidebarInset>
@@ -44,7 +39,5 @@ export default async function DashboardPage() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      <SetupModal initialSetupCompleted={setupCompleted} />
-    </>
   );
 }

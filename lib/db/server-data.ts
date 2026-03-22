@@ -13,7 +13,7 @@ type ActivityRow = { id: string; occurred_at: string; source: string; event: str
 type DashboardActivityLog = { id: string; occurredAt: string; source: "Agent" | "Tasks" | "System" | "API"; event: string; details: string; level: "info" | "success" | "warning" | "error"; };
 type ChartPoint = { date: string; created: number; completed: number; logs: number };
 function emptyBoardState(): BoardState { return { columns: {}, columnOrder: [], tickets: {}, ticketIdsByColumn: {} } as BoardState; }
-export async function getSetupStatus(): Promise<boolean> { const sql = getSql(); const rows = await sql`select setup_completed, gateway_token from app_settings where id = 1 limit 1`; const row = rows[0] ?? { setup_completed: false, gateway_token: "" }; return Boolean(row.setup_completed) && Boolean(String(row.gateway_token || "").trim()); }
+export async function getSetupStatus(): Promise<boolean> { const sql = getSql(); const rows = await sql`select setup_completed from app_settings where id = 1 limit 1`; const row = rows[0] ?? { setup_completed: true }; return Boolean(row.setup_completed ?? true); }
 function loadAgentIdentity(agentId: string) { const roots = [
   `/home/clawdbot/.openclaw/agents/${agentId}/IDENTITY.md`,
   `/home/clawdbot/.openclaw/workspace/agents/${agentId}/IDENTITY.md`,

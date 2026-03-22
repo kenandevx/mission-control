@@ -136,7 +136,7 @@ postgresql://openclaw:openclaw@db:5432/mission_control
 - `app/agents/page.tsx` — agents list
 - `app/agents/[agentId]/page.tsx` — agent detail
 - `app/boards/page.tsx` — boards
-- `app/settings/page.tsx` — settings
+
 - `app/login/page.tsx` — login surface
 - `app/page.tsx` — root page
 - `app/layout.tsx` — app shell
