@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:local": "next dev",
+    "dev:db": "docker compose up -d db db-init",
+    "dev:docker": "docker compose up -d --build",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -12,18 +15,15 @@
     "db:setup": "node scripts/db-setup.mjs setup",
     "db:reset": "node scripts/db-setup.mjs reset",
     "bot:setup": "node scripts/openclaw-bot-setup.mjs",
-    "bridge:logger:check": "node --check scripts/bridge-logger.js",
-    "bridge:validate": "node scripts/openclaw-bridge-validate.mjs",
-    "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs",
-    "tasks:orchestrator": "node scripts/task-orchestrator.js"
+    "bridge:logger": "node scripts/bridge-logger.mjs",
+    "bridge:logger:check": "node --check scripts/bridge-logger.mjs",
+    "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@supabase/ssr": "^0.9.0",
-    "@supabase/supabase-js": "^2.98.0",
     "@tabler/icons-react": "^3.38.0",
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
@@ -32,6 +32,7 @@
     "lucide-react": "^0.576.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",
+    "postgres": "^3.4.8",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-day-picker": "^9.14.0",
@@ -40,6 +41,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "vaul": "^1.1.2",
+    "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

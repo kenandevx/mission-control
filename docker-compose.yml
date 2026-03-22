@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: openclaw
+      POSTGRES_PASSWORD: openclaw
+      POSTGRES_DB: mission_control
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  db-init:
+    image: postgres:15
+    depends_on:
+      - db
+    environment:
+      PGPASSWORD: openclaw
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    entrypoint: ["bash", "-lc"]
+    command: >
+      "until pg_isready -h db -U openclaw -d mission_control; do sleep 1; done;
+      psql -h db -U openclaw -d mission_control -v ON_ERROR_STOP=1 -f db/schema.sql;
+      psql -h db -U openclaw -d mission_control -v ON_ERROR_STOP=1 -f db/seed.sql;"
+    restart: "no"
+
+  gateway-sync:
+    build: .
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:8787}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+    volumes:
+      - ~/.openclaw:/openclaw
+    command: ["node", "scripts/gateway-sync.mjs"]
+    restart: "no"
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:8787}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+    volumes:
+      - ~/.openclaw:/openclaw
+    ports:
+      - "3000:3000"
+
+  bridge-logger:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+    volumes:
+      - ~/.openclaw:/root/.openclaw
+      - ./:/app
+    working_dir: /app
+    command: ["node", "scripts/bridge-logger.mjs"]
+
+volumes:
+  pgdata:

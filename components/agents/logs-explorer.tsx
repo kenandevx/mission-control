@@ -1,575 +1,545 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getBrowserSupabaseClient } from "@/lib/supabase/client";
-import { Trash2Icon } from "lucide-react";
-import { toast } from "sonner";
-import { classifyAgentLogChannel, classifyAgentLogEvent } from "@/lib/agent-log-utils";
-import type { Agent, AgentLog, AgentLogChannelType, AgentLogEventType } from "@/types/agents";
-import {
-  AgentLogChannelBadge,
-  AgentLogDirectionBadge,
-  AgentLogEventTypeBadge,
-  AgentLogLevelBadge,
-  AgentLogMemorySourceBadge,
-  formatAgentName,
-  formatTimestamp,
-} from "@/components/agents/agent-ui";
-import { LogDetailsModal } from "@/components/agents/log-details-modal";
+import { useMemo, useState } from "react";
+import { formatDistanceToNow } from "date-fns";
+import { SearchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { Agent, AgentLog } from "@/types/agents";
+import { cn } from "@/lib/utils";
 
 type LogsExplorerProps = {
-  agents: Agent[];
-  logs: AgentLog[];
-  runtimeAgentId?: string;
-  logTotals?: {
-    total: number;
-    info: number;
-    warning: number;
-    error: number;
-  };
+  logs?: AgentLog[];
+  agents?: Agent[];
+  page: number;
+  pageCount: number;
+  totalCount: number;
+  onPageChange: (next: number) => void;
 };
 
-type FilterKey = "all" | "messages" | "tools" | "memory" | "issues";
+type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "error";
 
-type NormalizedLog = AgentLog & {
-  eventType: AgentLogEventType;
-  channelType: AgentLogChannelType;
+type NormalizedLog = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  occurredAt: string;
+  level: string;
+  type: string;
+  eventType: string;
+  channelType: string;
+  direction: string;
+  message: string;
   messagePreview: string;
+  runId: string;
+  sessionKey: string;
+  sourceMessageId: string;
+  memorySource: string;
+  rawPayload: unknown;
 };
 
-const FILTERS: Array<{ key: FilterKey; label: string }> = [
-  { key: "all", label: "All" },
-  { key: "messages", label: "Messages" },
-  { key: "tools", label: "Tools" },
-  { key: "memory", label: "Memory" },
-  { key: "issues", label: "Warnings & Errors" },
-];
+const levelClasses: Record<string, string> = {
+  info: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  debug: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+  warning: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
+};
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
+const channelClasses: Record<string, string> = {
+  telegram: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  gateway: "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
+  internal: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+  qdrant: "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300",
+};
+
+function safeString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value == null) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "[object]";
+    }
+  }
+  return String(value);
 }
 
-function firstNonEmptyText(...values: unknown[]) {
+function pickString(...values: unknown[]) {
   for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
+    const text = safeString(value).trim();
+    if (text) return text;
   }
   return "";
 }
 
-function extractActorNameFromPayload(payload: unknown) {
-  const root = asRecord(payload);
-  if (!root) return "";
+function extractVisibleMessageFromEnvelope(text: string): string {
+  const raw = String(text || "");
+  if (!raw) return "";
 
-  const nestedMessage = asRecord(root.message);
-  const scope = nestedMessage ?? root;
+  let cleaned = raw
+    .replace(/\[\[\s*reply_to_current\s*\]\]/gi, "")
+    .replace(/\[\[\s*reply_to:\s*[^\]]+\]\]/gi, "");
 
-  const sender = firstNonEmptyText(scope.sender, root.sender);
-  const label = firstNonEmptyText(scope.label, root.label);
-  const name = firstNonEmptyText(scope.name, root.name);
-  const username = firstNonEmptyText(scope.username, root.username);
-  const senderId = firstNonEmptyText(scope.sender_id, root.sender_id, scope.id, root.id);
+  // Strip known metadata blocks entirely.
+  cleaned = cleaned
+    .replace(/Conversation info\s*\(untrusted metadata\)?:\s*```json[\s\S]*?```/gi, "")
+    .replace(/Sender\s*\(untrusted metadata\)?:\s*```json[\s\S]*?```/gi, "")
+    .replace(/Replied message\s*\(untrusted metadata\)?:\s*```json[\s\S]*?```/gi, "");
 
-  if (label) return label;
-  if (sender) return sender;
-  if (name && senderId) return `${name} (${senderId})`;
-  if (name) return name;
-  if (username && senderId) return `${username} (${senderId})`;
-  if (username) return username;
+  // Remove any remaining fenced blocks.
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, " ");
+
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^(Conversation info|Sender|Replied message)/i.test(line));
+
+  if (!lines.length) return "";
+
+  // Prefer the last visible line (usually the actual message body, e.g. "test").
+  const last = lines[lines.length - 1].replace(/\s+/g, " ").trim();
+  if (last) return last;
+
+  return lines.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function summarizeGatewayLogObject(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+
+  const part0Raw = safeString(record["0"] || "");
+  const part1 = record["1"];
+  const part2Raw = safeString(record["2"] || "");
+
+  const part0 = part0Raw.replace(/\\"/g, '"').replace(/\s+/g, " ").trim();
+  const part2 = part2Raw.replace(/\s+/g, " ").trim();
+
+  // Best case: explicit human message in slot 2 (e.g., "cron: timer armed")
+  if (part2) {
+    const context = part0 ? ` • ${part0}` : "";
+    return `${part2}${context}`;
+  }
+
+  // Common gateway success logs in slot 1
+  if (typeof part1 === "string") {
+    const text = part1.replace(/\s+/g, " ").trim();
+    if (text) return text;
+  }
+
+  // Structured object in slot 1 (e.g., timer payload)
+  if (part1 && typeof part1 === "object") {
+    const p1 = part1 as Record<string, unknown>;
+    if (typeof p1.delayMs === "number") {
+      const sec = Math.round((p1.delayMs as number) / 1000);
+      const nextAt = typeof p1.nextAt === "number" ? new Date(p1.nextAt as number).toISOString() : "";
+      return `Timer armed • every ${sec}s${nextAt ? ` • next ${nextAt}` : ""}`;
+    }
+
+    const compact = safeString(p1).replace(/\s+/g, " ").trim();
+    if (compact) return compact.length > 200 ? `${compact.slice(0, 197)}...` : compact;
+  }
+
+  if (part0) return part0;
   return "";
 }
 
-function toPreview(text: string) {
-  const compact = text.replace(/\s+/g, " ").trim();
-  if (compact.length <= 180) return compact;
-  return `${compact.slice(0, 177)}...`;
-}
+function summarizeToolJsonText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
 
-function shortOpaqueId(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.length <= 14) return trimmed;
-  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
-}
-
-function truncateWithTooltip(value: string, max = 36) {
-  const text = value.trim();
-  if (text.length <= max) {
-    return { display: text, tooltip: "" };
+  // Case 1: plain JSON array output
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      if (Array.isArray(arr)) {
+        const firstItem = arr[0] as Record<string, unknown> | undefined;
+        const id = safeString(firstItem?.id);
+        return `Tool output: ${arr.length} item(s)${id ? ` (first id: ${id})` : ""}`;
+      }
+    } catch {
+      return "Tool output: JSON array";
+    }
   }
+
+  // Case 2: object-wrapped tool result (aggregated, durationMs, toolName...)
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      const toolName = safeString(obj.toolName || obj.tool || "tool");
+      const duration = Number(obj.durationMs);
+      const aggregated = safeString(obj.aggregated || "");
+      let itemCount = 0;
+      if (aggregated.trim().startsWith("[")) {
+        try {
+          const arr = JSON.parse(aggregated);
+          if (Array.isArray(arr)) itemCount = arr.length;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (itemCount > 0) {
+        return `${toolName} completed${Number.isFinite(duration) ? ` in ${duration}ms` : ""} • ${itemCount} item(s)`;
+      }
+      if (aggregated) {
+        return `${toolName} completed${Number.isFinite(duration) ? ` in ${duration}ms` : ""}`;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return "";
+}
+
+function humanizePreview(message: string, payload: unknown): string {
+  const msg = message.trim();
+  if (msg && msg !== "[object Object]") {
+    // Try to humanize JSON-like chat payloads
+    try {
+      const parsed = JSON.parse(msg) as Record<string, unknown>;
+
+      const gatewaySummary = summarizeGatewayLogObject(parsed);
+      if (gatewaySummary) return gatewaySummary.length > 220 ? `${gatewaySummary.slice(0, 217)}...` : gatewaySummary;
+
+      const role = safeString(parsed.role).toLowerCase();
+      const content = parsed.content;
+      if (Array.isArray(content) && content.length > 0) {
+        const first = content[0] as Record<string, unknown>;
+        const rawText = safeString(first?.text || first?.message);
+
+        // Tool results are often huge JSON arrays/objects; summarize them.
+        if (role.includes("tool")) {
+          const toolSummary = summarizeToolJsonText(rawText);
+          if (toolSummary) return toolSummary;
+        }
+
+        const extracted = extractVisibleMessageFromEnvelope(rawText);
+        const text = extracted || rawText.replace(/\s+/g, " ").trim();
+        if (text) {
+          const prefix = role ? `${role}: ` : "";
+          const pretty = `${prefix}${text}`;
+          return pretty.length > 220 ? `${pretty.slice(0, 217)}...` : pretty;
+        }
+      }
+    } catch {
+      // keep raw message path
+    }
+
+    const extracted = extractVisibleMessageFromEnvelope(msg);
+    const compact = (extracted || msg).replace(/\s+/g, " ").trim();
+    return compact.length > 220 ? `${compact.slice(0, 217)}...` : compact;
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+
+    const gatewaySummary = summarizeGatewayLogObject(record);
+    if (gatewaySummary) return gatewaySummary.length > 220 ? `${gatewaySummary.slice(0, 217)}...` : gatewaySummary;
+
+    const nestedMessage = record.message as Record<string, unknown> | undefined;
+    const nestedRole = safeString(nestedMessage?.role).toLowerCase();
+    const nestedContent = Array.isArray(nestedMessage?.content) ? (nestedMessage?.content as Array<Record<string, unknown>>) : [];
+    if (nestedContent.length > 0) {
+      const rawText = safeString(nestedContent[0]?.text || nestedContent[0]?.message);
+
+      if (nestedRole.includes("tool")) {
+        const toolSummary = summarizeToolJsonText(rawText);
+        if (toolSummary) return toolSummary;
+      }
+
+      const text = extractVisibleMessageFromEnvelope(rawText);
+      if (text) return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+    }
+
+    const preferredKeys = ["text", "event", "detail", "summary", "_meta"];
+    for (const key of preferredKeys) {
+      if (record[key] != null) {
+        const value = safeString(record[key]).replace(/\s+/g, " ").trim();
+        if (value) return value.length > 220 ? `${value.slice(0, 217)}...` : value;
+      }
+    }
+
+    const parts = [record["2"], record["1"], record["0"]]
+      .map((v) => safeString(v).replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (parts.length) {
+      const joined = parts.join(" | ");
+      return joined.length > 220 ? `${joined.slice(0, 217)}...` : joined;
+    }
+
+    const text = safeString(payload).replace(/\s+/g, " ").trim();
+    return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+  }
+
+  return "(no message)";
+}
+
+function normalizeLog(log: AgentLog): NormalizedLog {
+  const row = log as unknown as Record<string, unknown>;
+  const rawPayload = row.rawPayload ?? row.raw_payload ?? null;
+  const message = pickString(row.message, row.message_preview, row.messagePreview);
+
   return {
-    display: `${text.slice(0, Math.max(0, max - 3))}...`,
-    tooltip: text,
+    id: pickString(row.id) || `${Date.now()}-${Math.random()}`,
+    agentId: pickString(row.agentId, row.agent_id, row.runtime_agent_id, row.runtimeAgentId, "unknown"),
+    agentName: pickString(row.agent_name, row.agentName, row.runtime_agent_id, row.runtimeAgentId, row.agentId, "unknown"),
+    occurredAt: pickString(row.occurredAt, row.occurred_at, new Date().toISOString()),
+    level: pickString(row.level, "info").toLowerCase(),
+    type: pickString(row.type, "system").toLowerCase(),
+    eventType: pickString(row.eventType, row.event_type, "system.warning").toLowerCase(),
+    channelType: pickString(row.channelType, row.channel_type, "internal").toLowerCase(),
+    direction: pickString(row.direction, "internal").toLowerCase(),
+    message,
+    messagePreview: humanizePreview(message, rawPayload),
+    runId: pickString(row.runId, row.run_id),
+    sessionKey: pickString(row.sessionKey, row.session_key),
+    sourceMessageId: pickString(row.sourceMessageId, row.source_message_id),
+    memorySource: pickString(row.memorySource, row.memory_source),
+    rawPayload,
   };
 }
 
-function prettifyLogPreview(messagePreview: string) {
-  let next = messagePreview;
-
-  next = next.replace(/\b(call_[A-Za-z0-9_-]{8})[A-Za-z0-9_-]*\b/g, "$1...");
-  next = next.replace(/\b(fc_[A-Za-z0-9_-]{8})[A-Za-z0-9_-]*\b/g, "$1...");
-  next = next.replace(/\s+result=\{[\s\S]*$/i, "");
-  next = next.replace(/\s+error=\{[\s\S]*$/i, "");
-
-  const toolHeader = next.match(/^Tool\s+([^\s]+)\s+\(([^)]+)\)\s+-\s*/i);
-  if (toolHeader) {
-    const toolName = toolHeader[1] ?? "tool";
-    const status = toolHeader[2] ?? "status";
-
-    const actionMatch = next.match(/\baction=([^\s]+)/i);
-    const pathMatch = next.match(/"path"\s*:\s*"([^"]+)"/i);
-    const memoryMatch = next.match(/\b(collection|memory_source|memorySource)\s*=\s*([^\s]+)/i);
-
-    const action = actionMatch?.[1] ?? "n/a";
-    const path = pathMatch?.[1]?.split("/").pop();
-    const memoryHint = memoryMatch ? `${memoryMatch[1]}=${memoryMatch[2]}` : "";
-
-    const extras = [action !== "n/a" ? `action=${action}` : "", path ? `file=${path}` : "", memoryHint]
-      .filter(Boolean)
-      .join(" · ");
-
-    return extras ? `${toolName} · ${status} · ${extras}` : `${toolName} · ${status}`;
-  }
-
-  return next;
+function matchesGroup(log: NormalizedLog, group: FilterGroup) {
+  if (group === "all") return true;
+  if (group === "error") return log.level === "error" || log.level === "warning" || log.eventType.endsWith(".error");
+  if (group === "chat") return log.eventType.startsWith("chat.") || log.type === "workflow";
+  if (group === "tool") return log.eventType.startsWith("tool.") || log.type === "tool";
+  if (group === "memory") return log.eventType.startsWith("memory.") || log.type === "memory";
+  if (group === "system") return log.eventType.startsWith("system.") || log.eventType.startsWith("heartbeat.") || log.type === "system";
+  return true;
 }
 
-function normalizeLogs(logs: AgentLog[]): NormalizedLog[] {
-  return logs.map((log) => {
-    const baseMessage = (log.message ?? "").trim();
-    const level = log.level;
-    const type = log.type;
-    let eventType =
-      log.eventType ?? classifyAgentLogEvent(level, type, baseMessage || log.messagePreview || "");
-
-    if (type === "tool" && eventType.startsWith("memory.")) {
-      eventType = classifyAgentLogEvent(level, "tool", baseMessage || log.messagePreview || "");
-    }
-    const channelType = log.channelType ?? classifyAgentLogChannel(baseMessage || log.messagePreview || "");
-    const messagePreview = log.messagePreview?.trim() ? log.messagePreview.trim() : toPreview(baseMessage);
-    return {
-      ...log,
-      eventType,
-      channelType,
-      messagePreview: prettifyLogPreview(messagePreview),
-    };
-  });
+function fmtTime(value: string) {
+  const raw = String(value || "").trim();
+  const normalized = raw.replace(/^"|"$/g, "");
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return formatDistanceToNow(date, { addSuffix: true });
 }
 
-function matchFilter(log: NormalizedLog, filter: FilterKey) {
-  if (filter === "all") return true;
-  if (filter === "messages") {
-    return (
-      log.eventType === "chat.user_in" ||
-      log.eventType === "chat.assistant_out" ||
-      log.eventType === "chat.reaction" ||
-      log.type === "workflow"
-    );
-  }
-  if (filter === "tools") {
-    return (
-      log.type === "tool" ||
-      log.eventType === "tool.start" ||
-      log.eventType === "tool.success" ||
-      log.eventType === "tool.error"
-    );
-  }
-  if (filter === "memory") {
-    return (
-      log.eventType === "memory.read" ||
-      log.eventType === "memory.write" ||
-      log.eventType === "memory.search" ||
-      log.eventType === "memory.upsert" ||
-      log.eventType === "memory.error" ||
-      Boolean(log.memorySource)
-    );
-  }
+function eventLabel(eventType: string) {
+  const map: Record<string, string> = {
+    "chat.user_in": "User message received",
+    "chat.assistant_out": "Assistant response emitted",
+    "chat.reaction": "Reaction sent",
+    "tool.start": "Tool started",
+    "tool.success": "Tool completed",
+    "tool.error": "Tool failed",
+    "memory.read": "Memory read",
+    "memory.write": "Memory write",
+    "memory.search": "Memory search",
+    "memory.upsert": "Memory upsert",
+    "memory.error": "Memory error",
+    "system.startup": "System startup",
+    "system.shutdown": "System shutdown",
+    "system.warning": "System warning",
+    "system.error": "System error",
+    "heartbeat.tick": "Heartbeat tick",
+    "heartbeat.status_change": "Heartbeat status changed",
+  };
+  return map[eventType] || eventType;
+}
+
+function LogDetails({ log }: { log: NormalizedLog }) {
+  const fullMessage = log.message || safeString(log.rawPayload) || "(no message)";
   return (
-    log.level === "warning" ||
-    log.level === "error" ||
-    log.eventType.endsWith(".warning") ||
-    log.eventType.endsWith(".error")
-  );
-}
-
-const LIVE_EVENTS_CHANNEL = "agent-logs-live";
-
-function canonicalRuntimeAgentId(value: string | null | undefined) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return text.startsWith("runtime:") ? text.slice("runtime:".length) : text;
-}
-
-export function LogsExplorer({ agents, logs, runtimeAgentId = "", logTotals }: LogsExplorerProps) {
-  const router = useRouter();
-  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
-  const [liveLogs, setLiveLogs] = useState<AgentLog[]>(logs);
-  const [selectedLog, setSelectedLog] = useState<NormalizedLog | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [deletingLogId, setDeletingLogId] = useState<string>("");
-  const [pendingDeleteLog, setPendingDeleteLog] = useState<NormalizedLog | null>(null);
-  const refreshInFlightRef = useRef(false);
-  const liveLogCountRef = useRef(logs.length);
-  const agentNameById = useMemo(
-    () => Object.fromEntries(agents.map((agent) => [agent.id, formatAgentName(agent.name)])),
-    [agents],
-  );
-
-  useEffect(() => {
-    setLiveLogs(logs);
-    liveLogCountRef.current = logs.length;
-  }, [logs]);
-
-  useEffect(() => {
-    const supabase = getBrowserSupabaseClient();
-    const scopeRuntimeId = canonicalRuntimeAgentId(runtimeAgentId);
-
-    const reloadLogs = async () => {
-      if (refreshInFlightRef.current) return;
-      refreshInFlightRef.current = true;
-      try {
-        const url = new URL("/api/agent/logs", window.location.origin);
-        url.searchParams.set("limit", String(Math.max(liveLogCountRef.current, 50)));
-        if (scopeRuntimeId) {
-          url.searchParams.set("runtimeAgentId", scopeRuntimeId);
-        }
-
-        const response = await fetch(url.toString(), { cache: "no-store" });
-        const payload = (await response.json()) as { logs?: AgentLog[]; error?: string };
-        if (!response.ok) {
-          throw new Error(payload.error || "Failed to refresh logs.");
-        }
-
-        const nextLogs = Array.isArray(payload.logs) ? payload.logs : [];
-        liveLogCountRef.current = nextLogs.length;
-        setLiveLogs(nextLogs);
-      } catch (error) {
-        console.error("[logs-live] refresh failed", error);
-      } finally {
-        refreshInFlightRef.current = false;
-      }
-    };
-
-    const channel = supabase
-      .channel(LIVE_EVENTS_CHANNEL)
-      .on("broadcast", { event: "agent_log_insert" }, (message) => {
-        const payload = (message?.payload ?? {}) as Record<string, unknown>;
-        const eventRuntimeId = canonicalRuntimeAgentId(
-          typeof payload.runtime_agent_id === "string" ? payload.runtime_agent_id : "",
-        );
-        if (scopeRuntimeId && eventRuntimeId !== scopeRuntimeId) {
-          return;
-        }
-        void reloadLogs();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [runtimeAgentId]);
-
-  const normalizedLogs = useMemo(() => normalizeLogs(liveLogs), [liveLogs]);
-  const filteredLogs = useMemo(
-    () => normalizedLogs.filter((log) => matchFilter(log, activeFilter)),
-    [activeFilter, normalizedLogs],
-  );
-
-  const infoCount = logTotals?.info ?? normalizedLogs.filter((log) => log.level === "info").length;
-  const warningCount = logTotals?.warning ?? normalizedLogs.filter((log) => log.level === "warning").length;
-  const errorCount = logTotals?.error ?? normalizedLogs.filter((log) => log.level === "error").length;
-  const totalCount = logTotals?.total ?? normalizedLogs.length;
-
-  function openLogDetails(log: NormalizedLog) {
-    setSelectedLog(log);
-    setModalOpen(true);
-  }
-
-  function deleteLog(log: NormalizedLog) {
-    setPendingDeleteLog(log);
-  }
-
-  async function confirmDeleteLog() {
-    if (!pendingDeleteLog) return;
-
-    setDeletingLogId(pendingDeleteLog.id);
-    try {
-      const response = await fetch("/api/agent/logs", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ logId: pendingDeleteLog.id }),
-      });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to delete log entry.");
-      }
-
-      toast.success("Log entry deleted");
-      setPendingDeleteLog(null);
-      router.refresh();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to delete log entry.");
-    } finally {
-      setDeletingLogId("");
-    }
-  }
-
-  return (
-    <div className="space-y-4 lg:space-y-6">
-      <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid gap-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs sm:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Total events</CardDescription>
-            <CardTitle className="text-2xl">{totalCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Info</CardDescription>
-            <CardTitle className="text-2xl text-blue-700 dark:text-blue-300">{infoCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Warnings</CardDescription>
-            <CardTitle className="text-2xl text-amber-700 dark:text-amber-300">{warningCount}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Errors</CardDescription>
-            <CardTitle className="text-2xl text-destructive">{errorCount}</CardTitle>
-          </CardHeader>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader className="space-y-3">
-          <div>
-            <CardTitle>Agent Event Stream</CardTitle>
-            <CardDescription>
-              Filter by event class, inspect traces, and view sanitized full payloads.
-            </CardDescription>
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm">Details</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>{eventLabel(log.eventType || log.type)}</DialogTitle>
+          <DialogDescription>{log.eventType || log.type} • {fmtTime(log.occurredAt)}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm min-w-0 overflow-hidden">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className={cn("capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge>
+            <Badge variant="outline" className={cn("capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge>
+            <Badge variant="outline">{log.direction || "internal"}</Badge>
+            {log.memorySource ? <Badge variant="outline">memory:{log.memorySource}</Badge> : null}
           </div>
+
+          <div className="rounded-md bg-muted/40 p-3 whitespace-pre-wrap break-words max-h-52 overflow-auto">{fullMessage}</div>
+
+          <pre className="max-h-[50vh] max-w-full overflow-auto rounded-md bg-muted/40 p-3 text-xs whitespace-pre-wrap break-all">
+{JSON.stringify(log.rawPayload, null, 2) || "null"}
+          </pre>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, onPageChange }: LogsExplorerProps) {
+  const [query, setQuery] = useState("");
+  const [group, setGroup] = useState<FilterGroup>("all");
+  const [level, setLevel] = useState("all");
+  const [channel, setChannel] = useState("all");
+  const [agent, setAgent] = useState("all");
+
+  const normalized = useMemo(() => logs.map(normalizeLog), [logs]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return normalized.filter((log) => {
+      if (!matchesGroup(log, group)) return false;
+      if (level !== "all" && log.level !== level) return false;
+      if (channel !== "all" && log.channelType !== channel) return false;
+      if (agent !== "all" && log.agentName !== agent) return false;
+
+      if (!q) return true;
+      const haystack = [
+        log.message,
+        log.messagePreview,
+        log.eventType,
+        log.type,
+        log.level,
+        log.channelType,
+        log.agentName,
+      ].join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [normalized, query, group, level, channel, agent]);
+
+  const agentOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const log of normalized) ids.add(log.agentName);
+    for (const a of agents) ids.add(a.name || a.id);
+    return [...ids].filter(Boolean).sort();
+  }, [normalized, agents]);
+
+  const pageButtons = useMemo(() => {
+    const total = Math.max(1, pageCount);
+    const start = Math.max(1, page - 2);
+    const end = Math.min(total, start + 4);
+    const adjustedStart = Math.max(1, end - 4);
+    const values: number[] = [];
+    for (let p = adjustedStart; p <= end; p += 1) values.push(p);
+    return values;
+  }, [page, pageCount]);
+
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * 50 + 1;
+  const rangeEnd = Math.min(totalCount, page * 50);
+
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Runtime Logs</CardTitle>
+
           <div className="flex flex-wrap items-center gap-2">
-            {FILTERS.map((item) => (
-              <Button
-                key={item.key}
-                type="button"
-                size="sm"
-                variant={activeFilter === item.key ? "default" : "outline"}
-                onClick={() => setActiveFilter(item.key)}
-              >
-                {item.label}
-              </Button>
-            ))}
-            <Badge variant="outline" className="ml-auto">
-              {filteredLogs.length} shown
-            </Badge>
+            <div className="relative min-w-[260px] flex-1">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search logs..." className="pl-9" />
+            </div>
+
+            <Select value={group} onValueChange={(v) => setGroup(v as FilterGroup)}>
+              <SelectTrigger className="w-[150px]"><SelectValue placeholder="All groups" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All groups</SelectItem>
+                <SelectItem value="chat">Chat</SelectItem>
+                <SelectItem value="tool">Tools</SelectItem>
+                <SelectItem value="memory">Memory / Qdrant</SelectItem>
+                <SelectItem value="system">System / Heartbeat</SelectItem>
+                <SelectItem value="error">Warnings + Errors</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={level} onValueChange={setLevel}>
+              <SelectTrigger className="w-[130px]"><SelectValue placeholder="All levels" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All levels</SelectItem>
+                <SelectItem value="debug">Debug</SelectItem>
+                <SelectItem value="info">Info</SelectItem>
+                <SelectItem value="warning">Warning</SelectItem>
+                <SelectItem value="error">Error</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={channel} onValueChange={setChannel}>
+              <SelectTrigger className="w-[140px]"><SelectValue placeholder="All channels" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All channels</SelectItem>
+                <SelectItem value="internal">Internal</SelectItem>
+                <SelectItem value="telegram">Telegram</SelectItem>
+                <SelectItem value="gateway">Gateway</SelectItem>
+                <SelectItem value="qdrant">Qdrant</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={agent} onValueChange={setAgent}>
+              <SelectTrigger className="w-[180px]"><SelectValue placeholder="All agents" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All agents</SelectItem>
+                {agentOptions.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {filteredLogs.length === 0 ? (
-            <Empty className="min-h-64 rounded-lg border">
-              <EmptyHeader>
-                <EmptyTitle>No logs for current filters</EmptyTitle>
-                <EmptyDescription>Change filters or wait for new runtime activity.</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <div className="overflow-hidden rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Actor</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Direction</TableHead>
-                    <TableHead>Channel</TableHead>
-                    <TableHead>Memory</TableHead>
-                    <TableHead>Level</TableHead>
-                    <TableHead>Preview</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredLogs.map((log) => {
-                    const rawAgentName = agentNameById[log.agentId] ?? log.agentId;
-                    const isUuidId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(log.agentId);
-                    const agentName =
-                      rawAgentName === log.agentId && isUuidId
-                        ? `Agent ${shortOpaqueId(log.agentId)}`
-                        : rawAgentName;
-                    const actorRaw =
-                      log.eventType === "chat.user_in"
-                        ? extractActorNameFromPayload(log.rawPayload)
-                            .replace(/\s*\((call_[^)]+\|fc_[^)]+)\)\s*$/i, "")
-                            .trim()
-                        : "";
-                    const actorName = actorRaw ? formatAgentName(actorRaw) : "";
-                    const actorLabel = truncateWithTooltip(actorName || agentName, 34);
-                    const viaLabel = truncateWithTooltip(agentName, 28);
-                    const isUserEvent = log.eventType === "chat.user_in";
-                    const showActor =
-                      actorName && actorName.toLowerCase() !== agentName.toLowerCase();
 
-                    return (
-                      <TableRow key={log.id}>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {formatTimestamp(log.occurredAt)}
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-0.5">
-                            {isUserEvent && showActor ? (
-                              <p className="text-sm font-medium" title={actorLabel.tooltip || undefined}>{actorLabel.display}</p>
-                            ) : (
-                              <Link
-                                href={`/agents/${encodeURIComponent(log.agentId)}`}
-                                prefetch={false}
-                                className="text-sm text-primary hover:underline"
-                                title={actorLabel.tooltip || undefined}
-                              >
-                                {actorLabel.display}
-                              </Link>
-                            )}
-                            {isUserEvent && showActor ? (
-                              <Link
-                                href={`/agents/${encodeURIComponent(log.agentId)}`}
-                                prefetch={false}
-                                className="text-xs text-muted-foreground hover:underline"
-                                title={viaLabel.tooltip || undefined}
-                              >
-                                via {viaLabel.display}
-                              </Link>
-                            ) : showActor ? (
-                              <p className="text-xs text-muted-foreground" title={actorLabel.tooltip || undefined}>{actorLabel.display}</p>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <AgentLogEventTypeBadge eventType={log.eventType} />
-                        </TableCell>
-                        <TableCell>
-                          {log.direction ? <AgentLogDirectionBadge direction={log.direction} /> : null}
-                        </TableCell>
-                        <TableCell>
-                          <AgentLogChannelBadge channel={log.channelType} />
-                        </TableCell>
-                        <TableCell>
-                          {log.memorySource ? <AgentLogMemorySourceBadge memorySource={log.memorySource} /> : null}
-                        </TableCell>
-                        <TableCell>
-                          <AgentLogLevelBadge level={log.level} />
-                        </TableCell>
-                        <TableCell className="max-w-[460px] whitespace-normal text-sm">
-                          <p>{log.messagePreview}</p>
-                          {log.sourceMessageId ? (
-                            <p className="mt-1 text-xs text-muted-foreground font-mono">
-                              ref: {shortOpaqueId(log.sourceMessageId)}
-                            </p>
-                          ) : null}
-                          {log.isJson ? (
-                            <Badge variant="outline" className="mt-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
-                              JSON
-                            </Badge>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button type="button" size="sm" variant="outline" onClick={() => openLogDetails(log)}>
-                              View Full
-                            </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              onClick={() => void deleteLog(log)}
-                              disabled={deletingLogId === log.id}
-                              aria-label="Delete log"
-                              title="Delete log"
-                            >
-                              <Trash2Icon className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+        <CardContent className="space-y-3">
+          <div className="rounded-md border overflow-hidden max-h-[65vh] overflow-y-auto">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Level</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Channel</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Preview</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">No logs match your filters.</TableCell>
+                  </TableRow>
+                ) : filtered.map((log) => (
+                  <TableRow key={log.id}>
+                    <TableCell className="text-xs text-muted-foreground">{fmtTime(log.occurredAt)}</TableCell>
+                    <TableCell><Badge variant="outline" className={cn("capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge></TableCell>
+                    <TableCell className="max-w-[220px]">
+                      <div className="font-medium text-sm">{eventLabel(log.eventType || log.type)}</div>
+                      <div className="text-xs text-muted-foreground">{log.eventType || log.type}</div>
+                    </TableCell>
+                    <TableCell><Badge variant="outline" className={cn("capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
+                    <TableCell>{log.agentName}</TableCell>
+                    <TableCell className="max-w-[520px] whitespace-normal break-words text-muted-foreground">{log.messagePreview}</TableCell>
+                    <TableCell className="text-right"><LogDetails log={log} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm text-muted-foreground">Showing {rangeStart}-{rangeEnd} of {totalCount} • Page {page} of {pageCount}</div>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(1)}>First</Button>
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}>Previous</Button>
+              {pageButtons.map((p) => (
+                <Button key={p} variant={p === page ? "default" : "outline"} size="sm" onClick={() => onPageChange(p)}>
+                  {p}
+                </Button>
+              ))}
+              <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => onPageChange(Math.min(pageCount, page + 1))}>Next</Button>
+              <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => onPageChange(pageCount)}>Last</Button>
             </div>
-          )}
+          </div>
         </CardContent>
       </Card>
-
-      <Dialog
-        open={Boolean(pendingDeleteLog)}
-        onOpenChange={(open) => {
-          if (!open && !deletingLogId) {
-            setPendingDeleteLog(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete log entry</DialogTitle>
-            <DialogDescription>
-              This will permanently delete this log entry from the database.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPendingDeleteLog(null)}
-              disabled={Boolean(deletingLogId)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void confirmDeleteLog()}
-              disabled={Boolean(deletingLogId)}
-            >
-              {deletingLogId ? "Deleting..." : "Delete log"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <LogDetailsModal log={selectedLog} open={modalOpen} onOpenChange={setModalOpen} />
     </div>
   );
 }

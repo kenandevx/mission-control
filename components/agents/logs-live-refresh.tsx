@@ -1,48 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getBrowserSupabaseClient } from "@/lib/supabase/client";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 
-const LIVE_EVENTS_CHANNEL = "agent-logs-live";
-
-type LiveState = "connecting" | "connected" | "reconnecting" | "offline";
+type LiveState = "connecting" | "connected" | "offline";
 
 export function LogsLiveRefresh() {
   const [state, setState] = useState<LiveState>("connecting");
 
   useEffect(() => {
-    const supabase = getBrowserSupabaseClient();
-    const channel = supabase.channel(LIVE_EVENTS_CHANNEL);
+    const eventSource = new EventSource("/api/agent/logs/stream");
 
-    channel
-      .on("broadcast", { event: "agent_log_insert" }, () => {
-        setState("connected");
-      })
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          setState("connected");
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          setState("offline");
-        } else {
-          setState("reconnecting");
-        }
-      });
+    eventSource.addEventListener("ready", () => setState("connected"));
+    eventSource.addEventListener("log_row", () => setState("connected"));
+    eventSource.onerror = () => setState("offline");
 
     return () => {
-      supabase.removeChannel(channel);
+      eventSource.close();
     };
   }, []);
 
-  const badgeVariant = state === "connected" ? "default" : "secondary";
+  const variant = useMemo(() => {
+    if (state === "connected") return "default";
+    if (state === "connecting") return "secondary";
+    return "destructive";
+  }, [state]);
+
   const label =
     state === "connected"
-      ? "Live: Connected"
-      : state === "reconnecting"
-        ? "Live: Reconnecting"
-        : state === "offline"
-          ? "Live: Offline"
-          : "Live: Connecting";
+      ? "Live: Bridge Connected"
+      : state === "connecting"
+        ? "Live: Connecting"
+        : "Live: Offline";
 
-  return <Badge variant={badgeVariant}>{label}</Badge>;
+  return <Badge variant={variant}>{label}</Badge>;
 }

@@ -1,95 +1,66 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
-import { PageHeader } from "@/components/layout/page-header";
-import { ClearLogsButton } from "@/components/agents/clear-logs-button";
-import { LogsExplorer } from "@/components/agents/logs-explorer";
-import { LogsPagination } from "@/components/agents/logs-pagination";
-import { LogsLiveRefresh } from "@/components/agents/logs-live-refresh";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { getAgentsAndLogsData, getSidebarUser } from "@/lib/db/server-data";
+import { LogsPageClient } from "@/components/agents/logs-page-client";
+import { getSql } from "@/lib/local-db";
 
-type PageProps = {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
+export const dynamic = "force-dynamic";
 
-function firstValue(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
-}
+export default async function LogsPage() {
+  const sql = getSql();
+  const limit = 50;
+  const page = 1;
+  const offset = 0;
 
-function parseLimit(value: string) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 200;
-  return Math.min(500, Math.max(50, Math.trunc(parsed)));
-}
+  const [{ count }] = await sql`select count(*)::int as count from agent_logs`;
 
-function parsePage(value: string) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.max(1, Math.trunc(parsed));
-}
+  const rows = await sql`
+    select
+      l.id,
+      l.agent_id,
+      l.runtime_agent_id,
+      l.occurred_at,
+      l.level,
+      l.type,
+      l.run_id,
+      l.message,
+      l.event_id,
+      l.event_type,
+      l.direction,
+      l.channel_type,
+      l.session_key,
+      l.source_message_id,
+      l.correlation_id,
+      l.status,
+      l.retry_count,
+      l.message_preview,
+      l.is_json,
+      l.contains_pii,
+      l.memory_source,
+      l.memory_key,
+      l.collection,
+      l.query_text,
+      l.result_count,
+      l.raw_payload,
+      a.openclaw_agent_id as agent_name
+    from agent_logs l
+    left join agents a on a.id = l.agent_id
+    order by l.occurred_at desc
+    limit ${limit}
+    offset ${offset}
+  `;
 
-export default async function LogsPage({ searchParams }: PageProps) {
-  const params = await searchParams;
-  const limit = parseLimit(firstValue(params.limit));
-  const page = parsePage(firstValue(params.page));
-
-  const [sidebarUser, { agents, logs, pageInfo, logTotals }] = await Promise.all([
-    getSidebarUser(),
-    getAgentsAndLogsData({ page, limit }),
-  ]);
-  const buildHref = (nextPage: number) => {
-    const query = new URLSearchParams();
-    if (limit !== 200) {
-      query.set("limit", String(limit));
-    }
-    if (nextPage > 1) {
-      query.set("page", String(nextPage));
-    }
-    return query.size > 0 ? `/logs?${query.toString()}` : "/logs";
+  const pageInfo = {
+    page,
+    limit,
+    totalCount: count,
+    pageCount: Math.max(1, Math.ceil(Number(count || 0) / limit)),
   };
 
   return (
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 72)",
-          "--header-height": "calc(var(--spacing) * 14)",
-        } as React.CSSProperties
-      }
-    >
-      <AppSidebar
-        variant="inset"
-        initialUser={
-          sidebarUser
-            ? {
-                name: sidebarUser.name,
-                email: sidebarUser.email,
-                avatar: sidebarUser.avatarUrl,
-              }
-            : null
-        }
-      />
+    <SidebarProvider style={{ "--sidebar-width": "calc(var(--spacing) * 72)", "--header-height": "calc(var(--spacing) * 14)" } as React.CSSProperties}>
+      <AppSidebar variant="inset" initialUser={null} />
       <SidebarInset>
-        <PageHeader
-          page="Logs"
-          actions={
-            <div className="flex w-full items-center justify-between gap-2">
-              <LogsLiveRefresh />
-              <div className="flex items-center gap-2">
-                <ClearLogsButton />
-              </div>
-            </div>
-          }
-        />
-        <div className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">
-          <LogsExplorer agents={agents} logs={logs} logTotals={logTotals} />
-          <LogsPagination
-            buildHref={buildHref}
-            page={pageInfo.page}
-            pageCount={pageInfo.pageCount}
-            shownCount={pageInfo.shownCount}
-            totalCount={pageInfo.totalCount}
-          />
-        </div>
+        <LogsPageClient initialLogs={rows as never[]} initialAgents={[]} initialPageInfo={pageInfo} />
       </SidebarInset>
     </SidebarProvider>
   );
