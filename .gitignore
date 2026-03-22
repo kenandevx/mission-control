@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# runtime state
+.runtime/
+
+# legacy removed stack
+supabase/
