@@ -446,7 +446,7 @@ function eventLabel(eventType: string) {
   return map[eventType] || eventType;
 }
 
-function LogDetails({ log }: { log: NormalizedLog }) {
+function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso: string }) {
   const payloadRecord = (log.rawPayload && typeof log.rawPayload === "object") ? (log.rawPayload as Record<string, unknown>) : null;
   const payloadMessage = payloadRecord?.message && typeof payloadRecord.message === "object"
     ? (payloadRecord.message as Record<string, unknown>)
