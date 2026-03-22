@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistance } from "date-fns";
 import { SearchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -413,12 +413,14 @@ function matchesGroup(log: NormalizedLog, group: FilterGroup) {
   return true;
 }
 
-function fmtTime(value: string) {
+function fmtTime(value: string, baseNowIso: string) {
   const raw = String(value || "").trim();
   const normalized = raw.replace(/^"|"$/g, "");
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return "unknown";
-  return formatDistanceToNow(date, { addSuffix: true });
+  const base = new Date(baseNowIso);
+  if (Number.isNaN(base.getTime())) return "unknown";
+  return formatDistance(date, base, { addSuffix: true });
 }
 
 function eventLabel(eventType: string) {
@@ -471,7 +473,7 @@ function LogDetails({ log }: { log: NormalizedLog }) {
       <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-hidden">
         <DialogHeader>
           <DialogTitle>{eventLabel(log.eventType || log.type)}</DialogTitle>
-          <DialogDescription>{log.eventType || log.type} • {fmtTime(log.occurredAt)}</DialogDescription>
+          <DialogDescription>{log.eventType || log.type} • {fmtTime(log.occurredAt, initialNowIso)}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm min-w-0 overflow-hidden">
           <div className="flex flex-wrap gap-2">
@@ -492,7 +494,7 @@ function LogDetails({ log }: { log: NormalizedLog }) {
   );
 }
 
-export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, onPageChange }: LogsExplorerProps) {
+export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, initialNowIso, onPageChange }: LogsExplorerProps) {
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<FilterGroup>("all");
   const [level, setLevel] = useState("all");
@@ -620,7 +622,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                   </TableRow>
                 ) : filtered.map((log) => (
                   <TableRow key={log.id}>
-                    <TableCell className="text-xs text-muted-foreground">{fmtTime(log.occurredAt)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{fmtTime(log.occurredAt, initialNowIso)}</TableCell>
                     <TableCell><Badge variant="outline" className={cn("capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge></TableCell>
                     <TableCell className="max-w-[220px]">
                       <div className="font-medium text-sm">{eventLabel(log.eventType || log.type)}</div>
@@ -629,7 +631,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                     <TableCell><Badge variant="outline" className={cn("capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
                     <TableCell>{log.agentName}</TableCell>
                     <TableCell className="max-w-[520px] whitespace-normal break-words text-muted-foreground">{log.messagePreview}</TableCell>
-                    <TableCell className="text-right"><LogDetails log={log} /></TableCell>
+                    <TableCell className="text-right"><LogDetails log={log} initialNowIso={initialNowIso} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

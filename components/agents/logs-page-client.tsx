@@ -18,6 +18,7 @@ type Props = {
   initialLogs: AgentLog[];
   initialAgents: Agent[];
   initialPageInfo: PageInfo;
+  initialNowIso: string;
 };
 
 export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo }: Props) {
@@ -79,6 +80,7 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo }: 
           page={pageInfo.page}
           pageCount={pageInfo.pageCount}
           totalCount={pageInfo.totalCount}
+          initialNowIso={initialNowIso}
           onPageChange={onPageChange}
         />
       </div>

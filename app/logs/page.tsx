@@ -55,12 +55,13 @@ export default async function LogsPage() {
     totalCount: count,
     pageCount: Math.max(1, Math.ceil(Number(count || 0) / limit)),
   };
+  const initialNowIso = new Date().toISOString();
 
   return (
     <SidebarProvider style={{ "--sidebar-width": "calc(var(--spacing) * 72)", "--header-height": "calc(var(--spacing) * 14)" } as React.CSSProperties}>
       <AppSidebar variant="inset" initialUser={null} />
       <SidebarInset>
-        <LogsPageClient initialLogs={rows as never[]} initialAgents={[]} initialPageInfo={pageInfo} />
+        <LogsPageClient initialLogs={rows as never[]} initialAgents={[]} initialPageInfo={pageInfo} initialNowIso={initialNowIso} />
       </SidebarInset>
     </SidebarProvider>
   );
