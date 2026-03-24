@@ -349,9 +349,11 @@ mission-control/
 
 | Script | Purpose |
 |---|---|
-| `./scripts/install.sh` | One-time first-run setup. Clones repo (if needed), generates `.env`, builds Docker images, starts DB + workers, runs `npm install`. Safe to re-run. |
-| `./scripts/update.sh` | Pull latest code, rebuild changed Docker images, restart services. Run before starting dev server after pulling. |
-| `./scripts/uninstall.sh` | Stop all Docker services and remove volumes/data. |
+| `./scripts/install.sh` | **Bootstrap install.** Clones repo (or pulls latest), generates `.env`, builds Docker images, starts DB + all workers, runs `npm install`, creates `/usr/local/bin/mc-*` shortcuts. Safe to re-run. |
+| `./scripts/update.sh` | **Update existing install.** Git pull, detects changed files (new/removed scripts, package.json, Docker files), rebuilds/restarts only what's needed, updates symlinks. |
+| `./scripts/clean.sh` | **Fresh start.** Stops + removes all containers and volumes, re-pulls latest from git, rebuilds and restarts everything. Use when you want a clean slate without re-cloning. |
+| `./scripts/uninstall.sh` | **Complete removal.** Stops all containers, removes volumes and project images, deletes the project directory, removes `/usr/local/bin/mc-*` shortcuts. |
+| `./scripts/db-init.sh` | **DB schema init.** SQL schema + seed data. Run automatically on first start via `db-init` container. |
 
 ### Runtime worker scripts
 
@@ -386,13 +388,29 @@ mission-control/
 - Node.js 24+
 - OpenClaw installed and gateway running on `ws://127.0.0.1:18789`
 
-### First-time setup
+### First-time setup (bootstrap)
 
+**One-line install (recommended):**
 ```bash
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/claw-arsenal/mission-control/main/install.sh | bash
 ```
 
-This clones the repo (if not already present), generates `.env`, builds Docker images, starts the database and schema, and starts all worker services. Then run `npm install` if not done automatically.
+This clones the repo into `/home/clawdbot/workspace/mission-control`, generates `.env`, builds all Docker images, starts the database + workers, runs `npm install`, and creates convenience shortcuts in `/usr/local/bin/mc-*`.
+
+**After install, shortcuts are available:**
+```bash
+mc-update      # pull latest + restart services (no fresh)
+mc-clean       # reset containers + volumes + re-pull latest
+mc-uninstall   # remove everything
+```
+
+**Or run scripts directly:**
+```bash
+./scripts/install.sh   # first-time setup
+./scripts/update.sh    # pull latest + rebuild + restart
+./scripts/clean.sh     # fresh start (destroys DB, re-initializes)
+./scripts/uninstall.sh # complete removal
+```
 
 ### Development
 
