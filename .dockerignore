@@ -1,0 +1,27 @@
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Node modules
+node_modules
+
+# Next.js build output
+.next
+out
+
+# Misc
+.DS_Store
+*.log
+
+# Runtime state
+.runtime
+
+# Editor/IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+Thumbs.db

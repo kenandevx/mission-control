@@ -4,27 +4,29 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: openclaw
-      POSTGRES_PASSWORD: openclaw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: mission_control
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openclaw -d mission_control"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   db-init:
     image: postgres:15
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
-      PGPASSWORD: openclaw
+      PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./:/workspace
     working_dir: /workspace
-    entrypoint: ["bash", "-lc"]
-    command: >
-      "until pg_isready -h db -U openclaw -d mission_control; do sleep 1; done;
-      psql -h db -U openclaw -d mission_control -v ON_ERROR_STOP=1 -f db/schema.sql;
-      psql -h db -U openclaw -d mission_control -v ON_ERROR_STOP=1 -f db/seed.sql;"
+    entrypoint: ["bash", "scripts/db-init.sh"]
     restart: "no"
 
   gateway-sync:
@@ -33,9 +35,9 @@ services:
       db-init:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
-      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
-      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:8787}
+      DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
     volumes:
       - ~/.openclaw:/openclaw
@@ -49,14 +51,22 @@ services:
       db-init:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
-      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
-      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:8787}
+      DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-ws://host.docker.internal:18789}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      API_USER: ${API_USER:-}
+      API_PASS: ${API_PASS:-}
     volumes:
       - ~/.openclaw:/openclaw
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', r=>{if(r.statusCode===200)process.exit(0);else process.exit(1)}).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    user: "node"
 
   bridge-logger:
     build: .
@@ -65,13 +75,37 @@ services:
       db-init:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
-      OPENCLAW_DATABASE_URL: postgresql://openclaw:openclaw@db:5432/mission_control
+      DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
     volumes:
-      - ~/.openclaw:/root/.openclaw
+      - ~/.openclaw:/home/nodejs:ro
       - ./:/app
     working_dir: /app
     command: ["node", "scripts/bridge-logger.mjs"]
+    user: "nodejs"
+
+  task-worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_DATABASE_URL: postgresql://openclaw:${POSTGRES_PASSWORD}@db:5432/mission_control
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-ws://host.docker.internal:18789}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_HOME: /home/nodejs
+      OPENCLAW_CONFIG_PATH: /home/nodejs/openclaw.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ~/.openclaw:/home/nodejs
+      - ~/.openclaw/workspace:/home/clawdbot/.openclaw/workspace:ro
+      - ~/.openclaw/extensions:/home/clawdbot/.openclaw/extensions:ro
+      - ./scripts/openclaw.container.json:/home/nodejs/openclaw.json:ro
+    command: ["node", "scripts/task-worker.mjs"]
+    user: "nodejs"
 
 volumes:
   pgdata:

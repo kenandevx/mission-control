@@ -1,0 +1,237 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.13",
+    "lastTouchedAt": "2026-03-23T22:42:34.300Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-03-23T22:02:15.705Z",
+    "lastRunVersion": "2026.3.13",
+    "lastRunCommand": "doctor",
+    "lastRunMode": "local"
+  },
+  "browser": {
+    "executablePath": "/usr/bin/google-chrome-stable",
+    "headless": true,
+    "noSandbox": true
+  },
+  "auth": {
+    "profiles": {
+      "openai-codex:default": {
+        "provider": "openai-codex",
+        "mode": "oauth"
+      },
+      "openrouter:default": {
+        "provider": "openrouter",
+        "mode": "api_key"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openrouter/deepseek/deepseek-chat-v3:free"
+      },
+      "models": {
+        "openrouter/deepseek/deepseek-chat-v3": {
+          "alias": "deepseek3chat"
+        },
+        "openrouter/auto": {
+          "alias": "OpenRouter"
+        },
+        "openrouter/deepseek/deepseek-v3.2": {
+          "alias": "deepseek3.2"
+        },
+        "openrouter/minimax/minimax-m2.5": {
+          "alias": "Minimax2.5"
+        },
+        "openrouter/minimax/minimax-m2.7": {
+          "alias": "Minimax2.7"
+        },
+        "openrouter/openai/gpt-5.4": {
+          "alias": "gpt5.4"
+        },
+        "openrouter/openai/gpt-oss-120b": {
+          "alias": "gptoss120b"
+        },
+        "openrouter/openai/gpt-oss-20b:nitro": {
+          "alias": "gptoss20bnitro"
+        },
+        "openrouter/google/gemini-3-flash-preview": {
+          "alias": "gemini3flash"
+        },
+        "openrouter/google/gemini-3.1-pro-preview": {
+          "alias": "gemini3pro"
+        },
+        "openrouter/openai/gpt-5.4-nano": {
+          "alias": "gpt5.4-nano"
+        },
+        "openrouter/openai/gpt-5.4-mini": {
+          "alias": "gpt5.4-mini"
+        },
+        "openai-codex/gpt-5.3-codex": {},
+        "openrouter/stepfun/step-3.5-flash:free": {
+          "alias": "Step Flash Free"
+        },
+        "openrouter/mistralai/devstral-2512:free": {
+          "alias": "Devstral Free"
+        },
+        "openrouter/qwen/qwen3-coder:free": {
+          "alias": "Qwen3 Coder"
+        },
+        "openrouter/deepseek/deepseek-chat-v3:free": {
+          "alias": "Deepseek Chat V3 Free"
+        }
+      },
+      "workspace": "/home/nodejs/workspace",
+      "memorySearch": {
+        "enabled": true,
+        "provider": "openai",
+        "model": "text-embedding-3-small"
+      },
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "model": "openrouter/minimax/minimax-m2.7",
+        "agentDir": "/home/nodejs/agents/main/agent"
+      },
+      {
+        "id": "research-agent",
+        "name": "research-agent",
+        "workspace": "/home/nodejs/workspace/agents/research-agent",
+        "agentDir": "/home/nodejs/agents/research-agent/agent",
+        "model": "openrouter/openai/gpt-5.4"
+      },
+      {
+        "id": "developer-agent",
+        "name": "developer-agent",
+        "workspace": "/home/nodejs/workspace/agents/developer-agent",
+        "agentDir": "/home/nodejs/agents/developer-agent/agent",
+        "model": "openrouter/openai/gpt-5.4"
+      },
+      {
+        "id": "writer-agent",
+        "name": "writer-agent",
+        "workspace": "/home/nodejs/workspace/agents/writer-agent",
+        "agentDir": "/home/nodejs/agents/writer-agent/agent",
+        "model": "openrouter/google/gemini-3-flash-preview"
+      },
+      {
+        "id": "test-agent",
+        "name": "test-agent",
+        "workspace": "/home/nodejs/workspace/agents/test-agent",
+        "agentDir": "/home/nodejs/agents/test-agent/agent",
+        "model": "openai-codex/gpt-5.3-codex"
+      },
+      {
+        "id": "openai-codex",
+        "name": "openai-codex",
+        "workspace": "/home/nodejs/workspace-openai-codex",
+        "agentDir": "/home/nodejs/agents/openai-codex/agent"
+      }
+    ]
+  },
+  "tools": {
+    "profile": "full",
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "brave",
+        "apiKey": "YvZFQLmGVnCZFiiTXf9U"
+      }
+    },
+    "media": {
+      "audio": {
+        "enabled": true,
+        "models": [
+          {
+            "provider": "openai",
+            "model": "gpt-4o-mini-transcribe"
+          }
+        ]
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "telegram",
+        "accountId": "default"
+      }
+    },
+    {
+      "agentId": "research-agent",
+      "match": {
+        "channel": "telegram",
+        "accountId": "default"
+      }
+    }
+  ],
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "8527335886:AAFExsopmgdfIP8M4lloOMNLBi4Mr0v5jzw",
+      "groups": {},
+      "allowFrom": [],
+      "groupAllowFrom": [],
+      "groupPolicy": "allowlist",
+      "streaming": "off"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "lan",
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789"
+      ]
+    },
+    "auth": {
+      "mode": "token",
+      "token": "dc0c298332c7ab60dfe1ad47c50c89340d7ed74bac1a02a0"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "nodes": {
+      "denyCommands": [
+        "camera.snap",
+        "camera.clip",
+        "screen.record",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+        "sms.send"
+      ]
+    }
+  },
+  "skills": {
+    "allowBundled": [
+      "nano-pdf"
+    ]
+  }
+}

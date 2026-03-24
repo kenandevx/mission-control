@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { GridView } from "@/components/tasks/grid/grid-view";
@@ -29,9 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useTasks } from "@/hooks/use-tasks";
 import { cn } from "@/lib/utils";
 import {
-  SORT_OPTIONS,
   type Assignee,
-  VIEW_OPTIONS,
   type BoardHydration,
   type TicketDetailsForm,
   type SortMode,
@@ -45,6 +43,43 @@ import {
   SearchIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
+
+// UTC date formatting to avoid hydration mismatches
+const pad = (n: number) => String(n).padStart(2, "0");
+const formatDateUTC = (value: string | number | null | undefined): string => {
+  if (!value) return "—";
+  const d = typeof value === "string" ? new Date(value) : new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const year = d.getUTCFullYear();
+  const month = pad(d.getUTCMonth() + 1);
+  const day = pad(d.getUTCDate());
+  return `${month}/${day}/${year}`;
+};
+
+const formatDateTimeUTC = (value: string | number | null | undefined): string => {
+  if (!value) return "No tasks yet";
+  const d = typeof value === "string" ? new Date(value) : new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const year = d.getUTCFullYear();
+  const month = pad(d.getUTCMonth() + 1);
+  const day = pad(d.getUTCDate());
+  const hours = pad(d.getUTCHours());
+  const minutes = pad(d.getUTCMinutes());
+  return `${month}/${day}/${year}, ${hours}:${minutes} UTC`;
+};
+
+const SORT_OPTIONS: Array<{ key: SortMode; label: string }> = [
+  { key: "newest", label: "Newest" },
+  { key: "oldest", label: "Oldest" },
+  { key: "dueDate", label: "Due date" },
+  { key: "title", label: "Title" },
+];
+
+const VIEW_OPTIONS: Array<{ key: ViewMode; label: string }> = [
+  { key: "kanban", label: "Kanban" },
+  { key: "list", label: "List" },
+  { key: "grid", label: "Grid" },
+];
 
 type LiveLog = {
   id: string;
@@ -77,9 +112,13 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
   const [openedTicketFromQuery, setOpenedTicketFromQuery] = useState<string | null>(null);
   const [boardActivity, setBoardActivity] = useState<LiveLog[]>([]);
   const [boardActivityLoading, setBoardActivityLoading] = useState(false);
-  const [heartbeatEtaSec, setHeartbeatEtaSec] = useState(20);
   const boardParam = searchParams.get("board");
   const ticketParam = searchParams.get("ticket");
+
+  const reloadBoardsRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    reloadBoardsRef.current = tasks.reloadBoards;
+  }, [tasks]);
 
   const visibleBoards = useMemo(() => {
     const query = boardSearch.trim().toLowerCase();
@@ -108,6 +147,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
       scheduledFor: tasks.createForm.scheduledFor,
       assignedAgentId: tasks.createForm.assignedAgentId,
       executionMode: tasks.createForm.executionMode,
+      approvalState: "none",
       planText: "",
       planApproved: false,
       executionState: "open",
@@ -202,9 +242,9 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let eventSource: EventSource | null = null;
 
-    const load = async () => {
+    const loadInitial = async () => {
       setBoardActivityLoading(true);
       try {
         const response = await fetch("/api/tasks", {
@@ -216,22 +256,51 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         if (!cancelled) {
           setBoardActivity(Array.isArray(data.rows) ? data.rows : []);
         }
+      } catch (error) {
+        console.error("Failed to load initial activity", error);
       } finally {
         if (!cancelled) setBoardActivityLoading(false);
       }
     };
 
-    void load();
-    timer = setInterval(() => {
-      setHeartbeatEtaSec((current) => (current <= 1 ? 20 : current - 1));
-      void load();
-    }, 1000);
+    void loadInitial();
+
+    const connect = () => {
+      setBoardActivityLoading(true);
+      eventSource = new EventSource("/api/events");
+
+      eventSource.addEventListener("ticket_activity", (e) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          const row = data.row;
+          if (row?.board_id === tasks.activeBoardId) {
+            setBoardActivity((prev) => [row, ...prev].slice(0, 20));
+            reloadBoardsRef.current?.();
+          }
+        } catch {
+          // ignore malformed events
+        }
+      });
+
+      eventSource.addEventListener("error", () => {
+        // EventSource will attempt to reconnect automatically.
+      });
+
+      eventSource.onopen = () => {
+        setBoardActivityLoading(false);
+      };
+    };
+
+    connect();
 
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
     };
-  }, [tasks.activeBoardId, workspaceOpen]);
+  }, [tasks.activeBoardId, workspaceOpen]); // removed tasks from deps
 
   return (
     <SidebarProvider
@@ -295,7 +364,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label="Board actions">
+                      <Button variant="ghost" size="icon-sm" aria-label="Board actions" id={`workspace-board-actions-${tasks.activeBoardId || 'none'}`}>
                         <MoreHorizontalIcon className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -354,7 +423,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                 <>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm">Board</Button>
+                      <Button variant="outline" size="sm" id="workspace-board-dropdown-trigger">Board</Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
                       <DropdownMenuItem onClick={() => tasks.openEditBoardModal(tasks.activeBoardId)}>
@@ -374,7 +443,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1.5">
+                      <Button variant="outline" size="sm" className="gap-1.5" id="workspace-add-dropdown-trigger">
                         <PlusIcon className="h-4 w-4" />
                         Add
                       </Button>
@@ -391,7 +460,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+                      <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" id="workspace-filter-dropdown-trigger">
                         <SlidersHorizontalIcon className="h-3.5 w-3.5" />
                         Filter
                       </Button>
@@ -424,7 +493,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               ) : (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5">
+                    <Button variant="outline" size="sm" className="gap-1.5" id="add-board-dropdown-trigger">
                       <PlusIcon className="h-4 w-4" />
                       Add board
                     </Button>
@@ -498,13 +567,13 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                         <TableCell className="text-sm tabular-nums">{board.totalTickets}</TableCell>
                         <TableCell className="text-sm tabular-nums">{board.listCount}</TableCell>
                         <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                          {board.createdAt ? new Date(board.createdAt).toLocaleDateString() : "—"}
+                          {formatDateUTC(board.createdAt)}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                          {board.updatedAt ? new Date(board.updatedAt).toLocaleDateString() : "—"}
+                          {formatDateUTC(board.updatedAt)}
                         </TableCell>
                         <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">
-                          {board.lastTicketAt ? new Date(board.lastTicketAt).toLocaleString() : "No tasks yet"}
+                          {formatDateTimeUTC(board.lastTicketAt)}
                         </TableCell>
                         <TableCell>
                           <div
@@ -519,6 +588,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                                   size="icon-sm"
                                   className="cursor-pointer"
                                   aria-label={`Actions for ${board.name}`}
+                                  id={`board-actions-${board.id}`}
                                 >
                                   <MoreHorizontalIcon className="h-4 w-4" />
                                 </Button>
@@ -561,8 +631,8 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Clock3Icon className="h-3.5 w-3.5" />
-                  <span>Heartbeat in {heartbeatEtaSec}s</span>
+                  <div className={`h-2 w-2 rounded-full ${boardActivityLoading ? "bg-amber-500" : "bg-emerald-500"}`} />
+                  <span>{boardActivityLoading ? "Connecting…" : "Live feed"}</span>
                 </div>
               </div>
             </div>
@@ -575,7 +645,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                     const queued = allTickets.filter((ticket) => ticket.executionState === "ready_to_execute").length;
                     const running = allTickets.filter((ticket) => ticket.executionState === "executing" || ticket.executionState === "done").length;
                     const failed = allTickets.filter((ticket) => ticket.executionState === "failed").length;
-                    const blocked = allTickets.filter((ticket) => (ticket.executionState === "open" || ticket.executionState === "planning" || ticket.executionState === "awaiting_plan_approval") && !ticket.assignedAgentId).length;
+                    const blocked = allTickets.filter((ticket) => (ticket.executionState === "open" || ticket.executionState === "planning" || ticket.executionState === "awaiting_approval") && !ticket.assignedAgentId).length;
                     return (
                       <>
                         <Badge variant="outline" className="text-[10px]">Queued: {queued}</Badge>
@@ -647,7 +717,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                           <span className="text-[10px] text-muted-foreground">{entry.level}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">{entry.details || entry.ticket_title || "—"}</p>
-                        <p className="mt-1 text-[10px] text-muted-foreground">{entry.ticket_title ? `${entry.ticket_title} • ` : ""}{entry.occurred_at ? new Date(entry.occurred_at).toLocaleString() : ""}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{entry.ticket_title ? `${entry.ticket_title} • ` : ""}{entry.occurred_at ? formatDateTimeUTC(entry.occurred_at) : ""}</p>
                       </div>
                     ))
                   )}
@@ -694,6 +764,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
             tagsText: patch.tagsText ?? prev.tagsText,
             assigneeIds: patch.assigneeIds ?? prev.assigneeIds,
             assignedAgentId: patch.assignedAgentId ?? prev.assignedAgentId,
+            executionMode: patch.executionMode ?? prev.executionMode,
           }))
         }
         onUploadAttachments={() => {}}
@@ -776,6 +847,8 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               onSave={tasks.handleSaveDetails}
               onRetryNow={() => void tasks.executeDetailsControlAction("retry")}
               onCancelExecution={() => void tasks.executeDetailsControlAction("cancel")}
+              onApprovePlan={() => { if (detailsForm?.id) { void (async () => { await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "approvePlan", ticketId: detailsForm.id, actorId: "operator" }) }); tasks.reloadBoards(); tasks.closeDetailsModal(); })(); } }}
+              onRejectPlan={() => { if (detailsForm?.id) { void (async () => { await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rejectPlan", ticketId: detailsForm.id }) }); tasks.reloadBoards(); tasks.closeDetailsModal(); })(); } }}
               onCopy={() => void tasks.handleCopyTicket(detailsForm.id)}
               onDelete={() => void tasks.handleDeleteTicket(detailsForm.id)}
               onClose={tasks.closeDetailsModal}
@@ -791,3 +864,4 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
     </SidebarProvider>
   );
 }
+

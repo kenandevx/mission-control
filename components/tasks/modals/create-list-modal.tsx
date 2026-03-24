@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -33,6 +34,9 @@ export function CreateListModal({
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>Create list</DialogTitle>
+          <DialogDescription>
+            Add a new list (column) to your board. For example: "Review", "Blocked", or "Done".
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-2 py-2">

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,6 +81,8 @@ type Props = {
   onSave: (files?: File[]) => void;
   onRetryNow?: () => void;
   onCancelExecution?: () => void;
+  onApprovePlan?: () => void;
+  onRejectPlan?: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onClose: () => void;
@@ -139,6 +141,7 @@ const executionLabel = (value: TicketDetailsForm["executionState"]) =>
 
 const EXECUTION_STEPS: Array<{ key: TicketExecutionState; label: string }> = [
   { key: "open", label: "Open" },
+  { key: "draft", label: "Draft" },
   { key: "planning", label: "Planning" },
   { key: "awaiting_plan_approval", label: "Awaiting approval" },
   { key: "ready_to_execute", label: "Ready" },
@@ -229,6 +232,8 @@ export function TicketDetailsModal({
   onSave,
   onRetryNow,
   onCancelExecution,
+  onApprovePlan,
+  onRejectPlan,
   onCopy,
   onDelete,
   onClose,
@@ -263,7 +268,7 @@ export function TicketDetailsModal({
     form.executionState === "pending" ||
     form.executionState === "queued" ||
     form.executionState === "ready_to_execute";
-  const canBePickedUp = inProgressLane && hasRuntimeAgent && (executableState || (form.executionMode === "plan" && form.planApproved));
+  const canBePickedUp = inProgressLane && hasRuntimeAgent && (executableState || (form.executionMode === "planned" && form.planApproved));
 
   const visibleSubtasks = hideComplete
     ? subtasks.filter((subtask) => !subtask.completed)
@@ -338,6 +343,7 @@ export function TicketDetailsModal({
         >
           <DialogHeader className="sr-only">
             <DialogTitle>Task details</DialogTitle>
+            <DialogDescription>View and edit ticket details, comments, and activity.</DialogDescription>
           </DialogHeader>
 
           <Tabs
@@ -424,43 +430,18 @@ export function TicketDetailsModal({
                 </div>
 
                 <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm shadow-sm">
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">{executionLabel(form.executionState)}</Badge>
-                    <Badge variant="outline">{priorityLabel[form.priority]} priority</Badge>
-                    <Badge variant="outline">{statusTitle}</Badge>
-                    <Badge variant="outline">{dueLabel}</Badge>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="font-normal">{executionLabel(form.executionState)}</Badge>
+                    <Badge variant="outline" className="font-normal">{priorityLabel[form.priority]} priority</Badge>
+                    <Badge variant="outline" className="font-normal">{statusTitle}</Badge>
+                    <Badge variant="outline" className="font-normal">{dueLabel}</Badge>
                   </div>
 
-                  {!canBePickedUp ? (
-                    <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600">
-                      Not pickup-ready yet. Required: column = In progress, runtime agent set, execution state = pending/queued.
-                    </div>
-                  ) : null}
-
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="rounded-lg border border-border/60 bg-background px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Assignees</p>
-                      <p className="truncate text-sm text-foreground">
-                        {selectedAssignees.length > 0
-                          ? selectedAssignees.map((assignee) => assignee.name).join(", ")
-                          : "Unassigned"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-background px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Attachments</p>
-                      <p className="text-sm text-foreground">{attachments.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-background px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Comments</p>
-                      <p className="text-sm text-foreground">{comments.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-background px-3 py-2 sm:col-span-2 lg:col-span-3">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pickup requirements</p>
-                      <p className="text-xs text-muted-foreground">
-                        To run automatically: ticket should be in <strong>Doing</strong>, have runtime agent set, execution state in pending/queued, and be due now (or retry now).
-                      </p>
-                    </div>
-                  </div>
+                  {!canBePickedUp && (
+                    <p className="text-xs text-amber-600">
+                      Not pickup-ready — requires column "In progress", runtime agent, and pending/queued state.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -490,8 +471,8 @@ export function TicketDetailsModal({
                   />
                   {!overviewCollapsed && (
                     <CardContent className="space-y-4 p-4 sm:p-5">
-                      {/* Row 1: Status, Priority, Date */}
-                      <div className="grid gap-3 md:grid-cols-3">
+                      {/* Row 1: Status, Priority, Date — full width */}
+                      <div className="grid gap-3 sm:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label>Status</Label>
                           <Select value={form.statusId} onValueChange={(value) => onChange({ statusId: value })}>
@@ -530,7 +511,7 @@ export function TicketDetailsModal({
                         </div>
 
                         <div className="space-y-1.5">
-                          <Label htmlFor="ticket-date">Date</Label>
+                          <Label htmlFor="ticket-date">Due date</Label>
                           <Input
                             id="ticket-date"
                             type="date"
@@ -542,42 +523,70 @@ export function TicketDetailsModal({
                         </div>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label>Execution mode</Label>
-                          <Select value={form.executionMode} onValueChange={(value) => onChange({ executionMode: value as TicketDetailsForm["executionMode"] })}>
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="auto">Auto</SelectItem>
-                              <SelectItem value="manual">Manual</SelectItem>
-                              <SelectItem value="plan">Plan first</SelectItem>
-                            </SelectContent>
-                          </Select>
+                      {/* Row 2: Execution Mode + action buttons — full width */}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="space-y-1.5">
+                            <Label>Execution</Label>
+                            <Select
+                              value={form.executionMode}
+                              onValueChange={(value) =>
+                                onChange({ executionMode: value as TicketDetailsForm["executionMode"] })
+                              }
+                            >
+                              <SelectTrigger className="flex-1 min-w-[160px] h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="direct">Direct</SelectItem>
+                                <SelectItem value="planned">Planned (approval)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {mode === "edit" && (
+                            <div className="flex flex-wrap items-center gap-2 pb-1.5">
+                              {form.approvalState === "pending" ? (
+                                <>
+                                  <Button type="button" variant="outline" size="default" onClick={onRejectPlan} className="h-9">
+                                    Reject plan
+                                  </Button>
+                                  <Button type="button" variant="default" size="default" onClick={onApprovePlan} className="h-9">
+                                    Approve plan
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button type="button" variant="outline" size="default" onClick={onRetryNow} className="h-9">
+                                    Retry now
+                                  </Button>
+                                  <Button type="button" variant="destructive" size="default" onClick={onCancelExecution} className="h-9">
+                                    Cancel execution
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-0.5">
-                          {mode === "edit" ? (
-                            <>
-                              <Button type="button" variant="outline" size="sm" onClick={onRetryNow}>
-                                Retry now
-                              </Button>
-                              <Button type="button" variant="destructive" size="sm" onClick={onCancelExecution}>
-                                Cancel execution
-                              </Button>
-                            </>
-                          ) : null}
-                        </div>
+                        {form.executionMode === "planned" ? (
+                          <div
+                            className={cn(
+                              "rounded-md border px-3 py-2 text-xs",
+                              form.planApproved
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
+                                : "border-amber-500/30 bg-amber-500/10 text-amber-700",
+                            )}
+                          >
+                            {form.planApproved
+                              ? "✓ Plan approved — ticket can proceed."
+                              : "⚠ Plan mode will generate a plan and wait for your approval before executing."}
+                          </div>
+                        ) : null}
                       </div>
 
-                      {form.executionMode === "plan" ? (
-                        <div className={cn("rounded-lg border px-3 py-2 text-xs", form.planApproved ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600" : "border-amber-500/30 bg-amber-500/10 text-amber-700") }>
-                          {form.planApproved ? "Plan approved — ticket can proceed." : "Plan mode will generate a plan and wait for approval."}
-                        </div>
-                      ) : null}
-
-                      <div className="grid gap-3 md:grid-cols-2">
+                      {/* Row 3: Labels + Assignees — full width */}
+                      <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label htmlFor="ticket-labels">Labels</Label>
                           <Input
@@ -595,17 +604,19 @@ export function TicketDetailsModal({
                               <Button variant="outline" className="w-full justify-between" size="sm">
                                 <span>
                                   {selectedAssignees.length > 0
-                                    ? `${selectedAssignees.length} selected`
+                                    ? `${selectedAssignees.length} selected — ${selectedAssignees
+                                        .map((a) => a.name)
+                                        .join(", ")}`
                                     : "Assign people"}
                                 </span>
                                 <MoreHorizontalIcon className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-72">
+                            <DropdownMenuContent align="end" className="w-64">
                               {assignees.map((assignee) => (
                                 <DropdownMenuItem key={assignee.id} onClick={() => toggleAssignee(assignee.id)}>
+                                  <span className="mr-2">{form.assigneeIds.includes(assignee.id) ? "✓" : ""}</span>
                                   {assignee.name}
-                                  {form.assigneeIds.includes(assignee.id) ? " ✓" : ""}
                                 </DropdownMenuItem>
                               ))}
                             </DropdownMenuContent>
@@ -613,15 +624,17 @@ export function TicketDetailsModal({
                         </div>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2">
+                      {/* Row 4: Description (full width), then Attachments */}
+                      <div className="space-y-3">
                         <div className="space-y-2">
                           <Label htmlFor="ticket-description">Description</Label>
                           <Textarea
                             id="ticket-description"
                             value={form.description}
-                            rows={mode === "create" ? 3 : 4}
+                            rows={mode === "create" ? 6 : 7}
                             onChange={(event) => onChange({ description: event.target.value })}
-                            placeholder="Add a short summary or implementation notes..."
+                            placeholder="Add notes, implementation details, or context..."
+                            className="resize-none"
                           />
                         </div>
 
@@ -655,51 +668,91 @@ export function TicketDetailsModal({
 
                           {mode === "create" ? (
                             createFiles.length === 0 ? (
-                              <p className="text-xs text-muted-foreground">No attachments selected.</p>
+                              <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
+                                No attachments. Click Upload to add files.
+                              </p>
                             ) : (
-                              <div className="space-y-2 rounded-lg border border-border/70 p-2">
-                                {createFiles.map((file, index) => (
-                                  <div
-                                    key={`${file.name}-${file.lastModified}-${index}`}
-                                    className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-1.5"
-                                  >
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm">{file.name}</p>
-                                      <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                              <ScrollArea className="h-40 rounded-lg border border-border/70">
+                                <div className="space-y-2 p-2">
+                                  {createFiles.map((file, index) => (
+                                    <div
+                                      key={`${file.name}-${file.lastModified}-${index}`}
+                                      className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-2"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm">{file.name}</p>
+                                        <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                                      </div>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        onClick={() => removeCreateFile(index)}
+                                        aria-label={`Remove ${file.name}`}
+                                      >
+                                        <Trash2Icon className="h-4 w-4 text-destructive" />
+                                      </Button>
                                     </div>
-                                    <Button variant="ghost" size="icon-sm" onClick={() => removeCreateFile(index)} aria-label={`Remove ${file.name}`}>
-                                      <Trash2Icon className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                  </div>
-                                ))}
-                              </div>
+                                  ))}
+                                </div>
+                              </ScrollArea>
                             )
                           ) : attachmentsLoading ? (
-                            <p className="text-xs text-muted-foreground">Loading attachments...</p>
+                            <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
+                              Loading attachments...
+                            </p>
                           ) : attachments.length === 0 ? (
-                            <p className="text-xs text-muted-foreground">No attachments yet.</p>
+                            <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
+                              No attachments yet.
+                            </p>
                           ) : (
-                            <ScrollArea className="h-36 rounded-xl border border-border/70">
+                            <ScrollArea className="h-40 rounded-lg border border-border/70">
                               <div className="space-y-2 p-2">
                                 {attachments.map((attachment) => {
                                   const isImage = attachment.mimeType.startsWith("image/");
                                   return (
-                                    <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2">
+                                    <div
+                                      key={attachment.id}
+                                      className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2"
+                                    >
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
-                                          {isImage ? <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" /> : <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                                          {isImage ? (
+                                            <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                          ) : (
+                                            <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                          )}
                                           <p className="truncate text-sm">{attachment.name}</p>
                                         </div>
                                         <p className="text-xs text-muted-foreground">{formatBytes(attachment.size)}</p>
                                       </div>
                                       <div className="flex items-center gap-1">
-                                        {isImage ? <Button variant="ghost" size="icon-sm" onClick={() => setPreviewAttachment(attachment)} aria-label={`Preview ${attachment.name}`}><EyeIcon className="h-4 w-4" /></Button> : null}
+                                        {isImage ? (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon-sm"
+                                            onClick={() => setPreviewAttachment(attachment)}
+                                            aria-label={`Preview ${attachment.name}`}
+                                          >
+                                            <EyeIcon className="h-4 w-4" />
+                                          </Button>
+                                        ) : null}
                                         <Button variant="ghost" size="icon-sm" asChild>
-                                          <a href={attachment.url} download={attachment.name} target="_blank" rel="noopener noreferrer" aria-label={`Download ${attachment.name}`}>
+                                          <a
+                                            href={attachment.url}
+                                            download={attachment.name}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            aria-label={`Download ${attachment.name}`}
+                                          >
                                             <DownloadIcon className="h-4 w-4" />
                                           </a>
                                         </Button>
-                                        <Button variant="ghost" size="icon-sm" onClick={() => onDeleteAttachment(attachment.id)} aria-label={`Delete ${attachment.name}`}>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon-sm"
+                                          onClick={() => onDeleteAttachment(attachment.id)}
+                                          aria-label={`Delete ${attachment.name}`}
+                                        >
                                           <Trash2Icon className="h-4 w-4 text-destructive" />
                                         </Button>
                                       </div>
@@ -967,6 +1020,9 @@ export function TicketDetailsModal({
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{previewAttachment?.name ?? "Image preview"}</DialogTitle>
+            <DialogDescription>
+              Preview of attached image. Use the download button to save.
+            </DialogDescription>
           </DialogHeader>
           {previewAttachment ? (
             <div className="space-y-3">

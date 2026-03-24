@@ -38,18 +38,25 @@ function ensureStateDir() {
 function acquireLockOrExit() {
   try {
     if (fs.existsSync(LOCK_PATH)) {
-      const previousPid = Number(fs.readFileSync(LOCK_PATH, "utf8").trim());
-      if (Number.isFinite(previousPid) && previousPid > 0) {
-        try {
-          process.kill(previousPid, 0);
-          console.error(`[bridge-logger] another instance is already running (pid=${previousPid}). Exiting.`);
-          process.exit(1);
-        } catch {
-          // stale lock, continue
+      const raw = fs.readFileSync(LOCK_PATH, "utf8").trim();
+      // Lock file format: "pid:startTimeMs"
+      const colonIdx = raw.indexOf(":");
+      if (colonIdx > 0) {
+        const previousPid = Number(raw.slice(0, colonIdx));
+        const previousStartMs = Number(raw.slice(colonIdx + 1));
+        if (Number.isFinite(previousPid) && previousPid > 0 && Number.isFinite(previousStartMs)) {
+          // PID collision with a very recent timestamp → likely a real concurrent instance
+          const now = Date.now();
+          const isRecent = (now - previousStartMs) < 30_000; // within 30s
+          if (previousPid === process.pid && isRecent) {
+            console.error(`[bridge-logger] another instance is already running (pid=${previousPid}). Exiting.`);
+            process.exit(1);
+          }
+          // Stale lock (different PID or old timestamp from a previous run) — continue to overwrite
         }
       }
     }
-    fs.writeFileSync(LOCK_PATH, String(process.pid));
+    fs.writeFileSync(LOCK_PATH, `${process.pid}:${Date.now()}`);
   } catch (error) {
     console.error("[bridge-logger] failed to acquire lock:", error?.message || error);
     process.exit(1);
@@ -59,7 +66,9 @@ function acquireLockOrExit() {
 function releaseLock() {
   try {
     if (!fs.existsSync(LOCK_PATH)) return;
-    const current = fs.readFileSync(LOCK_PATH, "utf8").trim();
+    const raw = fs.readFileSync(LOCK_PATH, "utf8").trim();
+    const colonIdx = raw.indexOf(":");
+    const current = colonIdx > 0 ? raw.slice(0, colonIdx) : raw;
     if (current === String(process.pid)) fs.unlinkSync(LOCK_PATH);
   } catch {
     // ignore lock release errors
@@ -546,9 +555,10 @@ function tailFile(getSql, onDbReset, filePath, handler) {
   });
 
   try {
-    fs.watch(filePath, () => drain());
+    // Use polling-based watch for better compatibility (avoid "illegal path" errors with inotify)
+    fs.watchFile(filePath, { interval: 1000 }, () => drain());
   } catch (error) {
-    console.error(`[bridge-logger] fs.watch failed for ${filePath}:`, error?.message || error);
+    console.error(`[bridge-logger] fs.watchFile failed for ${filePath}:`, error?.message || error);
   }
 }
 

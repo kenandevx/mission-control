@@ -98,9 +98,14 @@ alter table tickets add column if not exists execution_mode text not null defaul
 alter table tickets add column if not exists lifecycle_status text not null default 'open';
 alter table tickets add column if not exists plan_text text;
 alter table tickets add column if not exists plan_approved boolean not null default false;
-alter table tickets add column if not exists approved_by text;
 alter table tickets add column if not exists approved_at timestamptz;
 alter table tickets add column if not exists created_by text;
+alter table tickets add column if not exists telegram_chat_id text;
+alter table tickets add column if not exists queue_name text not null default 'default';
+alter table tickets add column if not exists approval_state text not null default 'none';
+alter table tickets add column if not exists plan_generated_at timestamptz;
+alter table tickets add column if not exists approved_by text;
+update tickets set queue_name = 'default' where queue_name is null;
 
 create table if not exists ticket_attachments (
   id uuid primary key default gen_random_uuid(),
@@ -152,6 +157,18 @@ create table if not exists agents (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (workspace_id, openclaw_agent_id)
+);
+
+create table if not exists agent_sessions (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  agent_id uuid not null references agents(id) on delete cascade,
+  telegram_chat_id text not null,
+  openclaw_session_key text not null,
+  last_used_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (workspace_id, agent_id, telegram_chat_id)
 );
 
 create table if not exists agent_logs (
@@ -208,3 +225,22 @@ create table if not exists notification_channels (
   updated_at timestamptz not null default now(),
   unique (workspace_id, user_id, provider, target)
 );
+
+create table if not exists worker_settings (
+  id integer primary key default 1,
+  enabled boolean not null default true,
+  poll_interval_seconds integer not null default 20,
+  max_concurrency integer not null default 3,
+  last_tick_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint worker_settings_single_row check (id = 1),
+  constraint worker_settings_poll_range check (poll_interval_seconds between 5 and 300),
+  constraint worker_settings_concurrency_range check (max_concurrency between 1 and 20)
+);
+
+insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency)
+values (1, true, 20, 3)
+on conflict (id) do nothing;
+
+alter table worker_settings add column if not exists last_tick_at timestamptz;

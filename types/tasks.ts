@@ -23,9 +23,10 @@ export type TicketExecutionState =
   | "pending"
   | "queued"
   | "picked_up"
-  | "running";
+  | "running"
+  | "draft";
 
-export type TicketExecutionMode = "auto" | "manual" | "plan";
+export type TicketExecutionMode = "direct" | "planned";
 
 export type Ticket = {
   id: string;
@@ -38,6 +39,7 @@ export type Ticket = {
   assigneeIds: string[];
   assignedAgentId?: string;
   executionMode?: TicketExecutionMode;
+  approvalState?: "none" | "pending" | "approved" | "rejected";
   planText?: string;
   planApproved?: boolean;
   scheduledFor?: string | null;
@@ -148,6 +150,7 @@ export type TicketDetailsForm = {
   assigneeIds: string[];
   assignedAgentId: string;
   executionMode: TicketExecutionMode;
+  approvalState: "none" | "pending" | "approved" | "rejected";
   planText: string;
   planApproved: boolean;
   executionState: TicketExecutionState;
@@ -303,7 +306,7 @@ export const emptyCreateForm = (statusId: string): CreateTicketForm => ({
   tagsText: "",
   assigneeIds: [],
   assignedAgentId: "",
-  executionMode: "auto",
+  executionMode: "direct",
 });
 
 const MONTH_SHORT = [

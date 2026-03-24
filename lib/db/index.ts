@@ -336,7 +336,7 @@ function toTicketRecord(row: any): TicketRecord {
     tags: row.tags ?? [],
     assigneeIds: row.assignee_ids ?? [],
     assignedAgentId: row.assigned_agent_id ?? "",
-    executionMode: row.execution_mode ?? "auto",
+    executionMode: row.execution_mode ?? "direct",
     planText: row.plan_text ?? "",
     planApproved: Boolean(row.plan_approved),
     scheduledFor: row.scheduled_for,

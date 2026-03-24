@@ -195,7 +195,7 @@ export async function getBoardsPageData(): Promise<BoardHydration[]> {
         tags: ticket.tags ?? [],
         assigneeIds: ticket.assignee_ids ?? [],
         assignedAgentId: ticket.assigned_agent_id ?? "",
-        executionMode: (ticket.execution_mode as Ticket["executionMode"]) ?? "auto",
+        executionMode: (ticket.execution_mode as Ticket["executionMode"]) ?? "direct",
         planText: ticket.plan_text ?? "",
         planApproved: Boolean(ticket.plan_approved),
         scheduledFor: ticket.scheduled_for ? ticket.scheduled_for.slice(0, 10) : null,

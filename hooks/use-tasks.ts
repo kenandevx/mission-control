@@ -100,6 +100,106 @@ const colorKeyFromTone = (tone: Column["tone"]): string | null => {
   return null;
 };
 
+function hydrateBoards(
+  rawBoards: any[],
+  rawColumns: any[],
+  rawTickets: any[]
+): BoardHydration[] {
+  const columnsByBoard = rawColumns.reduce((acc, col) => {
+    (acc[col.board_id] ??= []).push(col);
+    return acc;
+  }, {} as Record<string, any[]>);
+  const ticketsByBoard = rawTickets.reduce((acc, t) => {
+    (acc[t.board_id] ??= []).push(t);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const formatDateUTC = (dateStr: string | null) => {
+    if (!dateStr) return "—";
+    try {
+      const d = new Date(dateStr);
+      const year = d.getUTCFullYear();
+      const month = pad(d.getUTCMonth() + 1);
+      const day = pad(d.getUTCDate());
+      return `${month}/${day}/${year}`;
+    } catch {
+      return "—";
+    }
+  };
+
+  const formatDateTimeUTC = (dateStr: string | null) => {
+    if (!dateStr) return "No tasks yet";
+    try {
+      const d = new Date(dateStr);
+      const year = d.getUTCFullYear();
+      const month = pad(d.getUTCMonth() + 1);
+      const day = pad(d.getUTCDate());
+      const hours = pad(d.getUTCHours());
+      const minutes = pad(d.getUTCMinutes());
+      return `${month}/${day}/${year}, ${hours}:${minutes} UTC`;
+    } catch {
+      return "—";
+    }
+  };
+
+  return rawBoards.map((board) => {
+    const boardCols = columnsByBoard[board.id] ?? [];
+    const boardTix = ticketsByBoard[board.id] ?? [];
+
+    const state: BoardState = createEmptyBoard();
+
+    for (const col of boardCols) {
+      state.columns[col.id] = {
+        id: col.id,
+        title: col.title,
+        tone: toneFromColorKey(col.color_key),
+        isDefault: Boolean(col.is_default),
+      } as Column;
+      state.columnOrder.push(col.id);
+      state.ticketIdsByColumn[col.id] = [];
+    }
+
+    for (const t of boardTix) {
+      const ticket: Ticket = {
+        id: t.id,
+        title: t.title,
+        description: t.description ?? "",
+        statusId: t.column_id,
+        priority: isTicketPriority(t.priority) ? t.priority : "medium",
+        dueDate: t.due_date,
+        tags: t.tags ?? [],
+        assigneeIds: t.assignee_ids ?? [],
+        assignedAgentId: t.assigned_agent_id ?? "",
+        executionMode: (t.execution_mode as Ticket["executionMode"]) ?? "direct",
+        planText: t.plan_text ?? "",
+        planApproved: Boolean(t.plan_approved),
+        scheduledFor: t.scheduled_for ? t.scheduled_for.slice(0, 10) : null,
+        executionState: (t.execution_state as Ticket["executionState"]) ?? "open",
+        checklistDone: t.checklist_done ?? 0,
+        checklistTotal: t.checklist_total ?? 0,
+        comments: t.comments_count ?? 0,
+        attachments: t.attachments_count ?? 0,
+        createdAt: Date.parse(t.created_at) || 0,
+      };
+      state.tickets[t.id] = ticket;
+      state.ticketIdsByColumn[t.column_id] = state.ticketIdsByColumn[t.column_id] || [];
+      state.ticketIdsByColumn[t.column_id].push(t.id);
+    }
+
+    return {
+      id: board.id,
+      name: board.name,
+      description: board.description ?? "",
+      data: state,
+      created_at_formatted: formatDateUTC(board.created_at),
+      updated_at_formatted: formatDateUTC(board.updated_at),
+      last_ticket_at_formatted: formatDateTimeUTC(board.last_ticket_at),
+    } as BoardHydration;
+  });
+}
+
 const DEFAULT_LOCKED_LIST_TITLES = new Set(["to-do", "todo", "in progress", "completed", "planned", "doing"]);
 const isTicketPriority = (value: string): value is TicketPriority =>
   value === "low" || value === "medium" || value === "high" || value === "urgent";
@@ -518,7 +618,8 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       tagsText: ticket.tags.join(", "),
       assigneeIds: validAssigneeIds(ticket.assigneeIds),
       assignedAgentId: ticket.assignedAgentId ?? "",
-      executionMode: ticket.executionMode ?? "auto",
+      executionMode: ticket.executionMode ?? "direct",
+      approvalState: ticket.approvalState ?? "none",
       planText: ticket.planText ?? "",
       planApproved: Boolean(ticket.planApproved),
       executionState: ticket.executionState ?? "open",
@@ -1818,10 +1919,10 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         planText: detailsForm.planText,
         planApproved: detailsForm.planApproved,
         scheduledFor: detailsForm.scheduledFor || null,
-        executionState: detailsForm.executionMode === "plan"
+        executionState: detailsForm.executionMode === "planned"
           ? detailsForm.planApproved
             ? "ready_to_execute"
-            : "awaiting_plan_approval"
+            : "awaiting_approval"
           : detailsForm.executionState === "pending"
             ? "open"
             : detailsForm.executionState === "queued"
@@ -1868,10 +1969,10 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         executionMode: detailsForm.executionMode,
         planText: detailsForm.planText,
         planApproved: detailsForm.planApproved,
-        executionState: detailsForm.executionMode === "plan"
+        executionState: detailsForm.executionMode === "planned"
           ? detailsForm.planApproved
             ? "ready_to_execute"
-            : "awaiting_plan_approval"
+            : "awaiting_approval"
           : detailsForm.executionState === "pending"
             ? "open"
             : detailsForm.executionState === "queued"
@@ -2174,6 +2275,26 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     setSearchQuery("");
   };
 
+  const reloadBoards = async () => {
+    try {
+      const res = await fetch("/api/tasks", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.ok) {
+        const { boards: rawBoards, columns: rawColumns, tickets: rawTickets } = json;
+        const hydratedBoards = hydrateBoards(
+          Array.isArray(rawBoards) ? rawBoards : [],
+          Array.isArray(rawColumns) ? rawColumns : [],
+          Array.isArray(rawTickets) ? rawTickets : []
+        );
+        setBoardMap(Object.fromEntries(hydratedBoards.map((b) => [b.id, cloneBoardEntry(b)])));
+        setBoardOrder(hydratedBoards.map((b) => b.id));
+      }
+    } catch (err) {
+      console.error("reloadBoards failed:", err);
+    }
+  };
+
   return {
     board,
     boards,
@@ -2268,5 +2389,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     executeDetailsControlAction,
     moveColumn,
     moveTicket,
+    reloadBoards,
   };
 }

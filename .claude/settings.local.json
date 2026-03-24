@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(ls -la c:/Users/Cem/Documents/Projects/clawd/dashboard/scripts/*.sh c:/Users/Cem/Documents/Projects/clawd/dashboard/scripts/*.js)"
-    ]
-  }
-}

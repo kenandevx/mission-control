@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -42,6 +43,9 @@ export function CreateBoardModal({
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>{isEditMode ? "Update board" : "Create board"}</DialogTitle>
+          <DialogDescription>
+            {isEditMode ? "Update the board name and description." : "Create a new board to organize your tickets."}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-1">

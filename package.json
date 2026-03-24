@@ -3,10 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:local": "next dev",
-    "dev:db": "docker compose up -d db db-init",
-    "dev:docker": "docker compose up -d --build",
+    "dev": "docker compose up -d db db-init bridge-logger task-worker gateway-sync && next dev",
+    "dev:stop": "docker compose stop db db-init bridge-logger task-worker gateway-sync",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -17,6 +15,9 @@
     "bot:setup": "node scripts/openclaw-bot-setup.mjs",
     "bridge:logger": "node scripts/bridge-logger.mjs",
     "bridge:logger:check": "node --check scripts/bridge-logger.mjs",
+    "worker:tasks": "node scripts/task-worker.mjs",
+    "worker:tasks:check": "node --check scripts/task-worker.mjs",
+    "test:worker": "node --test lib/tasks/worker-core.test.mjs",
     "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs"
   },
   "dependencies": {

@@ -33,15 +33,20 @@ export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketExecutionState =
   | "open"
   | "planning"
-  | "awaiting_plan_approval"
+  | "awaiting_approval"
   | "ready_to_execute"
   | "executing"
   | "done"
-  | "failed";
+  | "failed"
+  | "pending"
+  | "queued"
+  | "picked_up"
+  | "running"
+  | "draft";
 
 export type TicketLifecycleState = TicketExecutionState;
 
-export type TicketExecutionMode = "auto" | "manual" | "plan";
+export type TicketExecutionMode = "direct" | "planned";
 
 export type TicketRecord = {
   id: string;

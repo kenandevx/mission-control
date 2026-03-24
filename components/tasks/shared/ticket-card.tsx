@@ -44,7 +44,7 @@ const priorityLabel = (priority: Ticket["priority"]) =>
 const executionStateStyles: Record<string, string> = {
   open: "border-slate-500/30 bg-slate-500/10 text-slate-400",
   planning: "border-blue-500/30 bg-blue-500/10 text-blue-500",
-  awaiting_plan_approval: "border-amber-500/30 bg-amber-500/10 text-amber-500",
+  awaiting_approval: "border-amber-500/30 bg-amber-500/10 text-amber-500",
   ready_to_execute: "border-cyan-500/30 bg-cyan-500/10 text-cyan-500",
   executing: "border-indigo-500/30 bg-indigo-500/10 text-indigo-500",
   done: "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
@@ -111,7 +111,7 @@ export function TicketCard({
                 {priorityLabel(ticket.priority)}
               </Badge>
             ) : null}
-            {ticket.executionMode === "plan" ? (
+            {ticket.executionMode === "planned" ? (
               <Badge
                 variant="outline"
                 className={cn(

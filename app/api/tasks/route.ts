@@ -39,7 +39,11 @@ async function logTaskAudit(
   await sql`insert into activity_logs (workspace_id, source, event, details, level) values (${wid}, 'Tasks', ${params.event}, ${details}, ${level})`;
 
   if (params.ticketId) {
-    await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${params.ticketId}, 'Tasks', ${params.event}, ${details}, ${level})`;
+    const activityInsert = await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${params.ticketId}, 'Tasks', ${params.event}, ${details}, ${level}) returning id::text`;
+    const activityId = activityInsert[0]?.id;
+    if (activityId) {
+      await sql`select pg_notify('ticket_activity', ${activityId})`;
+    }
   }
 
   const tasksAgentId = await ensureTasksAgentId(sql, wid);
@@ -56,19 +60,57 @@ async function logTaskAudit(
   }
 }
 
+async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
+  const rows = await sql`
+    select enabled, poll_interval_seconds, max_concurrency, last_tick_at
+    from worker_settings
+    where id = 1
+    limit 1
+  `;
+  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null };
+  return {
+    enabled: Boolean(row.enabled),
+    pollIntervalSeconds: Number(row.poll_interval_seconds || 20),
+    maxConcurrency: Number(row.max_concurrency || 3),
+    lastTickAt: row.last_tick_at ? String(row.last_tick_at) : null,
+  };
+}
+
+function formatDateUTC(dateStr: string | null) {
+  if (!dateStr) return "—";
+  try {
+    const d = new Date(dateStr);
+    // Use UTC to avoid timezone/locale mismatches between server/client
+    return d.toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return "—";
+  }
+}
+
+function formatDateTimeUTC(dateStr: string | null) {
+  if (!dateStr) return "No tasks yet";
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+  } catch {
+    return "—";
+  }
+}
+
 export async function GET() {
   try {
     const sql = getSql();
     const wid = await workspaceId(sql);
-    if (!wid) return ok({ boards: [], columns: [], tickets: [] });
+    if (!wid) return ok({ boards: [], columns: [], tickets: [], workerSettings: { enabled: true, pollIntervalSeconds: 20, maxConcurrency: 3, lastTickAt: null } });
 
-    const [boards, columns, tickets] = await Promise.all([
+    const [boards, columns, tickets, workerSettings] = await Promise.all([
       sql`select * from boards where workspace_id=${wid} order by created_at asc`,
       sql`select * from columns where board_id in (select id from boards where workspace_id=${wid}) order by position asc, created_at asc`,
       sql`select * from tickets where workspace_id=${wid} order by position asc, created_at asc`,
+      getWorkerSettings(sql),
     ]);
 
-    return ok({ boards, columns, tickets });
+    return ok({ boards, columns, tickets, workerSettings });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Failed to load tasks", 500);
   }
@@ -173,17 +215,21 @@ export async function POST(request: Request) {
         insert into tickets (
           workspace_id, board_id, column_id, title, description, priority, due_date,
           tags, assignee_ids, assigned_agent_id, execution_mode, plan_text, plan_approved, scheduled_for, execution_state,
-          checklist_done, checklist_total, comments_count, attachments_count, position
+          checklist_done, checklist_total, comments_count, attachments_count, position, telegram_chat_id
         ) values (
           ${wid}, ${boardId}, ${columnId}, ${title}, ${String(body.description || "")}, ${String(body.priority || "low")}, ${body.dueDate || null},
-          ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${String(body.assignedAgentId || "")}, ${String(body.executionMode || "auto")}, ${String(body.planText || "")}, ${Boolean(body.planApproved)}, ${body.scheduledFor || null}, ${String(body.executionState || "open")},
-          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}
+          ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${String(body.assignedAgentId || "")}, ${String(body.executionMode || "direct")}, ${String(body.planText || "")}, ${Boolean(body.planApproved)}, ${body.scheduledFor || null}, ${String(body.executionState || "open")},
+          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}
         )
         returning *
       `;
       const created = rows[0];
       if (created?.id) {
         await logTaskAudit(sql, wid, { event: 'Ticket created', details: created.title || title, level: 'success', ticketId: created.id });
+        // Notify if created in a ready state
+        if (created.execution_state === 'queued' || created.execution_state === 'ready_to_execute') {
+          await sql`select pg_notify('ticket_ready', ${created.id}::text)`;
+        }
       }
       return ok({ ticket: created });
     }
@@ -231,6 +277,11 @@ export async function POST(request: Request) {
             level: 'info',
             ticketId: updated.id,
           });
+          // Notify workers that this ticket is ready
+          const newState = updated.execution_state;
+          if (newState === 'queued' || newState === 'ready_to_execute') {
+            await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
+          }
         }
         if (before.column_id !== updated.column_id) {
           await logTaskAudit(sql, wid, {
@@ -258,6 +309,65 @@ export async function POST(request: Request) {
       await sql`delete from tickets where id=${ticketId}`;
       await logTaskAudit(sql, wid, { event: 'Ticket deleted', details: ticketId, level: 'warning' });
       return ok();
+    }
+
+    if (action === "approvePlan") {
+      const ticketId = String(body.ticketId || "");
+      const actorId = String(body.actorId || "operator");
+      if (!ticketId) return fail("Ticket id is required.");
+
+      const updatedRows = await sql`
+        update tickets
+        set approval_state = 'approved',
+            execution_state = 'queued',
+            plan_approved = true,
+            approved_at = now(),
+            approved_by = ${actorId},
+            updated_at = now()
+        where id = ${ticketId}
+          and approval_state = 'pending'
+        returning *
+      `;
+      const updated = updatedRows[0];
+      if (!updated) return fail("Plan not in pending state or ticket not found.", 404);
+
+      await logTaskAudit(sql, wid, {
+        event: 'Plan approved',
+        details: `Approved by ${actorId}`,
+        level: 'success',
+        ticketId: updated.id,
+      });
+
+      // Notify worker
+      await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
+
+      return ok({ ticket: updated });
+    }
+
+    if (action === "rejectPlan") {
+      const ticketId = String(body.ticketId || "");
+      if (!ticketId) return fail("Ticket id is required.");
+
+      const updatedRows = await sql`
+        update tickets
+        set approval_state = 'rejected',
+            execution_state = 'draft',
+            updated_at = now()
+        where id = ${ticketId}
+          and approval_state = 'pending'
+        returning *
+      `;
+      const updated = updatedRows[0];
+      if (!updated) return fail("Plan not in pending state or ticket not found.", 404);
+
+      await logTaskAudit(sql, wid, {
+        event: 'Plan rejected',
+        details: `Rejected by operator`,
+        level: 'warning',
+        ticketId: updated.id,
+      });
+
+      return ok({ ticket: updated });
     }
 
     if (action === "moveTicket") {
@@ -410,7 +520,29 @@ export async function POST(request: Request) {
         order by ta.occurred_at desc
         limit ${limit}
       `;
-      return ok({ rows });
+
+      // Deterministic UTC formatting (no locale)
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const formatDT = (dateStr: string | null) => {
+        if (!dateStr) return "";
+        try {
+          const d = new Date(dateStr);
+          const y = d.getUTCFullYear();
+          const mo = pad(d.getUTCMonth() + 1);
+          const day = pad(d.getUTCDate());
+          const h = pad(d.getUTCHours());
+          const min = pad(d.getUTCMinutes());
+          return `${mo}/${day}/${y}, ${h}:${min} UTC`;
+        } catch {
+          return "";
+        }
+      };
+
+      const formattedRows = rows.map(r => ({
+        ...r,
+        occurred_at_formatted: formatDT(r.occurred_at),
+      }));
+      return ok({ rows: formattedRows });
     }
 
     if (action === "createActivity") {
@@ -422,7 +554,47 @@ export async function POST(request: Request) {
         values (${ticketId}, ${String(body.source || 'Tasks')}, ${event}, ${String(body.details || '')}, ${String(body.level || 'info')})
         returning *
       `;
+      const inserted = rows[0];
+      if (inserted?.id) {
+        await sql`select pg_notify('ticket_activity', ${inserted.id})`;
+      }
       return ok({ activity: rows[0] });
+    }
+
+    if (action === "getWorkerSettings") {
+      const workerSettings = await getWorkerSettings(sql);
+      return ok({ workerSettings });
+    }
+
+    if (action === "updateWorkerSettings") {
+      const enabled = body.enabled === undefined ? null : Boolean(body.enabled);
+      const pollIntervalSeconds = body.pollIntervalSeconds === undefined ? null : Number(body.pollIntervalSeconds);
+      const maxConcurrency = body.maxConcurrency === undefined ? null : Number(body.maxConcurrency);
+
+      if (pollIntervalSeconds !== null && (!Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds < 5 || pollIntervalSeconds > 300)) {
+        return fail("pollIntervalSeconds must be between 5 and 300");
+      }
+      if (maxConcurrency !== null && (!Number.isFinite(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 20)) {
+        return fail("maxConcurrency must be between 1 and 20");
+      }
+
+      await sql`
+        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency)
+        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3))
+        on conflict (id) do update
+          set enabled = coalesce(${enabled}, worker_settings.enabled),
+              poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
+              max_concurrency = coalesce(${maxConcurrency}, worker_settings.max_concurrency),
+              updated_at = now()
+      `;
+
+      const workerSettings = await getWorkerSettings(sql);
+      await logTaskAudit(sql, wid, {
+        event: "Worker settings updated",
+        details: `enabled=${workerSettings.enabled}, interval=${workerSettings.pollIntervalSeconds}s, concurrency=${workerSettings.maxConcurrency}`,
+        level: "info",
+      });
+      return ok({ workerSettings });
     }
 
     return fail(`Unsupported action: ${action}`);

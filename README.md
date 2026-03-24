@@ -1,319 +1,325 @@
 # Mission Control
 
-Mission Control is a **local-first OpenClaw dashboard** for agents, logs, boards, runtime visibility, and operational tooling.
+> **Local-first OpenClaw dashboard** — Boards, logs, worker metrics, and real-time observability.
 
-This README is the canonical operator + developer guide for:
-- installation
-- update workflow
-- runtime architecture
-- folder/file map
-- logs pipeline behavior
-- day-2 maintenance
+This README is the single source of truth for installation, operation, development, and security. Keep it updated with every change.
 
 ---
 
-## 1) What this project is
+## 📋 Table of Contents
+- [What it is](#what-it-is)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Production hardening](#production-hardening)
+- [Real-time features](#real-time-features)
+- [Troubleshooting](#troubleshooting)
+- [Filemap](#filemap)
+- [Changelog](#changelog)
+
+---
+
+## What it is
 
 Mission Control provides:
-- Dashboard UI (Next.js App Router)
-- Local PostgreSQL persistence
-- Runtime ingestion from local OpenClaw sessions/gateway logs
-- Live logs feed (SSR first load + SSE updates)
-- Dockerized packaged stack + local dev mode
+- **Dashboard UI** (Next.js App Router, Tailwind, shadcn/ui)
+- **Live logs** (SSR + SSE stream from Postgres `LISTEN/NOTIFY`)
+- **Ticket execution worker** (DB-backed queue, concurrency control)
+- **Board with real-time updates** (SSE, instant chip movement)
+- **Dockerized dev & prod modes** (Postgres, bridge-logger, task-worker)
 
-Design goals:
-- **Local-first**
-- **No hidden cloud dependency for core operation**
-- **Operationally simple install/update scripts**
-- **Readable logs and auditable details**
+Design principles:
+- **Local-first**: No mandatory cloud dependencies
+- **Operationally simple**: One command to start everything
+- **Readable logs**: Human previews + raw JSON details
+- **Secure by default**: Basic Auth, read-only mounts, non‑root containers
 
 ---
 
-## 2) Quick start
+## Quick start
 
-### Fresh install (recommended)
+### Prerequisites
+- Docker & Docker Compose (`docker compose v2+`)
+- Node.js 24+
+- OpenClaw installed and gateway running on `ws://127.0.0.1:18789`
+
+### 1. First-time setup (one machine, run once)
 ```bash
-cd /home/clawdbot/.openclaw/workspace/mission-control
 ./scripts/install.sh
 ```
+This auto-clones the repo, generates credentials, sets up the DB schema, and starts all Docker services.
 
-Open:
-- http://localhost:3000/dashboard
-- http://localhost:3000/logs
-
-### Update existing install
+### 2. Development
 ```bash
-cd /home/clawdbot/.openclaw/workspace/mission-control
+npm run dev   # starts Docker services + Next.js with hot-reload
+```
+Press `Ctrl+C` to stop everything.
+
+### 3. Update code
+```bash
 ./scripts/update.sh
 ```
 
-### Fast local development
+### 4. Stop
 ```bash
-cd /home/clawdbot/.openclaw/workspace/mission-control
-npm install
-./scripts/dev.sh
+npm run dev:stop   # stop Docker services
+# or
+docker compose down
 ```
 
----
-
-## 3) Runtime modes
-
-## A) Docker packaged mode
-Uses `docker-compose.yml` and runs:
-- `db` (Postgres)
-- `db-init` (schema + seed initializer)
-- `app` (Next.js production)
-- `bridge-logger` (continuous log ingestion)
-
-## B) Local dev mode
-Uses `scripts/dev.sh` for faster frontend iteration.
-Typically:
-- starts DB-only services
-- runs Next dev server locally
+### 5. Open the app
+- **Boards**: http://localhost:3000/boards?board=\<board-id\>
+- **Logs**: http://localhost:3000/logs
 
 ---
 
-## 4) Logs architecture (important)
+## Architecture
 
-Logs are designed as one unified feed.
-
-### Sources
-- OpenClaw session JSONL streams (`~/.openclaw/agents/**/sessions/*.jsonl`)
-- Gateway log files (`/tmp/openclaw/openclaw-*.log`)
-- API inserts for app/runtime events
-
-### Ingestion
-`scripts/bridge-logger.mjs`:
-- tails source files continuously
-- classifies events (`chat.*`, `tool.*`, `memory.*`, `system.*`, `heartbeat.*`)
-- writes to `agent_logs`
-- issues `pg_notify('agent_logs', <id>)` for live delivery
-- auto-reconnects DB on connection loss
-- uses dedupe + lock file to prevent duplicate ingestion from multi-process starts
-
-### UI delivery path
-- `/logs` initial rows are loaded via **SSR**
-- live updates are streamed via **SSE** from `/api/agent/logs/stream`
-- stream is backed by Postgres `LISTEN/NOTIFY`
-- details modal shows full uncensored payload
-- preview is intentionally humanized/summarized
-
----
-
-## 5) Environment variables
-
-Core DB:
-- `DATABASE_URL`
-- `OPENCLAW_DATABASE_URL` (fallback for tooling)
-
-Gateway (optional enhancement paths):
-- `OPENCLAW_GATEWAY_URL`
-- `OPENCLAW_GATEWAY_TOKEN`
-- `OPENCLAW_GW_TOKEN`
-- `OPENCLAW_GATEWAY_API_TOKEN`
-
-Default local DB URL used in compose context:
-```bash
-postgresql://openclaw:openclaw@db:5432/mission_control
+```
+┌─────────────────┐    /api/tasks    ┌─────────────────┐
+│   Next.js UI    │◄─────────────────►│   PostgreSQL    │
+│   (localhost)   │                  │   (Docker)      │
+└─────────────────┘                  └─────────────────┘
+         │                                    ▲
+         │ SSE /api/events                   │
+         ▼                                    │
+┌─────────────────┐    logs → DB      ┌─────────────────┐
+│  task-worker    │───────────────────►│  bridge-logger  │
+│  (agent exec)   │                   │  (tail logs)    │
+└─────────────────┘                  └─────────────────┘
+         ▲
+         │ agent runs
+         │
+┌─────────────────┐
+│  OpenClaw       │
+│  gateway        │
+│  (127.0.0.1:18789)
+└─────────────────┘
 ```
 
----
-
-## 6) Directory and file map
-
-## Root
-- `README.md` — this guide
-- `Dockerfile` — app image build/run
-- `docker-compose.yml` — packaged services
-- `docker-compose.dev.yml` — dev-oriented compose
-- `package.json` — scripts/dependencies
-- `package-lock.json` — npm lockfile
-- `postcss.config.mjs` — CSS pipeline config
-
-## App routes (`app/`)
-- `app/dashboard/page.tsx` — dashboard
-- `app/logs/page.tsx` — logs route (SSR entry)
-- `app/agents/page.tsx` — agents list
-- `app/agents/[agentId]/page.tsx` — agent detail
-- `app/boards/page.tsx` — boards
-
-- `app/login/page.tsx` — login surface
-- `app/page.tsx` — root page
-- `app/layout.tsx` — app shell
-- `app/providers.tsx` — app providers
-
-## API routes (`app/api/`)
-- `app/api/agent/logs/route.ts` — logs query/insert/delete + pagination
-- `app/api/agent/logs/stream/route.ts` — SSE stream (`LISTEN/NOTIFY`)
-- `app/api/setup/route.ts` — setup state APIs
-- `app/api/notifications/route.ts` — notifications config APIs
-
-## Components (`components/`)
-- `components/agents/logs-explorer.tsx` — logs table/filter/details UI
-- `components/agents/logs-live-refresh.tsx` — stream connection badge
-- `components/agents/logs-page-client.tsx` — post-SSR logs live behavior
-- `components/dashboard/*` — dashboard blocks, setup modal
-- `components/tasks/*` — board/task UX
-- `components/ui/*` — UI primitives (table/select/dialog/etc)
-
-## Data/runtime libraries (`lib/`)
-- `lib/local-db.ts` — Postgres client helper
-- `lib/db/index.ts` — DB abstractions
-- `lib/db/server-data.ts` — server loaders for pages
-- `lib/runtime/collector.ts` — runtime collection/merge hooks
-- `lib/runtime/types.ts` — runtime types
-
-## Scripts (`scripts/`)
-- `scripts/install.sh` — install/bootstrap flow
-- `scripts/update.sh` — update/rebuild flow
-- `scripts/dev.sh` — local dev boot flow
-- `scripts/bridge-logger.mjs` — log ingestion daemon
-- `scripts/db-setup.mjs` — DB setup helper
-- `scripts/gateway-sync.mjs` — gateway/session sync helper
-- `scripts/uninstall.sh` — teardown helper
-
-## Database (`db/`)
-- `db/schema.sql` — schema DDL
-- `db/seed.sql` — initial seed data
-
-## Runtime state (generated)
-- `.runtime/bridge-logger/offsets.json`
-- `.runtime/bridge-logger/dead-letter.jsonl`
-- `.runtime/bridge-logger/bridge-logger.lock`
+**Components**
+- **UI**: Server components for initial render; client components use SSE for live updates.
+- **DB**: Single source of truth. `agent_logs`, `tickets`, `boards`, `columns`, `ticket_activity`, `worker_settings`.
+- **task-worker**: Event-driven executor. Listens for `ticket_ready` notifications via Postgres `LISTEN/NOTIFY`. Picks tickets with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `openclaw agent`, updates states. No polling.
+- **bridge-logger**: Ingests OpenClaw logs into `agent_logs`; emits `pg_notify`.
+- **gateway**: OpenClaw gateway for agent–Telegram bridge.
 
 ---
 
-## 7) Install workflow (what happens)
+## Development
 
-`./scripts/install.sh` should:
-1. validate Docker/compose availability
-2. ensure env scaffolding exists
-3. build/start services via compose
-4. initialize DB (schema + seed)
-5. start app + bridge logger services
-6. leave stack running in background
+### Scripts
+| Script | Purpose |
+|--------|---------|
+| `scripts/start.sh` | **Unified startup** (Docker + dev server). Use this. |
+| `scripts/install.sh` | One-time setup (creates `.env`, starts Docker). Legacy. |
+| `scripts/update.sh` | `git pull` and rebuild Docker images. |
+| `npm run dev` | Start Next.js dev server only (if Docker already running). |
+| `docker compose up -d` | Start Docker services only. |
 
----
+### Environment variables
+See `.env.example`. Important ones:
+- `POSTGRES_PASSWORD` — strong random password for DB
+- `API_USER` / `API_PASS` — protect `/api/*` endpoints
+- `OPENCLAW_GATEWAY_URL` — usually `ws://127.0.0.1:18789`
 
-## 8) Update workflow (what happens)
-
-`./scripts/update.sh` should:
-1. pull latest repository changes
-2. rebuild/restart compose services
-3. keep DB data volume intact unless explicitly reset
-4. bring up latest app and bridge logger code
-
----
-
-## 9) Logging behavior expectations
-
-Good logs UX should provide:
-- clear event labels (human + raw event key)
-- readable preview line for each row
-- full uncensored details payload in modal
-- channel/source attribution (`telegram`, `gateway`, `internal`, `qdrant`)
-- severity (`debug`, `info`, `warning`, `error`)
-- agent attribution (name/id)
-- pagination and filtering
-- live updates without manual refresh loops
-
-If logs look duplicated, check:
-- only one bridge logger process running
-- lock file behavior in `.runtime/bridge-logger/`
-- dedupe guard in ingestion path
-
----
-
-## 10) Common commands
-
-### Status
-```bash
-docker compose ps
-```
-
-### Tail logs
-```bash
-docker compose logs -f app
-
-docker compose logs -f bridge-logger
-```
-
-### Restart stack
+### Database
+Schema & seed applied automatically on first startup (db-init container). To reset:
 ```bash
 docker compose down
-docker compose up -d --build
+docker volume rm mission-control_pgdata
+docker compose up -d db-init
 ```
 
-### Hard rebuild (cache bust)
-```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+### Worker metrics API
+`GET /api/tasks/worker-metrics` returns:
+```json
+{
+  "enabled": true,
+  "maxConcurrency": 3,
+  "activeNow": 1,
+  "queuedCount": 4,
+  "lastTickAt": "2026-03-23T22:00:00Z"
+}
 ```
+Used by the WorkerStatus component (top-right).
 
-### Start bridge logger manually (non-docker)
-```bash
-npm run bridge:logger
-```
+### Multiple queues
+Workers can be partitioned into independent queues by setting the `WORKER_QUEUE` environment variable (default: `default`). Tickets have a `queue_name` field (also defaults to `default`). Only workers with a matching queue name will pick up those tickets. This allows you to run separate worker pools for different priorities or teams without interference. All workers share the same DB and receive the same `ticket_ready` events; they filter at claim time using `queue_name`.
 
-### Check bridge script syntax
+---
+
+## Production hardening
+
+### 1. Authentication
+**Enable HTTP Basic Auth** on all `/api/*` routes by setting `API_USER` and `API_PASS` in the environment. If not set, the API is open (dev mode only). **Always set in production.**
+
+### 2. Database isolation
+- Do **not** publish port 5432 to the host. The current `docker-compose.yml` exposes it for dev convenience; remove the `ports` mapping in production.
+- Use a strong `POSTGRES_PASSWORD`.
+- Containers only should be able to reach the DB via the Docker network.
+
+### 3. TLS & reverse proxy
+If exposing the dashboard externally, put it behind a reverse proxy (Nginx/Traefik) with TLS termination. Basic Auth adds a second layer.
+
+### 4. Filesystem mounts
+`~/.openclaw` is mounted read-only (`:ro`) into `task-worker` and `bridge-logger`. The host files cannot be modified from the container. This is intentional.
+
+### 5. Secrets management
+- Never commit `.env` or `.env.local` (they are gitignored).
+- In production, use a secrets manager (Docker secrets, HashiCorp Vault, etc.).
+
+### 6. Container user isolation
+Run containers as non‑root users where possible. The OpenClaw plugin directory must be owned by the container user to avoid "suspicious ownership" blocks. In dev we use `root` for simplicity; in prod create a `worker` user with matching UID/GID.
+
+### 7. Backups
+Backup the Postgres volume regularly:
 ```bash
-npm run bridge:logger:check
+docker run --rm \
+  -v mission-control_pgdata:/data \
+  -v /path/to/backup:/backup \
+  alpine \
+  tar czf /backup/pgdata-$(date +%F).tar.gz -C /data .
 ```
 
 ---
 
-## 11) Git workflow notes
+## Real-time features
 
-If commit fails with unknown author:
-```bash
-git config user.name "<your-name>"
-git config user.email "<your-email>"
+- **Live logs**: SSE (`/api/agent/logs/stream`) streams new logs as they are inserted.
+- **Board activity**: SSE (`/api/events` → `ticket_activity`) updates the activity list instantly.
+- **Ticket execution**: `ticket_ready` notifications wake the worker instantly; no polling.
+- **Ticket moves**: `ticket_activity` also triggers a full board reload, so dragged chips update everywhere instantly.
+- **Worker status**: `worker_tick` events keep the top‑right status bar current.
+
+---
+
+## Troubleshooting
+
+### DB connection refused (127.0.0.1:5432)
+**Cause**: DB container not exposing port to host.  
+**Fix**: Ensure `db` service has `ports: ["5432:5432"]` in `docker-compose.yml`, then `docker compose down && docker compose up -d`.
+
+### Password auth failed for "openclaw"
+**Cause**: `.env.local` password doesn't match container's `POSTGRES_PASSWORD`.  
+**Fix**: Sync them. In `.env.local`:
+```
+DATABASE_URL=postgresql://openclaw:<actual-password>@localhost:5432/mission_control
+OPENCLAW_DATABASE_URL=postgresql://openclaw:<actual-password>@localhost:5432/mission_control
 ```
 
-For SSH push auth, generate/add a key and set `origin` to SSH URL.
+### Bridge logger: "Unable to add filesystem"
+**Cause**: `fs.watch` fails on some bind mounts.  
+**Fix**: Already switched to `fs.watchFile` in `scripts/bridge-logger.mjs`. Pull latest code.
+
+### Bridge logger: "another instance is already running" or "permission denied"
+**Cause**: Stale PID lock file in `.runtime/bridge-logger/bridge-logger.lock`.  
+**Fix**:
+```bash
+rm -f .runtime/bridge-logger/bridge-logger.lock
+# If permission denied, also do:
+chmod 666 .runtime/bridge-logger/bridge-logger.lock
+docker compose restart bridge-logger
+```
+
+### Worker can't connect to gateway
+**Cause**: Container's `127.0.0.1:18789` is not the host gateway.  
+**Fix**:
+- Set `OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789` in `docker-compose.yml` for `task-worker`
+- Add `extra_hosts: ["host.docker.internal:host-gateway"]`
+- In `openclaw.json`, set `"gateway.bind": "lan"` and run `openclaw gateway restart`
+- Verify `ss -tlnp | grep 18789` shows `0.0.0.0:18789`
+
+### Agent plugin not found (memory-qdrant)
+**Cause**: Incorrect `sourcePath` in `openclaw.json` or bad permissions.  
+**Fix**:
+1. Ensure `plugins.installs.memory-qdrant.sourcePath = "extensions/memory-qdrant"`
+2. `chmod -R 755 ~/.openclaw/extensions/memory-qdrant`
+3. Remove stale `memory-lancedb` from `plugins.entries`
+4. Restart `task-worker`
+
+### Hydration mismatch (React)
+**Cause**: Server/client date formatting differed.  
+**Fix**: All dates now use UTC explicitly in both server and client. Hard refresh browser.
 
 ---
 
-## 12) Troubleshooting
+## Filemap
 
-### Logs page not updating live
-- verify `/api/agent/logs/stream` is connected
-- verify `pg_notify` is triggered on inserts
-- verify browser EventSource not blocked
-
-### Logs preview too noisy
-- expected: preview is summarized
-- details modal remains raw/full
-- adjust parsing in `components/agents/logs-explorer.tsx`
-
-### DB connection ended errors
-- bridge logger includes auto-reconnect logic
-- check DB container health and restart if needed
-
-### Duplicate logs
-- ensure single bridge logger process
-- inspect `.runtime/bridge-logger/bridge-logger.lock`
+```
+.
+├── README.md                 # This document
+├── .env.example              # Environment template
+├── Dockerfile                # Next.js image
+├── docker-compose.yml        # Full stack (dev + prod)
+├── package.json              # Dependencies & scripts
+├── app/                      # Next.js app router
+│   ├── api/
+│   │   ├── tasks/            # Main API: boards, tickets, worker settings
+│   │   ├── tasks/worker-metrics/  # Worker status metrics
+│   │   ├── events/           # SSE endpoint (ticket_activity, worker_tick)
+│   │   └── agent/logs/       # Logs query + SSE stream
+│   ├── boards/page.tsx       # Boards list page
+│   └── logs/page.tsx         # Logs page
+├── components/
+│   ├── dashboard/
+│   │   └── worker-status.tsx # Top-right worker metrics
+│   ├── tasks/
+│   │   ├── boards/
+│   │   │   └── boards-page-client.tsx  # Real-time board UI
+│   │   └── modals/           # Create board/list, ticket details
+│   └── ui/                    # shadcn/ui primitives
+├── hooks/
+│   └── use-tasks.ts          # Board state management, reloadBoards()
+├── lib/
+│   ├── db/
+│   │   ├── server-data.ts    # Server data loaders
+│   │   └── adapter.ts        # DB abstraction
+│   └── tasks/
+│       └── worker-core.mjs   # Worker eligibility logic
+├── scripts/
+│   ├── start.sh              # **Use this** to start everything
+│   ├── bridge-logger.mjs     # Log ingestion daemon
+│   └── task-worker.mjs       # Ticket execution worker
+└── db/
+    ├── schema.sql            # Database schema
+    └── seed.sql              # Initial data
+```
 
 ---
 
-## 13) Team handoff checklist
+## Changelog
 
-Before handing this repo to teammates, verify:
-- `./scripts/install.sh` works on clean environment
-- `./scripts/update.sh` works without manual steps
-- `/logs` SSR + live stream both work
-- bridge logger service starts automatically in compose
-- README reflects current scripts/routes
+### 2026-03-24 (current)
+- Rewrote `install.sh` as a proper one-time installer with auto-clone from Git, credential generation, DB setup, and Docker start
+- Added `update.sh` for git pull + rebuild + restart workflow
+- Removed `start.sh` — dev workflow is now `npm run dev:docker` (Docker) + `npm run dev` (Next.js)
+- Cleaned up `package.json` scripts: `dev:docker`, `dev:full`, `dev:stop`
+- Removed redundant `docker-compose.dev.yml` and `scripts/dev.sh` (conflicted with main compose)
+- Fixed bridge-logger restart loop with PID+timestamp lock file
+- Updated quick-start docs to reflect new three-script workflow
+
+### 2026-03-24 (earlier)
+- Rewrote `install.sh` as proper first-time setup with Docker image pulls and build
+- Rewrote `start.sh` to actually launch Next.js dev server (previously just printed message)
+- Updated quick-start docs to mention `install.sh` for first-time setup
+- Fixed bridge-logger restart loop caused by stale PID lock file
+- Added troubleshooting entry for bridge-logger "another instance" / permission errors
+- Updated boards URL format to include board ID query param
+
+### 2026-03-23
+- Consolidated docs into single README; removed `SECURITY.md`
+- Added unified `.env.example` and `scripts/start.sh`
+- Replaced polling with SSE for board activity & logs
+- Implemented real-time ticket updates (reload on `ticket_activity`)
+- Added worker metrics API (`/api/tasks/worker-metrics`) and improved status UI
+- Fixed hydration mismatches (UTC dates)
+- Fixed Docker networking for task‑worker → gateway communication
+- Updated bridge logger to use `fs.watchFile` (stable on bind mounts)
+- Agent config fixes: correct plugin path, permissions, stale entries removed
 
 ---
 
-## 14) Current operational stance
+## License & Support
 
-Mission Control is now positioned as:
-- local-first runtime dashboard
-- DB-backed observability surface
-- live agent/event log explorer
-- easy install/update via scripts
-
-If architecture changes, update this README in the same PR so onboarding never drifts.
+Mission Control is part of OpenClaw. See the main repository for license and community support.

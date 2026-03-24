@@ -1,0 +1,11 @@
+services:
+  db:
+    # In production, do NOT expose 5432 to host
+    ports: []  # override dev ports
+
+  app:
+    # Run app in production mode (bind to 0.0.0.0)
+    environment:
+      NODE_ENV: production
+    # Use the built image (no rebuild needed here)
+    # The main docker-compose.yml already builds with production target
