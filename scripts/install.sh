@@ -93,6 +93,8 @@ if [ ! -f .env ]; then
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 API_USER=${API_USER}
 API_PASS=${API_PASS}
+DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_control
+OPENCLAW_DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_control
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 OPENCLAW_GATEWAY_TOKEN=
 EOF
