@@ -385,10 +385,10 @@ mission-control/
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Alias for `bash dev.sh start` — starts dev mode with hot-reload |
-| `npm run dev:stop` | Stop Docker DB and all host services |
-| `npm run dev:db` | Start Docker DB only |
-| `npm run dev:services` | Start host services only (task-worker, gateway-sync, bridge-logger) |
+| `npm run dev` | Start Docker DB, host services, and Next.js dev server in foreground. Blocks terminal. **Ctrl+C or `npm run dev:stop` to stop.** |
+| `npm run dev:stop` | Stop Docker DB container and all host service daemons. Use this after `npm run dev` to clean up. |
+| `npm run dev:db` | Start Docker DB container + db-init only |
+| `npm run dev:services` | Start host service daemons only (task-worker, gateway-sync, bridge-logger) |
 | `npm run build` | Build Next.js for production |
 | `npm run start` | Start production Next.js server (used by mc-services) |
 | `npm run db:setup` | Run schema + seed SQL |
@@ -435,24 +435,29 @@ This clones the repo into `~/.openclaw/workspace/mission-control`, generates `.e
 
 **After install, shortcuts are available:**
 ```bash
-mc-services start   # start task-worker, gateway-sync, bridge-logger, Next.js
-mc-services stop    # stop all host services
+mc-services start   # start all host daemons (task-worker, gateway-sync, bridge-logger, Next.js)
+mc-services stop    # stop all host daemons
 mc-services status  # check status + recent log lines
-mc-update          # pull latest + rebuild + restart
-mc-clean           # reset containers + volumes + fresh start
-bash dev.sh        # start dev mode (hot-reload, foreground, Ctrl+C to stop)
+mc-update          # pull latest + rebuild + restart all services
+mc-clean           # reset containers + volumes + fresh install (keeps .env)
+bash dev.sh         # start dev mode (Docker + services + Next.js, Ctrl+C to stop)
 ```
+
+**For development:** `npm run dev` starts everything in foreground. When done, `npm run dev:stop` to clean up.
 
 ### Development
 
 ```bash
-# Start everything (Docker services + Next.js with hot-reload)
+# Full dev start: Docker DB + services + Next.js dev (hot-reload) in foreground.
+# Blocks terminal. Stop with Ctrl+C or 'npm run dev:stop'.
 npm run dev
 
-# Or separately:
-npm run dev:docker   # Docker services only
-npm run dev          # Next.js dev server only (if Docker already running)
-npm run dev:stop     # Stop Docker services
+# Stop everything started by 'npm run dev'
+npm run dev:stop
+
+# Start only parts separately
+npm run dev:db        # Docker DB + schema only
+npm run dev:services  # Host daemons only (if DB already running)
 ```
 
 ### Updating code

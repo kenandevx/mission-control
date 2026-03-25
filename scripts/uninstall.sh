@@ -54,7 +54,7 @@ echo "  Removed: $PROJECT_ROOT"
 
 # ── Remove convenience symlinks ────────────────────────────────
 info "Removing convenience symlinks ..."
-for script in install clean update uninstall mc-services; do
+for script in install clean update uninstall mc-services dev; do
   symlink="/usr/local/bin/mc-${script}"
   if [ -L "$symlink" ]; then
     rm -f "$symlink"

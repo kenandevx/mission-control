@@ -70,7 +70,7 @@ step "Restarting host services ..."
 bash scripts/mc-services.sh restart 2>&1 | sed 's/^/  /'
 
 # ── Convenience symlinks for new scripts ────────────────────
-INSTALLED_AFTER=$(ls scripts/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sort)
+INSTALLED_AFTER=$(ls "$SCRIPT_DIR"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sort)
 for script in $INSTALLED_AFTER; do
   symlink="/usr/local/bin/mc-${script}"
   source_file="$SCRIPT_DIR/${script}.sh"

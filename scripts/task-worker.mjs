@@ -240,13 +240,18 @@ async function executeTicket(ticket, boardId, wid) {
   let result;
   try {
     const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env });
-    result = { success: true, result: JSON.parse(stdout) };
+    const parsed = JSON.parse(stdout);
+    // openclaw returns { result: { payloads: [{ text, mediaUrl }] } }
+    const inner = parsed?.result ?? parsed;
+    const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : [];
+    result = { success: true, result: parsed, _rawPayloads: rawPayloads };
   } catch (error) {
     result = { success: false, error: error.message };
+    console.error("[executeTicket] exec error:", error.message);
   }
 
   if (result.success) {
-    const payloads = result.result?.payloads ?? [];
+    const payloads = result._rawPayloads;
     const responseText = payloads.map(p => p.text ?? '').join('\n').trim();
 
     // Write agent's full response to the ticket's activity log so it's visible in the UI
