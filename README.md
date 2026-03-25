@@ -56,6 +56,7 @@ Features:
 - **Columns (Lists)**: create and reorder columns; delete non-default columns; columns have a color key (neutral, info, warning, success)
 - **Tickets**: create, edit, move (drag-and-drop), copy, delete; assignees stored as ID/name pairs; priority (low/medium/high/urgent); due dates; tags
 - **Ticket detail modal**: edit title, description, priority, assignees, due date, execution mode; manage subtasks, comments, attachments, and activity log
+- **Activity log (ticket)**: every execution event is written to `ticket_activity` including agent responses, plan generation, worker pickup, completion, and failures. Agent responses are shown prominently in a dedicated block (🤖 Agent badge + full response text). Clickable in the board live feed to open the relevant ticket directly.
 - **Execution modes**: `direct` (agent runs immediately) or `planned` (plan is generated first, then requires approval)
 - **Real-time via SSE**: board state stays in sync through Server-Sent Events — ticket moves and activity appear instantly without a full reload
 
@@ -218,7 +219,7 @@ The gateway-sync script (`scripts/gateway-sync.mjs`) runs on startup and one-tim
 
 ### Data flow
 
-- **Tickets**: Created/updated via `POST /api/tasks` → written to `tickets` → `pg_notify('ticket_ready')` wakes worker → worker calls `openclaw agent` → updates `execution_state` + writes `ticket_activity`
+- **Tickets**: Created/updated via `POST /api/tasks` → written to `tickets` → `pg_notify('ticket_ready')` wakes worker → worker builds a structured prompt (title, description, subtasks, notes/comments, metadata) → calls `openclaw agent` → writes agent's response + completion/failure to `ticket_activity` → updates `execution_state`
 - **Logs**: Session JSONL lines parsed by bridge-logger → `agent_logs` rows → `pg_notify('agent_logs')` → SSE stream to browser
 - **Activity**: All mutations write to `ticket_activity` and `activity_logs` → `pg_notify('ticket_activity')` → SSE → UI activity feed
 - **Worker metrics**: `GET /api/tasks/worker-metrics` reads `worker_settings` + active/queued ticket counts
