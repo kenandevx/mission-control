@@ -104,7 +104,37 @@ type Props = {
 };
 
 export function BoardsPageClient({ initialBoardId, initialBoards, initialAssignees, sidebarUser }: Props) {
-  const tasks = useTasks({ initialBoardId, initialBoards, initialAssignees });
+  // Client-side assignee loading — runtime agents are loaded from openclaw CLI
+  // to avoid blocking SSR (which uses execFileSync).
+  const [runtimeAssignees, setRuntimeAssignees] = useState<Assignee[]>(initialAssignees);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const { stdout } = await promisify(execFile)("openclaw", ["sessions", "--all-agents", "--json"], { timeout: 8000 });
+        const sessions: any[] = JSON.parse(stdout);
+        if (cancelled) return;
+        const assignees: Assignee[] = sessions
+          .filter((s: any) => s?.agentId)
+          .map((s: any) => ({
+            id: s.agentId,
+            name: s.identity?.name || s.name || s.agentId,
+            initials: ((s.identity?.name || s.name || s.agentId) as string).split(/\s+/).filter(Boolean).slice(0, 2).map((p: string) => p[0]?.toUpperCase() || "").join("") || s.agentId.slice(0, 2).toUpperCase(),
+            color: "#64748b",
+            source: "runtime" as const,
+          }));
+        if (!cancelled) setRuntimeAssignees(assignees);
+      } catch {
+        // fall back to empty assignees
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const tasks = useTasks({ initialBoardId, initialBoards, initialAssignees: runtimeAssignees });
   const router = useRouter();
   const searchParams = useSearchParams();
   const [boardSearch, setBoardSearch] = useState("");
