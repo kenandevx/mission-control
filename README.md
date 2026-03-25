@@ -310,7 +310,7 @@ mission-control/
 │   ├── install.sh           # First-time setup: clone, env, Docker build/start
 │   ├── update.sh           # git pull + Docker rebuild + service restart
 │   ├── uninstall.sh         # Stop and remove Docker services + volumes
-│   ├── openclaw.container.json  # openclaw.json for in-container use (task-worker)
+│   ├── openclaw.container.json  # Legacy: was for in-container task-worker; task-worker now runs on host
 │   └── repair-agent-log-attribution.mjs  # Fix log rows with missing agent_id
 │
 ├── db/
@@ -374,11 +374,11 @@ mission-control/
 
 ### Runtime worker scripts
 
-| Script | Runs in | Purpose |
+| Script | Runs on | Purpose |
 |---|---|---|
-| `task-worker.mjs` | `task-worker` Docker container | Event-driven ticket executor. Listens for `ticket_ready` notifications. Polls every `poll_interval_seconds` as fallback. Uses `SELECT ... FOR UPDATE SKIP LOCKED` to prevent double-pickup. |
-| `bridge-logger.mjs` | `bridge-logger` Docker container | Long-lived daemon. Tails session JSONL files + gateway log files. Deduplicates within 30s window. Inserts into `agent_logs`. Emits `pg_notify('agent_logs')`. Dead-letter file on insert failure, replay every 30s. |
-| `gateway-sync.mjs` | `gateway-sync` Docker container (one-shot) | On startup, imports all openclaw sessions into the DB. Resolves gateway token from `app_settings` if not in env. |
+| `task-worker.mjs` | Host daemon (via mc-services) | Event-driven ticket executor. Listens for `ticket_ready` notifications. Polls every `poll_interval_seconds` as fallback. Uses `SELECT ... FOR UPDATE SKIP LOCKED` to prevent double-pickup. |
+| `bridge-logger.mjs` | Host daemon (via mc-services) | Long-lived daemon. Tails session JSONL files + gateway log files. Deduplicates within 30s window. Inserts into `agent_logs`. Emits `pg_notify('agent_logs')`. Dead-letter file on insert failure, replay every 30s. |
+| `gateway-sync.mjs` | Host one-shot (via mc-services) | On startup, imports all openclaw sessions into the DB. Resolves gateway token from `app_settings` if not in env. |
 
 ### npm scripts
 
@@ -416,12 +416,12 @@ Mission Control's `task-worker` runs `openclaw agent` on the host, so it needs t
 
 | Dependency | Path | Why |
 |---|---|---|
-| OpenClaw runtime | `~/.openclaw/` | Agents, credentials, auth profiles — mounted into task-worker container |
+| OpenClaw runtime | `~/.openclaw/` | Agents, credentials, auth profiles — read by task-worker on the host |
 | OpenClaw binary | `/usr/bin/openclaw` | task-worker calls this to execute agents |
 | OpenClaw gateway | `ws://127.0.0.1:18789` | Must be running for agent execution |
 | SSH keys | `~/.ssh/` | Only needed if pushing to git from the host |
 
-> **Note:** The `task-worker` Docker container binds `~/.openclaw` as a volume. This is intentional — Mission Control runs agents through your existing OpenClaw installation, not inside an isolated container. It is not possible to run Mission Control without a working OpenClaw installation on the host.
+> **Note:** The task-worker runs on the host as a native process (not in Docker), so `~/.openclaw` is accessed directly. It is not possible to run Mission Control without a working OpenClaw installation on the host.
 
 ### First-time setup (bootstrap)
 
@@ -512,11 +512,24 @@ OPENCLAW_GATEWAY_TOKEN=your-token-here
 
 ### 2. Start the production stack
 
+Only the PostgreSQL database runs in Docker. All other services run as native host daemons managed by `mc-services`:
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Start DB
+docker compose up -d db db-init
+
+# Build + start all host services
+npm run build
+mc-services start
 ```
 
-The prod compose disables the Postgres host port, enforces non-root container users, and sets `restart: unless-stopped` on all services.
+The dev `docker-compose.yml` already exposes port 5432. In production, remove that port mapping or use the production override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d db db-init
+```
+
+The production override removes the host port binding for Postgres.
 
 ### 3. Reverse proxy with TLS
 
@@ -607,17 +620,16 @@ OPENCLAW_DATABASE_URL=postgresql://openclaw:<actual-password>@localhost:5432/mis
 rm -f .runtime/bridge-logger/bridge-logger.lock
 # If permission denied:
 chmod 666 .runtime/bridge-logger/bridge-logger.lock
-docker compose restart bridge-logger
+mc-services restart bridge-logger
 ```
 
 ### Worker can't connect to gateway
 
-**Cause**: Container's `127.0.0.1:18789` is not the host gateway.  
+**Cause**: Gateway not reachable from the host.  
 **Fix**:
-- Set `OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789` in `docker-compose.yml` for `task-worker`
-- Add `extra_hosts: ["host.docker.internal:host-gateway"]`
-- In `openclaw.json`, set `"gateway.bind": "lan"` and run `openclaw gateway restart`
-- Verify `ss -tlnp | grep 18789` shows `0.0.0.0:18789`
+- Ensure the gateway is bound to `0.0.0.0` (not `127.0.0.1` only): set `"gateway.bind": "lan"` in `openclaw.json` and run `openclaw gateway restart`
+- If the worker runs on a different host than the gateway, set `OPENCLAW_GATEWAY_URL` in `.env` to the gateway's LAN address (e.g. `ws://192.168.1.x:18789`)
+- Verify `ss -tlnp | grep 18789` shows `0.0.0.0:18789` or the expected LAN interface
 
 ### Agent plugin not found (memory-qdrant)
 
@@ -626,7 +638,7 @@ docker compose restart bridge-logger
 1. Ensure `plugins.installs.memory-qdrant.sourcePath = "extensions/memory-qdrant"`
 2. `chmod -R 755 ~/.openclaw/extensions/memory-qdrant`
 3. Remove stale `memory-lancedb` from `plugins.entries`
-4. Restart `task-worker`
+4. Restart `task-worker` with `mc-services restart task-worker`
 
 ### Hydration mismatch (React)
 
