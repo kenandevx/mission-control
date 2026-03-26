@@ -50,6 +50,7 @@ export type AgendaCalendarEvent = {
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MAX_VISIBLE = 4;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const HOUR_HEIGHT = 64; // px per hour slot in week/day views
 
 // ── Color palette — matches JSONC AgendaEventItem spec ──────────────────────────
 
@@ -134,7 +135,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
 
   return (
     <div
-      className="flex items-center justify-between gap-1.5 h-[26px] px-[8px] rounded-md overflow-hidden w-full transition-all duration-150 hover:scale-[1.02] hover:shadow-sm"
+      className="flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95"
       style={{
         backgroundColor: bg,
         borderLeft: `3px solid ${dotColor}`,
@@ -142,25 +143,25 @@ function EventPill({ event }: { event: CalendarEvent }) {
         borderStyle: isDraft ? "dashed" : "solid",
       }}
     >
-      {/* Left dot */}
-      <span
-        className="size-1.5 rounded-full shrink-0"
-        style={{ backgroundColor: dotColor }}
-      />
+      {/* Title row */}
+      <div className="flex items-center gap-1.5">
+        <span
+          className="size-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: dotColor }}
+        />
+        <span
+          className="flex-1 text-[12px] font-semibold leading-tight truncate"
+          style={{ color, letterSpacing: "-0.01em" }}
+        >
+          {event.title}
+        </span>
+      </div>
 
-      {/* Title — fills remaining space */}
-      <span
-        className="flex-1 text-[12px] font-medium leading-none truncate"
-        style={{ color, letterSpacing: "-0.01em" }}
-      >
-        {event.title}
-      </span>
-
-      {/* Time — right aligned */}
+      {/* Time row */}
       {timeStr && (
         <span
-          className="shrink-0 text-[11px] font-medium leading-none"
-          style={{ color, opacity: 0.8 }}
+          className="text-[10px] font-medium leading-none pl-[14px]"
+          style={{ color, opacity: 0.7 }}
         >
           {timeStr}
         </span>
@@ -305,7 +306,8 @@ function WeekView({
             {HOURS.map((h) => (
               <div
                 key={h}
-                className="h-12 border-b border-dashed border-border/30 flex items-start justify-end pr-2 pt-1"
+                className="border-b border-dashed border-border/30 flex items-start justify-end pr-2 pt-1"
+                style={{ height: HOUR_HEIGHT }}
               >
                 <span className="text-[10px] text-muted-foreground/50 font-semibold tabular-nums">
                   {String(h).padStart(2, "0")}:00
@@ -329,8 +331,8 @@ function WeekView({
               })
               .sort((a, b) => a.topMin - b.topMin);
 
-            // Assign overlap groups — events within 30min of each other overlap
-            const OVERLAP_THRESHOLD = 30; // minutes
+            // Assign overlap groups — events within 45min of each other overlap
+            const OVERLAP_THRESHOLD = 45; // minutes
             const layout: { evt: CalendarEvent; topPx: number; col: number; totalCols: number }[] = [];
             let groupStart = 0;
             for (let i = 0; i <= positioned.length; i++) {
@@ -342,7 +344,7 @@ function WeekView({
                 group.forEach((item, col) => {
                   layout.push({
                     evt: item.evt,
-                    topPx: (item.topMin / 60) * 48,
+                    topPx: (item.topMin / 60) * HOUR_HEIGHT,
                     col,
                     totalCols,
                   });
@@ -357,7 +359,7 @@ function WeekView({
               group.forEach((item, col) => {
                 layout.push({
                   evt: item.evt,
-                  topPx: (item.topMin / 60) * 48,
+                  topPx: (item.topMin / 60) * HOUR_HEIGHT,
                   col,
                   totalCols,
                 });
@@ -373,25 +375,29 @@ function WeekView({
                 ].join(" ")}
               >
                 {HOURS.map((h) => (
-                  <div key={h} className="h-12 border-b border-dashed border-border/30" />
+                  <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
                 ))}
                 {layout.map(({ evt, topPx, col, totalCols }) => {
-                  const widthPct = totalCols > 1 ? `${100 / totalCols}%` : undefined;
-                  const leftPct = totalCols > 1 ? `${(col * 100) / totalCols}%` : undefined;
+                  // For overlapping events: stagger with slight overlap for readability
+                  const colWidth = totalCols > 1 ? Math.max(60, 100 / totalCols + 10) : 100;
+                  const colLeft = totalCols > 1 ? col * ((100 - colWidth) / Math.max(totalCols - 1, 1)) : 0;
                   return (
                     <div
                       key={evt.id}
                       onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-                      className={[
-                        "absolute z-[5]",
-                        totalCols <= 1 ? "left-0.5 right-0.5" : "",
-                      ].join(" ")}
+                      className="absolute cursor-pointer"
                       style={{
                         top: `${topPx}px`,
-                        ...(totalCols > 1 ? { left: leftPct, width: widthPct, paddingLeft: 1, paddingRight: 1 } : {}),
+                        left: totalCols > 1 ? `${colLeft}%` : 2,
+                        right: totalCols > 1 ? undefined : 2,
+                        width: totalCols > 1 ? `${colWidth}%` : undefined,
+                        zIndex: 5 + col,
+                        minHeight: 32,
                       }}
                     >
-                      <EventPill event={evt} />
+                      <div className="px-0.5">
+                        <EventPill event={evt} />
+                      </div>
                     </div>
                   );
                 })}
