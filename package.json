@@ -21,7 +21,7 @@
     "worker:tasks:check": "node --check scripts/task-worker.mjs",
     "test:worker": "node --test lib/tasks/worker-core.test.mjs",
     "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs",
-    "dev:kill": "bash scripts/mc-services.sh stop; pkill -f \"next dev\" 2>/dev/null; pkill -f \"next-server\" 2>/dev/null; fuser -k 3000/tcp 2>/dev/null; echo \"All Mission Control processes killed.\""
+    "dev:kill": "bash scripts/mc-services.sh stop; pkill -f \"next dev\" 2>/dev/null; pkill -f \"next-server\" 2>/dev/null; pkill -f \"next start\" 2>/dev/null; sleep 1; fuser -k 3000/tcp 2>/dev/null; lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null; echo \"All Mission Control processes killed.\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

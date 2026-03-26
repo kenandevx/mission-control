@@ -54,16 +54,19 @@ pid_running() {
 }
 
 kill_port() {
-  local port=$1
+  local port=${1:-3000}
+  # Kill via fuser
   if command -v fuser >/dev/null 2>&1; then
-    fuser -k 3000/tcp 2>/dev/null || true
+    fuser -k "${port}/tcp" 2>/dev/null || true
     sleep 1
   fi
-  # Fallback: also try to kill any remaining next-server directly
+  # Kill any next-server processes
+  pkill -9 -f "next-server" 2>/dev/null || true
+  # Fallback: kill whatever holds the port
   local pid
-  pid=$(lsof -ti:3000 2>/dev/null) || true
+  pid=$(lsof -ti:"${port}" 2>/dev/null) || true
   if [ -n "$pid" ]; then
-    kill -9 "$pid" 2>/dev/null || true
+    echo "$pid" | xargs -r kill -9 2>/dev/null || true
     sleep 0.5
   fi
 }
