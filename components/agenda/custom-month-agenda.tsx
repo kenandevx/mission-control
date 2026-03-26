@@ -378,9 +378,10 @@ function WeekView({
                   <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
                 ))}
                 {layout.map(({ evt, topPx, col, totalCols }) => {
-                  // For overlapping events: stagger with slight overlap for readability
-                  const colWidth = totalCols > 1 ? Math.max(60, 100 / totalCols + 10) : 100;
-                  const colLeft = totalCols > 1 ? col * ((100 - colWidth) / Math.max(totalCols - 1, 1)) : 0;
+                  // Clean side-by-side columns — no overlap, equal width, 2px gap
+                  const gap = 2;
+                  const colWidthPct = (100 - gap * (totalCols - 1)) / totalCols;
+                  const colLeftPct = col * (colWidthPct + gap);
                   return (
                     <div
                       key={evt.id}
@@ -388,16 +389,13 @@ function WeekView({
                       className="absolute cursor-pointer"
                       style={{
                         top: `${topPx}px`,
-                        left: totalCols > 1 ? `${colLeft}%` : 2,
+                        left: totalCols > 1 ? `${colLeftPct}%` : 2,
                         right: totalCols > 1 ? undefined : 2,
-                        width: totalCols > 1 ? `${colWidth}%` : undefined,
-                        zIndex: 5 + col,
-                        minHeight: 32,
+                        width: totalCols > 1 ? `${colWidthPct}%` : undefined,
+                        zIndex: 5,
                       }}
                     >
-                      <div className="px-0.5">
-                        <EventPill event={evt} />
-                      </div>
+                      <EventPill event={evt} />
                     </div>
                   );
                 })}

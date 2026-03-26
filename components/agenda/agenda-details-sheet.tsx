@@ -134,6 +134,99 @@ function ResultBadge({ status }: { status: string | null }) {
   return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
 }
 
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Headers
+    if (line.startsWith("### ")) {
+      nodes.push(<h4 key={i} className="text-sm font-bold mt-3 mb-1">{renderInline(line.slice(4))}</h4>);
+    } else if (line.startsWith("## ")) {
+      nodes.push(<h3 key={i} className="text-base font-bold mt-3 mb-1">{renderInline(line.slice(3))}</h3>);
+    } else if (line.startsWith("# ")) {
+      nodes.push(<h2 key={i} className="text-lg font-bold mt-3 mb-1">{renderInline(line.slice(2))}</h2>);
+    }
+    // List items
+    else if (/^[-*]\s/.test(line)) {
+      nodes.push(
+        <div key={i} className="flex gap-2 pl-1">
+          <span className="text-muted-foreground shrink-0">•</span>
+          <span className="text-sm leading-relaxed">{renderInline(line.replace(/^[-*]\s/, ""))}</span>
+        </div>
+      );
+    }
+    // Numbered list
+    else if (/^\d+\.\s/.test(line)) {
+      const num = line.match(/^(\d+)\./)?.[1];
+      nodes.push(
+        <div key={i} className="flex gap-2 pl-1">
+          <span className="text-muted-foreground shrink-0 tabular-nums text-sm">{num}.</span>
+          <span className="text-sm leading-relaxed">{renderInline(line.replace(/^\d+\.\s/, ""))}</span>
+        </div>
+      );
+    }
+    // Empty line
+    else if (line.trim() === "") {
+      nodes.push(<div key={i} className="h-2" />);
+    }
+    // Normal paragraph
+    else {
+      nodes.push(<p key={i} className="text-sm leading-relaxed">{renderInline(line)}</p>);
+    }
+  }
+
+  return nodes;
+}
+
+function renderInline(text: string): React.ReactNode {
+  // Process inline markdown: **bold**, *italic*, `code`
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining.length > 0) {
+    // Code
+    const codeMatch = remaining.match(/^`([^`]+)`/);
+    if (codeMatch) {
+      parts.push(<code key={key++} className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{codeMatch[1]}</code>);
+      remaining = remaining.slice(codeMatch[0].length);
+      continue;
+    }
+    // Bold
+    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
+    if (boldMatch) {
+      parts.push(<strong key={key++} className="font-bold">{boldMatch[1]}</strong>);
+      remaining = remaining.slice(boldMatch[0].length);
+      continue;
+    }
+    // Italic
+    const italicMatch = remaining.match(/^\*(.+?)\*/);
+    if (italicMatch) {
+      parts.push(<em key={key++}>{italicMatch[1]}</em>);
+      remaining = remaining.slice(italicMatch[0].length);
+      continue;
+    }
+    // Plain text (up to next special char)
+    const nextSpecial = remaining.search(/[`*]/);
+    if (nextSpecial === -1) {
+      parts.push(remaining);
+      break;
+    } else if (nextSpecial === 0) {
+      // Special char that didn't match a pattern — emit as text
+      parts.push(remaining[0]);
+      remaining = remaining.slice(1);
+    } else {
+      parts.push(remaining.slice(0, nextSpecial));
+      remaining = remaining.slice(nextSpecial);
+    }
+  }
+
+  return parts.length === 1 ? parts[0] : <>{parts}</>;
+}
+
 function AgentOutput({ outputPayload }: { outputPayload: string | null }) {
   if (!outputPayload) return null;
   let outputText = outputPayload;
@@ -144,8 +237,8 @@ function AgentOutput({ outputPayload }: { outputPayload: string | null }) {
   } catch { /* keep raw */ }
   const cleaned = outputText.replace(/\n*>\s*`Agent:.*`$/, "").trim();
   return (
-    <div className="rounded-lg border bg-muted/40 p-4">
-      <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">{cleaned}</pre>
+    <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-0.5">
+      {renderMarkdown(cleaned)}
     </div>
   );
 }
