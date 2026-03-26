@@ -5,6 +5,9 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ClearLogsButton } from "@/components/agents/clear-logs-button";
 import { LogsExplorer } from "@/components/agents/logs-explorer";
 import { LogsLiveRefresh } from "@/components/agents/logs-live-refresh";
+import { QueueManager } from "@/components/agents/queue-manager";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollTextIcon, LayersIcon } from "lucide-react";
 import type { Agent, AgentLog } from "@/types/agents";
 
 type PageInfo = {
@@ -43,6 +46,7 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
   const [agents] = useState<Agent[]>(initialAgents);
   const [logs, setLogs] = useState<AgentLog[]>(initialLogs);
   const [pageInfo, setPageInfo] = useState<PageInfo>(initialPageInfo);
+  const [activeTab, setActiveTab] = useState("logs");
 
   const isFirstPage = pageInfo.page === 1;
 
@@ -82,17 +86,36 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
 
   return (
     <>
-      <PageHeader page="Logs" actions={titleActions} />
+      <PageHeader page="Logs & Queues" actions={titleActions} />
       <div className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">
-        <LogsExplorer
-          agents={agents}
-          logs={logs}
-          page={pageInfo.page}
-          pageCount={pageInfo.pageCount}
-          totalCount={pageInfo.totalCount}
-          initialNowIso={initialNowIso}
-          onPageChange={onPageChange}
-        />
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="h-10">
+            <TabsTrigger value="logs" className="gap-1.5 cursor-pointer">
+              <ScrollTextIcon className="size-3.5" />
+              Runtime Logs
+            </TabsTrigger>
+            <TabsTrigger value="queues" className="gap-1.5 cursor-pointer">
+              <LayersIcon className="size-3.5" />
+              Job Queues
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="logs" className="mt-4">
+            <LogsExplorer
+              agents={agents}
+              logs={logs}
+              page={pageInfo.page}
+              pageCount={pageInfo.pageCount}
+              totalCount={pageInfo.totalCount}
+              initialNowIso={initialNowIso}
+              onPageChange={onPageChange}
+            />
+          </TabsContent>
+
+          <TabsContent value="queues" className="mt-4">
+            <QueueManager />
+          </TabsContent>
+        </Tabs>
       </div>
     </>
   );

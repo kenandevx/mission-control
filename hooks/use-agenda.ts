@@ -27,6 +27,7 @@ export type AgendaEvent = {
   created_at: string;
   updated_at: string;
   processes: AgendaEventProcess[];
+  latest_occurrence_status?: string | null;
 };
 
 export type AgendaOccurrence = {
@@ -109,7 +110,7 @@ function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
       recurrence: e.recurrence_rule ?? "none",
       status: e.status,
       processes: e.processes ?? [],
-      latestResult: null,
+      latestResult: e.latest_occurrence_status ?? null,
       nextRuns: [],
     },
   }));

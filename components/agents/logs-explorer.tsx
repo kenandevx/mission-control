@@ -23,7 +23,7 @@ type LogsExplorerProps = {
   onPageChange: (next: number) => void;
 };
 
-type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "error";
+type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error";
 
 type NormalizedLog = {
   id: string;
@@ -411,6 +411,7 @@ function matchesGroup(log: NormalizedLog, group: FilterGroup) {
   if (group === "tool") return log.eventType.startsWith("tool.") || log.type === "tool";
   if (group === "memory") return log.eventType.startsWith("memory.") || log.type === "memory";
   if (group === "system") return log.eventType.startsWith("system.") || log.eventType.startsWith("heartbeat.") || log.type === "system";
+  if (group === "worker") return log.type === "worker" || log.type === "bullmq";
   return true;
 }
 
@@ -447,7 +448,7 @@ function eventLabel(eventType: string) {
   return map[eventType] || eventType;
 }
 
-function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso: string }) {
+function extractFullMessage(log: NormalizedLog): string {
   const payloadRecord = (log.rawPayload && typeof log.rawPayload === "object") ? (log.rawPayload as Record<string, unknown>) : null;
   const payloadMessage = payloadRecord?.message && typeof payloadRecord.message === "object"
     ? (payloadRecord.message as Record<string, unknown>)
@@ -455,40 +456,179 @@ function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso:
   const payloadContent = Array.isArray(payloadMessage?.content)
     ? (payloadMessage?.content as Array<Record<string, unknown>>)
     : [];
-
   const extractedFull = payloadContent.length > 0
     ? safeString(payloadContent[0]?.text || payloadContent[0]?.message)
     : "";
-
-  const fullMessage =
-    (log.message && log.message !== "[object Object]" ? log.message : "") ||
+  return (log.message && log.message !== "[object Object]" ? log.message : "") ||
     extractedFull ||
     safeString(log.rawPayload) ||
     "(no message)";
+}
+
+function renderLogMarkdown(text: string): React.ReactNode[] {
+  const cleaned = text.replace(/\n*>\s*`Agent:.*`$/, "").trim();
+  const lines = cleaned.split("\n");
+  const nodes: React.ReactNode[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("### ")) nodes.push(<h4 key={i} className="text-sm font-bold mt-3 mb-1">{line.slice(4)}</h4>);
+    else if (line.startsWith("## ")) nodes.push(<h3 key={i} className="text-base font-bold mt-3 mb-1">{line.slice(3)}</h3>);
+    else if (line.startsWith("# ")) nodes.push(<h2 key={i} className="text-lg font-bold mt-3 mb-1">{line.slice(2)}</h2>);
+    else if (/^[-*]\s/.test(line)) nodes.push(<div key={i} className="flex gap-2 pl-1"><span className="text-muted-foreground shrink-0">•</span><span className="text-sm leading-relaxed">{line.replace(/^[-*]\s/, "")}</span></div>);
+    else if (/^\d+\.\s/.test(line)) { const num = line.match(/^(\d+)\./)?.[1]; nodes.push(<div key={i} className="flex gap-2 pl-1"><span className="text-muted-foreground shrink-0 tabular-nums text-sm">{num}.</span><span className="text-sm leading-relaxed">{line.replace(/^\d+\.\s/, "")}</span></div>); }
+    else if (line.trim() === "") nodes.push(<div key={i} className="h-2" />);
+    else nodes.push(<p key={i} className="text-sm leading-relaxed">{line}</p>);
+  }
+  return nodes;
+}
+
+const LEVEL_ICONS: Record<string, { icon: string; color: string }> = {
+  info: { icon: "ℹ️", color: "text-sky-600 dark:text-sky-400" },
+  debug: { icon: "🔍", color: "text-zinc-600 dark:text-zinc-400" },
+  warning: { icon: "⚠️", color: "text-amber-600 dark:text-amber-400" },
+  error: { icon: "❌", color: "text-red-600 dark:text-red-400" },
+};
+
+const DIRECTION_LABELS: Record<string, string> = {
+  inbound: "↙ Inbound",
+  outbound: "↗ Outbound",
+  internal: "↔ Internal",
+};
+
+function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso: string }) {
+  const fullMessage = extractFullMessage(log);
+  const [showRaw, setShowRaw] = useState(false);
+  const levelCfg = LEVEL_ICONS[log.level] ?? LEVEL_ICONS.info;
+  const isChat = log.eventType.startsWith("chat.");
+  const isTool = log.eventType.startsWith("tool.");
+  const isMemory = log.eventType.startsWith("memory.");
+
+  // Extract structured details from payload
+  const payloadRecord = (log.rawPayload && typeof log.rawPayload === "object") ? (log.rawPayload as Record<string, unknown>) : null;
 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm">Details</Button>
+        <Button variant="ghost" size="sm" className="cursor-pointer">Details</Button>
       </DialogTrigger>
-      <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>{eventLabel(log.eventType || log.type)}</DialogTitle>
-          <DialogDescription>{log.eventType || log.type} • {fmtTime(log.occurredAt, initialNowIso)}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 text-sm min-w-0 overflow-hidden">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline" className={cn("capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge>
-            <Badge variant="outline" className={cn("capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge>
-            <Badge variant="outline">{log.direction || "internal"}</Badge>
-            {log.memorySource ? <Badge variant="outline">memory:{log.memorySource}</Badge> : null}
+      <DialogContent className="sm:max-w-[680px] max-h-[92vh] overflow-hidden p-0">
+        {/* Header */}
+        <DialogHeader className="px-6 pt-5 pb-0">
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "flex items-center justify-center size-10 rounded-xl shrink-0",
+              log.level === "error" ? "bg-red-500/15" :
+              log.level === "warning" ? "bg-amber-500/15" :
+              isChat ? "bg-blue-500/15" :
+              isTool ? "bg-emerald-500/15" :
+              isMemory ? "bg-fuchsia-500/15" :
+              "bg-primary/10"
+            )}>
+              <span className="text-lg">{levelCfg.icon}</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-base">{eventLabel(log.eventType || log.type)}</DialogTitle>
+              <DialogDescription className="text-[11px]">
+                {log.eventType || log.type} • {fmtTime(log.occurredAt, initialNowIso)}
+              </DialogDescription>
+            </div>
           </div>
+        </DialogHeader>
 
-          <div className="rounded-md bg-muted/40 p-3 whitespace-pre-wrap break-words max-h-52 overflow-auto">{fullMessage}</div>
+        {/* Two-column layout like ticket modal */}
+        <div className="flex overflow-hidden" style={{ maxHeight: "calc(92vh - 140px)" }}>
+          {/* Main content */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4 min-w-0">
+            {/* Metadata grid */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Level</span>
+                <Badge variant="outline" className={cn("w-fit capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Channel</span>
+                <Badge variant="outline" className={cn("w-fit capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Direction</span>
+                <span className="text-sm font-medium">{DIRECTION_LABELS[log.direction] ?? log.direction ?? "Internal"}</span>
+              </div>
+              <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Agent</span>
+                <span className="text-sm font-medium truncate">{log.agentName || "—"}</span>
+              </div>
+            </div>
 
-          <pre className="max-h-[50vh] max-w-full overflow-auto rounded-md bg-muted/40 p-3 text-xs whitespace-pre-wrap break-all">
+            {/* Session / Run info */}
+            {(log.sessionKey || log.runId || log.sourceMessageId) && (
+              <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Identifiers</span>
+                <div className="rounded-lg border bg-muted/10 p-3 space-y-1.5">
+                  {log.sessionKey && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Session</span>
+                      <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded max-w-[300px] truncate">{log.sessionKey}</code>
+                    </div>
+                  )}
+                  {log.runId && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Run ID</span>
+                      <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded max-w-[300px] truncate">{log.runId}</code>
+                    </div>
+                  )}
+                  {log.sourceMessageId && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">Message ID</span>
+                      <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded max-w-[300px] truncate">{log.sourceMessageId}</code>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Memory info */}
+            {log.memorySource && (
+              <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Memory</span>
+                <div className="rounded-lg border bg-fuchsia-500/5 border-fuchsia-500/20 p-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">Source</span>
+                    <Badge variant="outline" className="text-[10px]">{log.memorySource}</Badge>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Message content */}
+            <div className="flex flex-col gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                {isChat ? "Message Content" : isTool ? "Tool Output" : isMemory ? "Memory Operation" : "Content"}
+              </span>
+              <div className="rounded-lg border bg-card p-4 max-h-[280px] overflow-auto">
+                {isChat ? (
+                  <div className="flex flex-col gap-0.5">{renderLogMarkdown(fullMessage)}</div>
+                ) : (
+                  <pre className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed">{fullMessage}</pre>
+                )}
+              </div>
+            </div>
+
+            {/* Raw payload — collapsible */}
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => setShowRaw(!showRaw)}
+                className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 cursor-pointer hover:text-foreground transition-colors"
+              >
+                Raw Payload
+                <span className="text-[9px]">{showRaw ? "▲" : "▼"}</span>
+              </button>
+              {showRaw && (
+                <pre className="max-h-[300px] overflow-auto rounded-lg border bg-muted/30 p-3 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed">
 {JSON.stringify(log.rawPayload, null, 2) || "null"}
-          </pre>
+                </pre>
+              )}
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -566,6 +706,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                 <SelectItem value="tool">Tools</SelectItem>
                 <SelectItem value="memory">Memory / Qdrant</SelectItem>
                 <SelectItem value="system">System / Heartbeat</SelectItem>
+                <SelectItem value="worker">Worker / BullMQ</SelectItem>
                 <SelectItem value="error">Warnings + Errors</SelectItem>
               </SelectContent>
             </Select>
@@ -619,22 +760,37 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">No logs match your filters.</TableCell>
-                  </TableRow>
-                ) : filtered.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="text-xs text-muted-foreground">{fmtTime(log.occurredAt, initialNowIso)}</TableCell>
-                    <TableCell><Badge variant="outline" className={cn("capitalize", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge></TableCell>
-                    <TableCell className="max-w-[220px]">
-                      <div className="font-medium text-sm">{eventLabel(log.eventType || log.type)}</div>
-                      <div className="text-xs text-muted-foreground">{log.eventType || log.type}</div>
+                    <TableCell colSpan={7} className="text-center py-16">
+                      <div className="flex flex-col items-center gap-2">
+                        <span className="text-3xl">📭</span>
+                        <span className="text-sm text-muted-foreground font-medium">No logs match your filters</span>
+                        <span className="text-xs text-muted-foreground/60">Try adjusting your search or filter criteria</span>
+                      </div>
                     </TableCell>
-                    <TableCell><Badge variant="outline" className={cn("capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
-                    <TableCell>{log.agentName}</TableCell>
-                    <TableCell className="max-w-[520px] whitespace-normal break-words text-muted-foreground">{log.messagePreview}</TableCell>
-                    <TableCell className="text-right"><LogDetails log={log} initialNowIso={initialNowIso} /></TableCell>
                   </TableRow>
-                ))}
+                ) : filtered.map((log) => {
+                  const isError = log.level === "error" || log.level === "warning";
+                  return (
+                    <TableRow key={log.id} className={cn(
+                      "transition-colors",
+                      log.level === "error" && "bg-red-500/[0.03] hover:bg-red-500/[0.06]",
+                      log.level === "warning" && "bg-amber-500/[0.02] hover:bg-amber-500/[0.04]",
+                    )}>
+                      <TableCell className="text-xs text-muted-foreground tabular-nums">{fmtTime(log.occurredAt, initialNowIso)}</TableCell>
+                      <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", levelClasses[log.level] ?? levelClasses.info)}>{log.level}</Badge></TableCell>
+                      <TableCell className="max-w-[220px]">
+                        <div className="font-semibold text-[13px] leading-tight">{eventLabel(log.eventType || log.type)}</div>
+                        <div className="text-[10px] text-muted-foreground/60 font-mono mt-0.5">{log.eventType || log.type}</div>
+                      </TableCell>
+                      <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
+                      <TableCell className="text-sm font-medium">{log.agentName}</TableCell>
+                      <TableCell className="max-w-[520px]">
+                        <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-2">{log.messagePreview}</p>
+                      </TableCell>
+                      <TableCell className="text-right"><LogDetails log={log} initialNowIso={initialNowIso} /></TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

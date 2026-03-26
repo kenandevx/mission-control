@@ -36,6 +36,8 @@ const typeClass: Record<AgentLogType, string> = {
   tool: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   memory: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
   system: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+  worker: "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  bullmq: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
 };
 
 const eventTypeClass: Record<AgentLogEventType, string> = {
@@ -91,6 +93,8 @@ const typeLabel: Record<AgentLogType, string> = {
   tool: "Tool",
   memory: "Memory",
   system: "System",
+  worker: "Worker",
+  bullmq: "BullMQ",
 };
 
 const eventTypeLabel: Record<AgentLogEventType, string> = {

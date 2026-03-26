@@ -116,7 +116,11 @@ export async function collectRuntimeSnapshots(): Promise<CollectorResult> {
     const heartbeatAge = heartbeatAgeSec(lastHeartbeatAt);
     const activeRuns = latest?.kind === "direct" && heartbeatAge != null && heartbeatAge < STALE_SEC ? 1 : 0;
     const queueDepth = Math.max(0, latestByAgent.get(agentId)?.length || 0);
-    const model = normalizeRuntimeName(latest?.model || null) || null;
+    // Prefer the configured model from `openclaw agents list` over the live session model
+    const registeredAgent = registeredAgents.find((a) => a.id === agentId);
+    const configuredModel = registeredAgent?.model || null;
+    const sessionModel = normalizeRuntimeName(latest?.model || null) || null;
+    const model = configuredModel || sessionModel;
     const name = identityNames.get(agentId) || agentId;
 
     snapshots[agentId] = {

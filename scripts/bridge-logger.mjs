@@ -163,6 +163,18 @@ function cleanText(value) {
 
 function isErrorLike(text) {
   const t = String(text || "").toLowerCase();
+  // Operational messages that contain "error"/"fail" but are NOT actual errors
+  const safePatterns = [
+    "error backoff",       // cron recovery — normal
+    "failover decision",   // embedded run failover — normal
+    "agent end",           // embedded run end — normal
+    "backoff applied",     // retry backoff — normal
+    "error_count",         // metric field name
+    "error_rate",          // metric field name
+    "on_error",            // config/handler name
+    "retry after",         // recovery message
+  ];
+  if (safePatterns.some((p) => t.includes(p))) return false;
   return ["error", "failed", "exception", "timeout", "permission denied", "unauthorized"].some((x) => t.includes(x));
 }
 

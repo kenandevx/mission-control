@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import postgres from "postgres";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Worker } from "bullmq";
@@ -45,14 +47,32 @@ async function getOpenclawConfig() {
   return _openclawConfig;
 }
 
-async function getRecentChatId(wid, agentId) { /* same as before */
-  const stateDir = process.env.OPENCLAW_STATE_DIR || "/home/nodejs";
-  for (const sessionsPath of [`${stateDir}/agents/${agentId}/sessions/sessions.json`, `${stateDir}/agents/main/sessions/sessions.json`]) {
+async function getOpenclawHome() {
+  // Derive home from openclaw.json or known defaults
+  const configPath = process.env.OPENCLAW_CONFIG_PATH || "/home/clawdbot/.openclaw/openclaw.json";
+  try {
+    // Home dir is the parent of openclaw.json
+    return path.dirname(configPath);
+  } catch {
+    return "/home/clawdbot/.openclaw";
+  }
+}
+
+async function getRecentChatId(wid, agentId) {
+  const home = await getOpenclawHome();
+  // Scan agent session files for a known Telegram delivery context
+  const searchPaths = [
+    `${home}/agents/${agentId}/sessions/sessions.json`,
+    `${home}/agents/main/sessions/sessions.json`,
+  ];
+  for (const sessionsPath of searchPaths) {
     try {
       const raw = await fs.readFile(sessionsPath, "utf8");
       const data = JSON.parse(raw);
       for (const [key, val] of Object.entries(data)) {
-        if (key.startsWith("agent:") && key.includes(":telegram:") && val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) return String(val.deliveryContext.to).replace(/^telegram:/, "");
+        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
+          return String(val.deliveryContext.to).replace(/^telegram:/, "");
+        }
       }
     } catch {}
   }
@@ -101,6 +121,73 @@ async function getSettings() { const rows = await sql`select enabled, poll_inter
 async function getColumnIdsByTitle(boardId, names) { const rows = await sql`select id, lower(trim(title)) as title from columns where board_id = ${boardId}::uuid`; const wanted = new Set(names.map((x)=>x.toLowerCase())); return rows.filter((r)=>wanted.has(r.title)).map((r)=>r.id); }
 async function writeActivity(ticketId, event, details, level = "info") { const result = await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${ticketId}::uuid, 'Worker', ${event}, ${details}, ${level}) returning id::text`; const insertedId = result[0]?.id; if (insertedId) await sql`select pg_notify('ticket_activity', ${insertedId})`; }
 async function sendTelegramMessage(ticket, text, chatId = null) { const targetId = chatId ?? ticket.telegram_chat_id; if (!targetId) return; try { await execFileAsync("openclaw", ["message","send","--channel","telegram","--target",String(targetId),"--message",text,"--json"], { timeout: 60000, env: process.env }); } catch (e) { console.warn("Failed to send Telegram message", e.message); } }
+/**
+ * Detect file paths in agent response text and auto-attach them to the ticket.
+ * Matches patterns like:
+ *   📄 /path/to/file.md
+ *   /home/.../file.txt — description
+ *   Created file: /path/to/file.pdf
+ *   The file already exists from just a moment ago: \n📄 /path/to/file
+ */
+const FILE_PATH_REGEX = /(?:📄\s*)?(\/(home|storage|tmp|var|etc)[^\s\n,)}\]"'`]+\.[a-zA-Z0-9]{1,10})/g;
+const ATTACH_EXTENSIONS = new Set([
+  ".md", ".txt", ".json", ".csv", ".pdf", ".html", ".htm", ".xml",
+  ".yaml", ".yml", ".toml", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+  ".svg", ".mp3", ".wav", ".mp4", ".webm", ".zip", ".tar", ".gz",
+  ".log", ".sh", ".ts", ".tsx", ".js", ".jsx", ".css", ".py", ".rs",
+  ".go", ".sql", ".env",
+]);
+
+async function extractAndAttachFiles(ticketId, responseText) {
+  if (!responseText) return [];
+  const matches = [...responseText.matchAll(FILE_PATH_REGEX)];
+  const seen = new Set();
+  const attached = [];
+
+  for (const match of matches) {
+    const filePath = match[1];
+    if (seen.has(filePath)) continue;
+    seen.add(filePath);
+
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ATTACH_EXTENSIONS.has(ext)) continue;
+
+    try {
+      const resolved = path.resolve(filePath);
+      const stat = fsSync.statSync(resolved);
+      if (!stat.isFile() || stat.size > 50 * 1024 * 1024) continue; // Skip dirs and files >50MB
+
+      const fileName = path.basename(resolved);
+      const mimeMap = {
+        ".md": "text/markdown", ".txt": "text/plain", ".json": "application/json",
+        ".csv": "text/csv", ".pdf": "application/pdf", ".html": "text/html",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+        ".zip": "application/zip", ".tar": "application/x-tar", ".gz": "application/gzip",
+        ".log": "text/plain", ".sh": "text/x-shellscript",
+      };
+      const mimeType = mimeMap[ext] || "application/octet-stream";
+      const url = `/api/files?path=${encodeURIComponent(resolved)}`;
+
+      await sql`
+        insert into ticket_attachments (ticket_id, name, url, mime_type, size, path)
+        values (${ticketId}::uuid, ${fileName}, ${url}, ${mimeType}, ${stat.size}, ${resolved})
+      `;
+      attached.push({ name: fileName, path: resolved, size: stat.size });
+    } catch {
+      // Skip files we can't access
+    }
+  }
+
+  if (attached.length > 0) {
+    await sql`update tickets set attachments_count = coalesce((select count(*) from ticket_attachments where ticket_id=${ticketId}::uuid), 0), updated_at=now() where id=${ticketId}::uuid`;
+    const names = attached.map(a => a.name).join(", ");
+    await writeActivity(ticketId, "Files attached", `Auto-attached ${attached.length} file(s): ${names}`, "success");
+  }
+
+  return attached;
+}
+
 async function getRetryCount(ticketId) { const rows = await sql`select count(*)::int as n from ticket_activity where ticket_id = ${ticketId}::uuid and event = 'Failed' and source = 'Worker'`; return Number(rows[0]?.n ?? 0); }
 async function scheduleRetry(ticketId, retryCount) { const backoffSec = BACKOFF_SECONDS[Math.min(retryCount, BACKOFF_SECONDS.length - 1)]; const scheduledFor = new Date(Date.now() + backoffSec * 1000).toISOString(); await sql`update tickets set execution_state='queued', scheduled_for=${scheduledFor}, updated_at=now() where id=${ticketId}::uuid`; await writeActivity(ticketId, "Retry scheduled", `Retry ${retryCount + 1}/${MAX_RETRIES} scheduled in ${backoffSec}s.`, "warning"); }
 async function generatePlan(ticket, wid) { await sql`update tickets set execution_state='planning', updated_at=now() where id=${ticket.id}::uuid`; await writeActivity(ticket.id, "Planning", "Generating plan for approval.", "info"); const [subtaskRows, commentRows, processRows] = await Promise.all([
@@ -143,7 +230,7 @@ for (const r of processRows) {
   if (!g) { g = { process_name: r.process_name, process_description: r.process_description, steps: [] }; grouped.push(g); }
   g.steps.push(r);
 }
-const prompt = buildTicketPrompt(ticket, subtaskRows, commentRows, grouped, 'Execute the above ticket. Report progress via activity tools and mark completion when done.'); const args = ["agent", "--agent", agentId, "--message", prompt, "--json"]; let result; try { const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env }); const parsed = JSON.parse(stdout); const inner = parsed?.result ?? parsed; const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : []; result = { success: true, result: parsed, _rawPayloads: rawPayloads }; } catch (error) { result = { success: false, error: error.message }; } if (result.success) { const payloads = result._rawPayloads; const responseText = payloads.map(p => p.text ?? '').join('\n').trim(); if (responseText) await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${ticketId}::uuid, ${agentId}, 'Agent response', ${responseText}, 'info')`; if (chatIdForDelivery && responseText) await sendTelegramMessage(ticket, responseText, chatIdForDelivery); const completedIds = await getColumnIdsByTitle(boardId, ["completed", "done"]); const completedColumnId = completedIds[0] ?? null; if (completedColumnId) await sql`update tickets set execution_state='done', column_id=${completedColumnId}::uuid, updated_at=now() where id=${ticketId}::uuid`; else await sql`update tickets set execution_state='done', updated_at=now() where id=${ticketId}::uuid`; await writeActivity(ticketId, "Completed", `Agent "${agentId}" completed successfully.`, "success"); } else { await writeActivity(ticketId, "Failed", `Agent "${agentId}" failed: ${result.error}`, "error"); await handleFailureWithRetry(ticketId, ticket); const retryCount = await getRetryCount(ticketId); if (chatIdForDelivery) await sendTelegramMessage(ticket, retryCount >= MAX_RETRIES ? `❌ Ticket "${ticket.title}" failed after ${MAX_RETRIES} retries: ${result.error}` : `⚠️ Ticket "${ticket.title}" failed, retrying in ${BACKOFF_SECONDS[Math.min(retryCount - 1, BACKOFF_SECONDS.length - 1)]}s (attempt ${retryCount}/${MAX_RETRIES})`, chatIdForDelivery); } }
+const prompt = buildTicketPrompt(ticket, subtaskRows, commentRows, grouped, 'Execute the above ticket. Report progress via activity tools and mark completion when done.'); const args = ["agent", "--agent", agentId, "--message", prompt, "--json"]; let result; try { const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env }); const parsed = JSON.parse(stdout); const inner = parsed?.result ?? parsed; const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : []; result = { success: true, result: parsed, _rawPayloads: rawPayloads }; } catch (error) { result = { success: false, error: error.message }; } if (result.success) { const payloads = result._rawPayloads; const responseText = payloads.map(p => p.text ?? '').join('\n').trim(); if (responseText) await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${ticketId}::uuid, ${agentId}, 'Agent response', ${responseText}, 'info')`; await extractAndAttachFiles(ticketId, responseText); if (chatIdForDelivery && responseText) await sendTelegramMessage(ticket, responseText, chatIdForDelivery); const completedIds = await getColumnIdsByTitle(boardId, ["completed", "done"]); const completedColumnId = completedIds[0] ?? null; if (completedColumnId) await sql`update tickets set execution_state='done', column_id=${completedColumnId}::uuid, updated_at=now() where id=${ticketId}::uuid`; else await sql`update tickets set execution_state='done', updated_at=now() where id=${ticketId}::uuid`; await writeActivity(ticketId, "Completed", `Agent "${agentId}" completed successfully.`, "success"); } else { await writeActivity(ticketId, "Failed", `Agent "${agentId}" failed: ${result.error}`, "error"); await handleFailureWithRetry(ticketId, ticket); const retryCount = await getRetryCount(ticketId); if (chatIdForDelivery) await sendTelegramMessage(ticket, retryCount >= MAX_RETRIES ? `❌ Ticket "${ticket.title}" failed after ${MAX_RETRIES} retries: ${result.error}` : `⚠️ Ticket "${ticket.title}" failed, retrying in ${BACKOFF_SECONDS[Math.min(retryCount - 1, BACKOFF_SECONDS.length - 1)]}s (attempt ${retryCount}/${MAX_RETRIES})`, chatIdForDelivery); } }
 async function handleTicket(ticket, boardId, wid) { try { if (ticket.execution_mode === 'planned' && ticket.approval_state !== 'approved') { if (!ticket.plan_text) await generatePlan(ticket, wid); else await sql`update tickets set execution_state='awaiting_approval', updated_at=now() where id=${ticket.id}::uuid and execution_state != 'awaiting_approval'`; return; } await executeTicket(ticket, boardId, wid); } catch (error) { await writeActivity(ticket.id, "Worker error", String(error.message || error), "error"); await handleFailureWithRetry(ticket.id, ticket); } }
 async function promoteAutoApprove(wid, queueName) { const rows = await sql`select id, board_id from tickets where workspace_id = ${wid}::uuid and queue_name = ${queueName} and auto_approve = true and (execution_state = 'open' or execution_state = 'pending') and (scheduled_for is null or scheduled_for <= now()) limit 100`; for (const row of rows) { const inProgressIds = await getColumnIdsByTitle(row.board_id, ["in progress", "doing"]); const toColumnId = inProgressIds[0]; if (!toColumnId) continue; await sql`update tickets set column_id=${toColumnId}::uuid, execution_state='queued', approval_state='approved', approved_by='auto', approved_at=now(), updated_at=now() where id=${row.id}::uuid`; await writeActivity(row.id, "Auto approved", "Auto-approved and queued by worker.", "info"); await enqueueTicket(row.id, { source: "auto-approve" }); } }
 async function processJob(job) { const wid = await workspaceId(); if (!wid) return { skipped: true }; const settings = await getSettings(); if (!settings.enabled) return { skipped: true }; await promoteAutoApprove(wid, myQueue); const ticketId = String(job.data?.ticketId || job.id?.replace(/^ticket-/, "") || ""); if (!ticketId) return { skipped: true }; const rows = await sql`select t.*, b.id as board_id from tickets t join boards b on b.id = t.board_id where t.id=${ticketId}::uuid limit 1`; const ticket = rows[0]; if (!ticket) return { skipped: true }; if (["executing","done"].includes(ticket.execution_state)) return { skipped: true }; if (!['queued','ready_to_execute','picked_up','planning','awaiting_approval'].includes(ticket.execution_state)) return { skipped: true }; await handleTicket(ticket, ticket.board_id, wid); return { ok: true }; }

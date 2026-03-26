@@ -93,8 +93,8 @@ type RunStep = {
   status: string;
   started_at: string | null;
   finished_at: string | null;
-  output_payload: string | null;
-  artifact_payload: { files: ArtifactFile[] } | null;
+  output_payload: string | Record<string, unknown> | null;
+  artifact_payload: string | { files: ArtifactFile[] } | null;
   error_message: string | null;
 };
 
@@ -227,14 +227,27 @@ function renderInline(text: string): React.ReactNode {
   return parts.length === 1 ? parts[0] : <>{parts}</>;
 }
 
-function AgentOutput({ outputPayload }: { outputPayload: string | null }) {
+function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
   if (!outputPayload) return null;
-  let outputText = outputPayload;
-  try {
-    const parsed = JSON.parse(outputPayload);
-    if (typeof parsed.output === "string") outputText = parsed.output;
-    else if (typeof parsed === "string") outputText = parsed;
-  } catch { /* keep raw */ }
+  let outputText = "";
+  // output_payload is jsonb — postgres driver may return a parsed object or a string
+  const raw = outputPayload;
+  if (typeof raw === "object" && raw !== null) {
+    // Already parsed object from jsonb
+    outputText = typeof (raw as Record<string, unknown>).output === "string"
+      ? (raw as Record<string, unknown>).output as string
+      : JSON.stringify(raw);
+  } else if (typeof raw === "string") {
+    outputText = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null && typeof parsed.output === "string") {
+        outputText = parsed.output;
+      } else if (typeof parsed === "string") {
+        outputText = parsed;
+      }
+    } catch { /* keep raw string */ }
+  }
   const cleaned = outputText.replace(/\n*>\s*`Agent:.*`$/, "").trim();
   return (
     <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-0.5">
@@ -423,6 +436,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onRet
                         Recurring
                       </Badge>
                     )}
+                    {/* Event ID — inline, copyable */}
+                    <button
+                      className="text-[10px] font-mono text-muted-foreground/40 hover:text-muted-foreground transition-colors cursor-pointer"
+                      title="Click to copy event ID"
+                      onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(event.id); }}
+                    >
+                      {event.id.slice(0, 8)}
+                    </button>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -696,9 +717,13 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onRet
                         ) : (
                           <p className="text-sm text-muted-foreground">No output available</p>
                         )}
-                        {step.artifact_payload?.files && step.artifact_payload.files.length > 0 && (
-                          <ArtifactFiles stepId={step.id} files={step.artifact_payload.files} />
-                        )}
+                        {(() => {
+                          let ap: { files: ArtifactFile[] } | null = null;
+                          const raw = step.artifact_payload;
+                          if (typeof raw === "string") { try { ap = JSON.parse(raw); } catch { ap = null; } }
+                          else if (typeof raw === "object" && raw !== null) { ap = raw as { files: ArtifactFile[] }; }
+                          return ap?.files && ap.files.length > 0 ? <ArtifactFiles stepId={step.id} files={ap.files} /> : null;
+                        })()}
                       </CardContent>
                     </Card>
                   ))

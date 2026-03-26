@@ -12,7 +12,7 @@ type Props = {
   onDeleteEvent?: (eventId: string) => void;
   onAddEvent?: () => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   agentsForDetails?: { id: string; name: string }[];
 };
 

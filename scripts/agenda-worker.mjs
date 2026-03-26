@@ -6,8 +6,9 @@
 import postgres from "postgres";
 import { Worker } from "bullmq";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, writeFile, readFile, stat, copyFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { resolve, basename, extname } from "node:path";
 import * as dns from "node:dns";
 import { promisify } from "node:util";
 
@@ -257,7 +258,7 @@ async function runAgentStep({
 
     output = textParts.join("\n").trim() || (parsed?.result ?? parsed?.text ?? JSON.stringify(parsed));
 
-    // Save file artifacts to disk
+    // Save file artifacts from structured payloads
     if (filePayloads.length > 0) {
       const artifactDir = resolve("/storage/mission-control/artifacts", runAttemptId);
       await mkdir(artifactDir, { recursive: true });
@@ -275,6 +276,61 @@ async function runAgentStep({
         });
       }
       artifactData = { files: savedFiles };
+    }
+
+    // ── Detect files mentioned in agent text output ───────────────────────
+    // Matches absolute paths like /home/... or /storage/... ending with a file extension
+    if (success && output) {
+      const pathRegex = /(\/(?:home|storage|tmp|var|opt|root)[^\s`"')\]>]+\.\w{1,10})/g;
+      const detectedPaths = [...new Set((output.match(pathRegex) || []))];
+      const discoveredFiles = [];
+
+      for (const p of detectedPaths) {
+        try {
+          const cleaned = p.replace(/[.,;:!?)}\]]+$/, ""); // strip trailing punctuation
+          if (!existsSync(cleaned)) continue;
+          const fstat = await stat(cleaned);
+          if (!fstat.isFile() || fstat.size > 50 * 1024 * 1024) continue; // skip dirs & files > 50MB
+
+          const fname = basename(cleaned);
+          const ext = extname(fname).toLowerCase().slice(1);
+          const mimeMap = {
+            md: "text/markdown", txt: "text/plain", csv: "text/csv", json: "application/json",
+            pdf: "application/pdf", html: "text/html", xml: "text/xml", yaml: "text/yaml", yml: "text/yaml",
+            png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+            svg: "image/svg+xml", ico: "image/x-icon",
+            zip: "application/zip", tar: "application/x-tar", gz: "application/gzip",
+            js: "text/javascript", ts: "text/typescript", py: "text/x-python", sh: "text/x-shellscript",
+            doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          };
+          const mimeType = mimeMap[ext] || "application/octet-stream";
+
+          discoveredFiles.push({ sourcePath: cleaned, name: fname, mimeType, size: fstat.size });
+        } catch { /* skip inaccessible paths */ }
+      }
+
+      if (discoveredFiles.length > 0) {
+        const artifactDir = resolve("/storage/mission-control/artifacts", runAttemptId);
+        await mkdir(artifactDir, { recursive: true });
+
+        const existingFiles = artifactData?.files ?? [];
+        const existingNames = new Set(existingFiles.map((f) => f.name));
+
+        for (const df of discoveredFiles) {
+          if (existingNames.has(df.name)) continue; // don't duplicate structured payloads
+          const destPath = resolve(artifactDir, df.name);
+          await copyFile(df.sourcePath, destPath);
+          existingFiles.push({
+            name: df.name,
+            mimeType: df.mimeType,
+            size: df.size,
+            path: destPath,
+          });
+        }
+
+        artifactData = { files: existingFiles };
+      }
     }
   } catch (err) {
     success = false;
@@ -300,9 +356,9 @@ async function runAgentStep({
       ${stepOrder},
       ${effectiveAgentId},
       ${skillKey ?? null},
-      ${JSON.stringify({ instruction, skillKey, agentId, timeoutSeconds })},
-      ${JSON.stringify({ output })},
-      ${artifactData ? JSON.stringify(artifactData) : null},
+      ${sql.json({ instruction, skillKey, agentId, timeoutSeconds })},
+      ${sql.json({ output })},
+      ${artifactData ? sql.json(artifactData) : null},
       ${success ? "succeeded" : "failed"},
       now(),
       now(),

@@ -180,7 +180,14 @@ export function useProcesses() {
   const getProcessDetail = async (id: string): Promise<ProcessDetail | null> => {
     const res = await fetch(`/api/processes/${id}`, { cache: "reload" });
     const json = await res.json();
-    if (json.ok) return json;
+    if (json.ok && json.process) {
+      return {
+        ...json.process,
+        version_label: json.process.version_label ?? null,
+        versions: json.versions ?? [],
+        steps: json.steps ?? [],
+      } as ProcessDetail;
+    }
     return null;
   };
 

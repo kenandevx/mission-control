@@ -43,6 +43,7 @@ import type {
   TicketSubtask,
 } from "@/types/tasks";
 import {
+  BotIcon,
   CheckSquareIcon,
   ClipboardListIcon,
   CopyIcon,
@@ -125,6 +126,71 @@ const initials = (name: string) => {
 };
 const fmtBytes = (s: number) => s < 1024 ? `${s} B` : s < 1048576 ? `${(s / 1024).toFixed(1)} KB` : `${(s / 1048576).toFixed(1)} MB`;
 
+// ── Markdown renderer for agent output ───────────────────────────────────────
+
+function renderActivityInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+  while (remaining.length > 0) {
+    const codeMatch = remaining.match(/^`([^`]+)`/);
+    if (codeMatch) {
+      parts.push(<code key={key++} className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono">{codeMatch[1]}</code>);
+      remaining = remaining.slice(codeMatch[0].length);
+      continue;
+    }
+    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
+    if (boldMatch) {
+      parts.push(<strong key={key++} className="font-bold">{boldMatch[1]}</strong>);
+      remaining = remaining.slice(boldMatch[0].length);
+      continue;
+    }
+    const italicMatch = remaining.match(/^\*(.+?)\*/);
+    if (italicMatch) {
+      parts.push(<em key={key++}>{italicMatch[1]}</em>);
+      remaining = remaining.slice(italicMatch[0].length);
+      continue;
+    }
+    const nextSpecial = remaining.search(/[`*]/);
+    if (nextSpecial === -1) { parts.push(remaining); break; }
+    if (nextSpecial === 0) { parts.push(remaining[0]); remaining = remaining.slice(1); }
+    else { parts.push(remaining.slice(0, nextSpecial)); remaining = remaining.slice(nextSpecial); }
+  }
+  return parts.length === 1 ? parts[0] : <>{parts}</>;
+}
+
+function ActivityMarkdown({ text }: { text: string }) {
+  // Strip agent footer line
+  const cleaned = text.replace(/\n*>\s*`Agent:.*`$/, "").trim();
+  const lines = cleaned.split("\n");
+  return (
+    <div className="flex flex-col gap-0.5 text-[12px] leading-relaxed text-foreground/90">
+      {lines.map((line, i) => {
+        if (line.startsWith("### ")) return <h4 key={i} className="text-[12px] font-bold mt-2 mb-0.5">{renderActivityInline(line.slice(4))}</h4>;
+        if (line.startsWith("## ")) return <h3 key={i} className="text-[13px] font-bold mt-2 mb-0.5">{renderActivityInline(line.slice(3))}</h3>;
+        if (line.startsWith("# ")) return <h2 key={i} className="text-sm font-bold mt-2 mb-0.5">{renderActivityInline(line.slice(2))}</h2>;
+        if (/^[-*]\s/.test(line)) return (
+          <div key={i} className="flex gap-1.5 pl-1">
+            <span className="text-muted-foreground shrink-0">•</span>
+            <span>{renderActivityInline(line.replace(/^[-*]\s/, ""))}</span>
+          </div>
+        );
+        if (/^\d+\.\s/.test(line)) {
+          const num = line.match(/^(\d+)\./)?.[1];
+          return (
+            <div key={i} className="flex gap-1.5 pl-1">
+              <span className="text-muted-foreground shrink-0 tabular-nums">{num}.</span>
+              <span>{renderActivityInline(line.replace(/^\d+\.\s/, ""))}</span>
+            </div>
+          );
+        }
+        if (line.trim() === "") return <div key={i} className="h-1" />;
+        return <p key={i}>{renderActivityInline(line)}</p>;
+      })}
+    </div>
+  );
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function TicketDetailsModal({
@@ -139,7 +205,9 @@ export function TicketDetailsModal({
   const isEditing = mode === "edit";
   const [createFiles, setCreateFiles] = useState<File[]>([]);
   const [previewAtt, setPreviewAtt] = useState<TicketAttachment | null>(null);
-  const [showActivity, setShowActivity] = useState(false);
+  // Auto-open activity when there are agent responses
+  const hasAgentOutput = activity.some((e) => e.event === "Agent response" || e.event === "Plan generated");
+  const [showActivity, setShowActivity] = useState(hasAgentOutput);
   const attachRef = useRef<HTMLInputElement | null>(null);
 
   const hasAgent = Boolean(form.assignedAgentId);
@@ -278,18 +346,41 @@ export function TicketDetailsModal({
 
                 {isEditing && attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {attachments.map((att) => (
-                      <div key={att.id} className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5 text-xs">
-                        {att.mimeType.startsWith("image/") ? <ImageIcon className="size-3 text-muted-foreground" /> : <FileIcon className="size-3 text-muted-foreground" />}
-                        <span className="truncate max-w-[120px]">{att.name}</span>
-                        <span className="text-muted-foreground">{fmtBytes(att.size)}</span>
-                        {att.mimeType.startsWith("image/") && (
-                          <button onClick={() => setPreviewAtt(att)} className="cursor-pointer"><EyeIcon className="size-3" /></button>
-                        )}
-                        <a href={att.url} download={att.name} target="_blank" rel="noopener noreferrer"><DownloadIcon className="size-3" /></a>
-                        <button onClick={() => onDeleteAttachment(att.id)} className="cursor-pointer"><Trash2Icon className="size-3 text-destructive" /></button>
-                      </div>
-                    ))}
+                    {attachments.map((att) => {
+                      const mime = att.mimeType || "application/octet-stream";
+                      const url = att.url || "";
+                      const isImage = mime.startsWith("image/");
+                      const isPdf = mime === "application/pdf";
+                      const isPreviewable = isImage || isPdf;
+                      const isDataUrl = url.startsWith("data:");
+                      // For file-served URLs, download link forces attachment
+                      const downloadUrl = isDataUrl
+                        ? url
+                        : url.includes("/api/files?")
+                          ? `${url}&download=1`
+                          : url;
+
+                      return (
+                        <div key={att.id} className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5 text-xs">
+                          {isImage ? <ImageIcon className="size-3 text-muted-foreground" /> : <FileIcon className="size-3 text-muted-foreground" />}
+                          <span className="truncate max-w-[120px]">{att.name}</span>
+                          <span className="text-muted-foreground">{fmtBytes(att.size)}</span>
+                          {isPreviewable && (
+                            <button
+                              onClick={() => {
+                                if (isImage) setPreviewAtt(att);
+                                else window.open(url, "_blank");
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <EyeIcon className="size-3" />
+                            </button>
+                          )}
+                          <a href={downloadUrl} download={att.name} target="_blank" rel="noopener noreferrer"><DownloadIcon className="size-3" /></a>
+                          <button onClick={() => onDeleteAttachment(att.id)} className="cursor-pointer"><Trash2Icon className="size-3 text-destructive" /></button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -334,25 +425,72 @@ export function TicketDetailsModal({
                 </div>
               )}
 
-              {/* Activity toggle (edit only) */}
+              {/* Activity + Agent Output (edit only) */}
               {isEditing && activity.length > 0 && (
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={() => setShowActivity(!showActivity)}
                     className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 cursor-pointer hover:text-foreground transition-colors"
                   >
-                    <ZapIcon className="size-3" /> Activity ({activity.length})
+                    <ZapIcon className="size-3" /> Activity & Output ({activity.length})
                     <span className="text-[9px]">{showActivity ? "▲" : "▼"}</span>
                   </button>
                   {showActivity && (
-                    <ScrollArea className="max-h-[160px]">
-                      <div className="space-y-1">
-                        {activity.map((e) => (
-                          <div key={e.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/20 px-2.5 py-1.5">
-                            <span className="text-[11px] font-medium">{e.event}</span>
-                            <span className="text-[9px] text-muted-foreground">{formatDate(e.occurredAt)}</span>
-                          </div>
-                        ))}
+                    <ScrollArea className="max-h-[400px]">
+                      <div className="space-y-2">
+                        {activity.map((e) => {
+                          const isAgentOutput = e.source !== "Worker" && e.source !== "Tasks" && e.event === "Agent response";
+                          const isError = e.level === "error";
+                          const isPlan = e.event === "Plan generated" || e.event === "Plan ready";
+                          const hasDetails = Boolean(e.details?.trim());
+                          const levelBorder = isError
+                            ? "border-l-destructive"
+                            : e.level === "success"
+                              ? "border-l-emerald-500"
+                              : e.level === "warning"
+                                ? "border-l-amber-500"
+                                : "border-l-blue-500";
+                          return (
+                            <div
+                              key={e.id}
+                              className={cn(
+                                "rounded-lg border border-border/40 bg-muted/10 px-3 py-2 border-l-[3px]",
+                                levelBorder,
+                              )}
+                            >
+                              {/* Header row */}
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {isAgentOutput && <BotIcon className="size-3 text-primary shrink-0" />}
+                                  {isPlan && <ListIcon className="size-3 text-primary shrink-0" />}
+                                  <span className={cn(
+                                    "text-[11px] font-semibold truncate",
+                                    isError ? "text-destructive" : isAgentOutput ? "text-primary" : "text-foreground/80",
+                                  )}>
+                                    {e.event}
+                                  </span>
+                                  {e.source && e.source !== "Tasks" && (
+                                    <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 shrink-0">
+                                      {e.source}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-[9px] text-muted-foreground shrink-0">{formatDate(e.occurredAt)}</span>
+                              </div>
+
+                              {/* Details / Agent output */}
+                              {hasDetails && (isAgentOutput || isPlan) ? (
+                                <div className="rounded-md bg-card border p-3 mt-1.5">
+                                  <ActivityMarkdown text={e.details} />
+                                </div>
+                              ) : hasDetails ? (
+                                <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5 whitespace-pre-wrap break-words line-clamp-4">
+                                  {e.details}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     </ScrollArea>
                   )}

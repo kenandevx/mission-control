@@ -436,6 +436,45 @@ export async function POST(request: Request) {
       return ok({ attachment: rows[0] });
     }
 
+    if (action === "attachFileFromPath") {
+      // Attach a local file by its path (used by task-worker for agent-created files)
+      const ticketId = String(body.ticketId || "");
+      const filePath = String(body.filePath || "");
+      if (!ticketId || !filePath) return fail("Ticket id and file path are required.");
+
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const resolved = path.resolve(filePath);
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        return fail("File not found or is not a file.");
+      }
+
+      const fileName = path.basename(resolved);
+      const fileSize = fs.statSync(resolved).size;
+      const ext = path.extname(resolved).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        ".md": "text/markdown", ".txt": "text/plain", ".json": "application/json",
+        ".csv": "text/csv", ".pdf": "application/pdf", ".html": "text/html",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+        ".zip": "application/zip", ".tar": "application/x-tar", ".gz": "application/gzip",
+        ".ts": "text/typescript", ".js": "text/javascript", ".py": "text/x-python",
+        ".sh": "text/x-shellscript", ".log": "text/plain", ".yaml": "application/x-yaml",
+        ".yml": "application/x-yaml", ".xml": "application/xml", ".sql": "application/sql",
+        ".css": "text/css", ".rs": "text/x-rust", ".go": "text/x-go",
+      };
+      const mimeType = mimeMap[ext] || "application/octet-stream";
+      const url = `/api/files?path=${encodeURIComponent(resolved)}`;
+
+      const rows = await sql`
+        insert into ticket_attachments (ticket_id, name, url, mime_type, size, path)
+        values (${ticketId}, ${fileName}, ${url}, ${mimeType}, ${fileSize}, ${resolved})
+        returning *
+      `;
+      await sql`update tickets set attachments_count = coalesce((select count(*) from ticket_attachments where ticket_id=${ticketId}), 0), updated_at=now() where id=${ticketId}`;
+      return ok({ attachment: rows[0] });
+    }
+
     if (action === "deleteAttachment") {
       const attachmentId = String(body.attachmentId || "");
       const rows = await sql`delete from ticket_attachments where id=${attachmentId} returning ticket_id`;

@@ -83,7 +83,7 @@ export async function GET(request: Request) {
 
       const expanded: Array<Record<string, unknown>> = [];
       for (const event of events) {
-        if (!event.recurrence_rule) {
+        if (!event.recurrence_rule || event.recurrence_rule === "null" || event.recurrence_rule === "none") {
           expanded.push(event);
           continue;
         }
@@ -119,7 +119,40 @@ export async function GET(request: Request) {
           expanded.push(event);
         }
       }
+      // Attach latest occurrence status to each event
+      const expandedIds = expanded.map((e) => (e as Record<string, unknown>).id).filter(Boolean);
+      if (expandedIds.length > 0) {
+        const occRows = await sql`
+          select distinct on (agenda_event_id)
+            agenda_event_id, status as latest_occurrence_status
+          from agenda_occurrences
+          where agenda_event_id = ANY(${expandedIds as string[]})
+          order by agenda_event_id, scheduled_for desc
+        `;
+        const statusMap = new Map<string, string>();
+        for (const r of occRows) statusMap.set(r.agenda_event_id, r.latest_occurrence_status);
+        for (const e of expanded) {
+          (e as Record<string, unknown>).latest_occurrence_status = statusMap.get((e as Record<string, unknown>).id as string) ?? null;
+        }
+      }
       return ok({ events: expanded });
+    }
+
+    // Attach latest occurrence status for non-range queries too
+    const eventIds = events.map((e: Record<string, unknown>) => e.id).filter(Boolean);
+    if (eventIds.length > 0) {
+      const occRows = await sql`
+        select distinct on (agenda_event_id)
+          agenda_event_id, status as latest_occurrence_status
+        from agenda_occurrences
+        where agenda_event_id = ANY(${eventIds as string[]})
+        order by agenda_event_id, scheduled_for desc
+      `;
+      const statusMap = new Map<string, string>();
+      for (const r of occRows) statusMap.set(r.agenda_event_id, r.latest_occurrence_status);
+      for (const e of events) {
+        (e as Record<string, unknown>).latest_occurrence_status = statusMap.get((e as Record<string, unknown>).id as string) ?? null;
+      }
     }
 
     return ok({ events });
@@ -144,7 +177,7 @@ export async function POST(request: Request) {
       const timezone = String(body.timezone || "Europe/Amsterdam");
       const startsAt = body.startsAt ? new Date(String(body.startsAt)) : null;
       const endsAt = body.endsAt ? new Date(String(body.endsAt)) : null;
-      const recurrenceRule = body.recurrenceRule !== undefined ? String(body.recurrenceRule) : null;
+      const recurrenceRule = body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null;
       const recurrenceUntil = body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null;
       const status = String(body.status || "draft");
       const modelOverride = body.modelOverride ? String(body.modelOverride) : "";

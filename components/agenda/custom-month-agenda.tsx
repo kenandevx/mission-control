@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek,
   eachDayOfInterval, isSameMonth, isToday,
@@ -8,6 +8,13 @@ import {
   format,
 } from "date-fns";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -31,6 +38,7 @@ export type CalendarEvent = {
   color?: EventColor;
   isRecurring?: boolean;
   status?: "draft" | "active";
+  latestResult?: "scheduled" | "running" | "succeeded" | "failed" | null;
 };
 
 export type EventColor = "blue" | "green" | "orange" | "pink" | "purple" | "gray" | "default";
@@ -47,10 +55,49 @@ export type AgendaCalendarEvent = {
   extendedProps?: Record<string, unknown>;
 };
 
+// ── Hook: track current time for "now" indicator ─────────────────────────────
+
+function useNow(intervalMs = 60_000): Date {
+  const [now, setNow] = useState(() => new Date());
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    const timer = setInterval(() => setNow(new Date()), intervalMs);
+    return () => { clearInterval(timer); startedRef.current = false; };
+  }, [intervalMs]);
+  return now;
+}
+
+// ── Current time indicator line ──────────────────────────────────────────────
+
+function NowIndicator({ now, hourHeight, leftOffset = 0 }: { now: Date; hourHeight: number; leftOffset?: number | string }) {
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const topPx = ((hours * 60 + minutes) / 60) * hourHeight;
+  return (
+    <div
+      className="absolute pointer-events-none z-30"
+      style={{ top: `${topPx}px`, left: leftOffset, right: 0 }}
+    >
+      {/* Purple dot */}
+      <div
+        className="absolute -top-[6px] -left-[6px] size-[12px] rounded-full bg-primary shadow-md"
+        style={{ boxShadow: "0 0 8px hsl(265 80% 60% / 0.6)" }}
+      />
+      {/* Purple line */}
+      <div
+        className="w-full h-[2.5px] bg-primary"
+        style={{ boxShadow: "0 0 6px hsl(265 80% 60% / 0.4)" }}
+      />
+    </div>
+  );
+}
+
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MAX_VISIBLE = 4;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const HOUR_HEIGHT = 64; // px per hour slot in week/day views
+const HOUR_HEIGHT = 96; // px per hour slot in week/day views
 
 // ── Color palette — matches JSONC AgendaEventItem spec ──────────────────────────
 
@@ -90,6 +137,37 @@ function resolveEventColor(event: CalendarEvent) {
   // Auto-assign a color based on event ID
   const autoColor = hashColor(event.id);
   return EVENT_COLORS[autoColor];
+}
+
+// ── Occurrence status indicator ─────────────────────────────────────────────────
+
+const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
+  running:   { emoji: "", color: "bg-amber-500", pulse: true },
+  scheduled: { emoji: "", color: "bg-blue-400" },
+  succeeded: { emoji: "", color: "bg-emerald-500" },
+  failed:    { emoji: "", color: "bg-red-500" },
+};
+
+function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["latestResult"]; size?: number }) {
+  if (!result || !RESULT_INDICATOR[result]) return null;
+  const cfg = RESULT_INDICATOR[result];
+  return (
+    <span
+      className="relative inline-flex shrink-0"
+      title={result.charAt(0).toUpperCase() + result.slice(1)}
+    >
+      {cfg.pulse && (
+        <span
+          className={`animate-ping absolute inline-flex h-full w-full rounded-full ${cfg.color} opacity-75`}
+          style={{ width: size, height: size }}
+        />
+      )}
+      <span
+        className={`relative inline-flex rounded-full ${cfg.color}`}
+        style={{ width: size, height: size }}
+      />
+    </span>
+  );
 }
 
 // ── Recurring icon ─────────────────────────────────────────────────────────────
@@ -155,17 +233,103 @@ function EventPill({ event }: { event: CalendarEvent }) {
         >
           {event.title}
         </span>
+        <OccurrenceStatusDot result={event.latestResult} size={6} />
       </div>
 
-      {/* Time row */}
-      {timeStr && (
+      {/* Time + status row */}
+      <div className="flex items-center gap-1.5 pl-[14px]">
+        {timeStr && (
+          <span
+            className="text-[10px] font-medium leading-none"
+            style={{ color, opacity: 0.7 }}
+          >
+            {timeStr}
+          </span>
+        )}
+        {event.latestResult && event.latestResult !== "scheduled" && (
+          <span
+            className="text-[8px] font-bold uppercase tracking-wider leading-none"
+            style={{
+              color: event.latestResult === "succeeded" ? "#16a34a"
+                : event.latestResult === "running" ? "#d97706"
+                : event.latestResult === "failed" ? "#dc2626"
+                : undefined,
+              opacity: 0.85,
+            }}
+          >
+            {event.latestResult === "running" ? "● Running" : event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Time-grid event block (larger, for week/day views) ───────────────────────
+
+function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
+  const resolved = resolveEventColor(event);
+  const { bg, text: color } = resolved;
+  const resolvedKey = event.status === "draft" ? "gray" : (event.color && event.color !== "default" ? event.color : hashColor(event.id));
+  const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
+  const isDraft = event.status === "draft";
+
+  const timeStr = (() => {
+    if (!event.time) return null;
+    const [h, m] = event.time.split(":").map(Number);
+    if (isNaN(h)) return null;
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 || 12;
+    return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  })();
+
+  return (
+    <div
+      className="flex flex-col gap-1 px-[10px] py-[6px] rounded-lg overflow-hidden w-full min-h-[44px] transition-all duration-150 hover:shadow-lg hover:brightness-95"
+      style={{
+        backgroundColor: bg,
+        borderLeft: `4px solid ${dotColor}`,
+        opacity: isDraft ? 0.65 : 1,
+        borderStyle: isDraft ? "dashed" : "solid",
+      }}
+    >
+      {/* Title row with status */}
+      <div className="flex items-center gap-1.5">
         <span
-          className="text-[10px] font-medium leading-none pl-[14px]"
-          style={{ color, opacity: 0.7 }}
+          className="flex-1 text-[13px] font-bold leading-tight truncate"
+          style={{ color, letterSpacing: "-0.01em" }}
         >
-          {timeStr}
+          {event.title}
         </span>
-      )}
+        <OccurrenceStatusDot result={event.latestResult} size={8} />
+      </div>
+
+      {/* Time + recurring + status label */}
+      <div className="flex items-center gap-1.5">
+        {timeStr && (
+          <span
+            className="text-[11px] font-semibold leading-none"
+            style={{ color, opacity: 0.7 }}
+          >
+            {timeStr}
+          </span>
+        )}
+        {event.isRecurring && <RecurringIcon size={10} />}
+        {event.latestResult && event.latestResult !== "scheduled" && (
+          <span
+            className="text-[9px] font-bold uppercase tracking-wider leading-none"
+            style={{
+              color: event.latestResult === "succeeded" ? "#16a34a"
+                : event.latestResult === "running" ? "#d97706"
+                : event.latestResult === "failed" ? "#dc2626"
+                : undefined,
+              opacity: 0.8,
+            }}
+          >
+            {event.latestResult === "running" ? "● Running" : event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -187,9 +351,10 @@ function DayCell({
   isToday: boolean;
   onEventClick: (event: CalendarEvent) => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const [showAllDialog, setShowAllDialog] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
   const dayEvents = events.filter((e) => e.date === dateStr);
   const visible = dayEvents.slice(0, MAX_VISIBLE);
@@ -197,63 +362,168 @@ function DayCell({
   const hasEvents = dayEvents.length > 0;
 
   return (
-    <div
-      onClick={() => onDayClick?.(day)}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const eventId = e.dataTransfer.getData("text/event-id");
-        if (eventId && onEventDrop) onEventDrop(eventId, dateStr);
-      }}
-      className={[
-        "relative flex flex-col gap-1 border-r border-b min-h-[108px] p-1.5",
-        "transition-all duration-150",
-        "hover:bg-muted/40 cursor-pointer",
-        !isCurrentMonth ? "opacity-35" : "",
-        dragOver ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" : "",
-        isToday ? "bg-primary/5" : hasEvents ? "bg-primary/[0.02]" : "",
-      ].join(" ")}
-    >
-      {/* Date number */}
-      <span
+    <>
+      <div
+        onClick={() => onDayClick?.(day)}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const eventId = e.dataTransfer.getData("text/event-id");
+          if (eventId && onEventDrop) onEventDrop(eventId, dateStr);
+        }}
         className={[
-          "self-start text-[11px] font-bold w-6 h-6",
-          "flex items-center justify-center leading-none rounded-full mb-0.5",
+          "relative flex flex-col gap-1 border-r border-b min-h-[108px] p-1.5",
           "transition-all duration-150",
-          isToday
-            ? "bg-primary text-primary-foreground shadow-sm"
-            : "text-foreground/50 hover:text-foreground",
+          "hover:bg-muted/40 cursor-pointer",
+          !isCurrentMonth ? "opacity-35" : "",
+          dragOver ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" : "",
+          isToday ? "bg-primary/5" : hasEvents ? "bg-primary/[0.02]" : "",
         ].join(" ")}
       >
-        {format(day, "d")}
-      </span>
+        {/* Date number */}
+        <span
+          className={[
+            "self-start text-[11px] font-bold w-6 h-6",
+            "flex items-center justify-center leading-none rounded-full mb-0.5",
+            "transition-all duration-150",
+            isToday
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-foreground/50 hover:text-foreground",
+          ].join(" ")}
+        >
+          {format(day, "d")}
+        </span>
 
-      {/* Event pills */}
-      <div className="flex flex-col gap-0.5 flex-1">
-        {visible.map((evt) => (
-          <div
-            key={evt.id}
-            draggable
-            onDragStart={(e) => {
-              e.stopPropagation();
-              e.dataTransfer.setData("text/event-id", evt.id);
-              e.dataTransfer.effectAllowed = "move";
-            }}
-            onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-            className="cursor-grab active:cursor-grabbing"
-          >
-            <EventPill event={evt} />
-          </div>
-        ))}
-        {overflow > 0 && (
-          <span className="text-[9px] font-semibold text-primary/70 pl-0.5 pt-0.5">
-            +{overflow} more
-          </span>
-        )}
+        {/* Event pills */}
+        <div className="flex flex-col gap-0.5 flex-1">
+          {visible.map((evt) => (
+            <div
+              key={evt.id}
+              draggable
+              onDragStart={(e) => {
+                e.stopPropagation();
+                e.dataTransfer.setData("text/event-id", evt.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
+              className="cursor-grab active:cursor-grabbing"
+            >
+              <EventPill event={evt} />
+            </div>
+          ))}
+          {overflow > 0 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowAllDialog(true); }}
+              className="flex items-center gap-1 text-[10px] font-bold text-primary hover:text-primary/80 bg-primary/8 hover:bg-primary/15 rounded-md px-2 py-1 mt-0.5 transition-all cursor-pointer w-fit"
+            >
+              <span>+{overflow} more</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* All events dialog for this day */}
+      {showAllDialog && (
+        <Dialog open={showAllDialog} onOpenChange={setShowAllDialog}>
+          <DialogContent className="sm:max-w-[480px] max-h-[80vh] overflow-hidden p-0">
+            <DialogHeader className="px-6 pt-5 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-center justify-center select-none">
+                  <span className="text-[9px] font-black tracking-[0.15em] text-primary/60 uppercase">
+                    {format(day, "MMM").toUpperCase()}
+                  </span>
+                  <span className="text-[26px] font-black leading-none text-primary tracking-tight">
+                    {format(day, "d")}
+                  </span>
+                </div>
+                <div className="h-10 w-px bg-border/60" />
+                <div>
+                  <DialogTitle className="text-base">{format(day, "EEEE, MMMM d")}</DialogTitle>
+                  <DialogDescription className="text-[11px]">
+                    {dayEvents.length} event{dayEvents.length !== 1 ? "s" : ""} scheduled
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="overflow-y-auto px-6 pb-5 flex flex-col gap-2 max-h-[60vh]">
+              {dayEvents.map((evt) => {
+                const resolved = resolveEventColor(evt);
+                const resolvedKey = evt.status === "draft" ? "gray" : (evt.color && evt.color !== "default" ? evt.color : hashColor(evt.id));
+                const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
+                const timeStr = (() => {
+                  if (!evt.time) return null;
+                  const [h, m] = evt.time.split(":").map(Number);
+                  if (isNaN(h)) return null;
+                  const ampm = h >= 12 ? "PM" : "AM";
+                  const h12 = h % 12 || 12;
+                  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+                })();
+
+                return (
+                  <button
+                    key={evt.id}
+                    onClick={() => { setShowAllDialog(false); onEventClick(evt); }}
+                    className="w-full text-left rounded-xl border bg-card hover:bg-muted/40 hover:border-primary/30 transition-all duration-150 p-3 cursor-pointer group"
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Color indicator */}
+                      <div
+                        className="w-1 self-stretch rounded-full shrink-0 mt-0.5"
+                        style={{ backgroundColor: dotColor }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold truncate group-hover:text-primary transition-colors">
+                            {evt.title}
+                          </span>
+                          {evt.isRecurring && <RecurringIcon size={11} />}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {timeStr && (
+                            <span className="text-[11px] text-muted-foreground font-medium">{timeStr}</span>
+                          )}
+                          {evt.status === "draft" && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground/60 bg-muted px-1.5 py-0.5 rounded">
+                              Draft
+                            </span>
+                          )}
+                          {evt.latestResult && evt.latestResult !== "scheduled" && (
+                            <span
+                              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                              style={{
+                                color: evt.latestResult === "succeeded" ? "#16a34a"
+                                  : evt.latestResult === "running" ? "#d97706"
+                                  : evt.latestResult === "failed" ? "#dc2626"
+                                  : undefined,
+                                backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)"
+                                  : evt.latestResult === "running" ? "rgba(217,119,6,0.1)"
+                                  : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)"
+                                  : undefined,
+                              }}
+                            >
+                              {evt.latestResult === "running" ? "● Running" : evt.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Arrow hint */}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-muted-foreground/40 group-hover:text-primary transition-colors mt-1">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -263,11 +533,18 @@ function WeekView({
   weekDays,
   events,
   onEventClick,
+  onEventDrop,
 }: {
   weekDays: Date[];
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
 }) {
+  const now = useNow();
+  const todayIndex = weekDays.findIndex((d) => isToday(d));
+  const showNowLine = todayIndex >= 0;
+  const [dragOverCell, setDragOverCell] = useState<string | null>(null);
+
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[720px]">
@@ -301,6 +578,15 @@ function WeekView({
 
         {/* Time + content grid */}
         <div className="grid grid-cols-8 relative">
+          {/* Now indicator spanning across day columns (skip hour gutter = 1/8 width) */}
+          {showNowLine && (
+            <NowIndicator
+              now={now}
+              hourHeight={HOUR_HEIGHT}
+              leftOffset="calc(100% / 8)"
+            />
+          )}
+
           {/* Hour gutter */}
           <div className="flex flex-col">
             {HOURS.map((h) => (
@@ -321,7 +607,7 @@ function WeekView({
             const dateStr = format(day, "yyyy-MM-dd");
             const dayEvts = events.filter((e) => e.date === dateStr);
 
-            // Group overlapping events: sort by time, detect collisions, assign columns
+            // Sort events by time, each takes full width
             const positioned = dayEvts
               .filter((e) => !!e.time)
               .map((evt) => {
@@ -331,74 +617,72 @@ function WeekView({
               })
               .sort((a, b) => a.topMin - b.topMin);
 
-            // Assign overlap groups — events within 45min of each other overlap
-            const OVERLAP_THRESHOLD = 45; // minutes
-            const layout: { evt: CalendarEvent; topPx: number; col: number; totalCols: number }[] = [];
-            let groupStart = 0;
-            for (let i = 0; i <= positioned.length; i++) {
-              const isEnd = i === positioned.length;
-              const gapTooLarge = !isEnd && i > groupStart && positioned[i].topMin - positioned[i - 1].topMin >= OVERLAP_THRESHOLD;
-              if (isEnd || gapTooLarge) {
-                const group = positioned.slice(groupStart, isEnd ? i : i);
-                const totalCols = group.length;
-                group.forEach((item, col) => {
-                  layout.push({
-                    evt: item.evt,
-                    topPx: (item.topMin / 60) * HOUR_HEIGHT,
-                    col,
-                    totalCols,
-                  });
-                });
-                groupStart = isEnd ? i : i;
-              }
-            }
-            // Handle last group if gapTooLarge ended the loop early
-            if (groupStart < positioned.length) {
-              const group = positioned.slice(groupStart);
-              const totalCols = group.length;
-              group.forEach((item, col) => {
-                layout.push({
-                  evt: item.evt,
-                  topPx: (item.topMin / 60) * HOUR_HEIGHT,
-                  col,
-                  totalCols,
-                });
-              });
+            // Full-width layout — push events down so they never overlap visually
+            const EVENT_BLOCK_HEIGHT = 52; // min height of TimeGridEventBlock + gap
+            const layout: { evt: CalendarEvent; topPx: number }[] = [];
+            let nextFreeY = 0; // track the bottom edge of the last placed event
+            for (let i = 0; i < positioned.length; i++) {
+              const item = positioned[i];
+              const naturalTop = (item.topMin / 60) * HOUR_HEIGHT;
+              // If natural position would overlap the previous event, push it down
+              const topPx = Math.max(naturalTop, nextFreeY);
+              layout.push({ evt: item.evt, topPx });
+              nextFreeY = topPx + EVENT_BLOCK_HEIGHT;
             }
 
             return (
               <div
                 key={day.toISOString()}
                 className={[
-                  "relative border-l",
+                  "relative border-l transition-colors",
                   isToday(day) ? "bg-primary/[0.025]" : "",
+                  dragOverCell === dateStr ? "bg-primary/10" : "",
                 ].join(" ")}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverCell(dateStr);
+                }}
+                onDragLeave={() => setDragOverCell((prev) => prev === dateStr ? null : prev)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverCell(null);
+                  const eventId = e.dataTransfer.getData("text/event-id");
+                  if (!eventId || !onEventDrop) return;
+                  // Calculate dropped hour from Y position
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const relativeY = e.clientY - rect.top;
+                  const totalMinutes = Math.max(0, Math.round((relativeY / HOUR_HEIGHT) * 60));
+                  const dropHour = Math.min(23, Math.floor(totalMinutes / 60));
+                  const dropMinute = Math.round((totalMinutes % 60) / 15) * 15;
+                  const timeStr = `${String(dropHour).padStart(2, "0")}:${String(dropMinute % 60).padStart(2, "0")}`;
+                  onEventDrop(eventId, dateStr, timeStr);
+                }}
               >
                 {HOURS.map((h) => (
                   <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
                 ))}
-                {layout.map(({ evt, topPx, col, totalCols }) => {
-                  // Clean side-by-side columns — no overlap, equal width, 2px gap
-                  const gap = 2;
-                  const colWidthPct = (100 - gap * (totalCols - 1)) / totalCols;
-                  const colLeftPct = col * (colWidthPct + gap);
-                  return (
-                    <div
-                      key={evt.id}
-                      onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-                      className="absolute cursor-pointer"
-                      style={{
-                        top: `${topPx}px`,
-                        left: totalCols > 1 ? `${colLeftPct}%` : 2,
-                        right: totalCols > 1 ? undefined : 2,
-                        width: totalCols > 1 ? `${colWidthPct}%` : undefined,
-                        zIndex: 5,
-                      }}
-                    >
-                      <EventPill event={evt} />
-                    </div>
-                  );
-                })}
+                {layout.map(({ evt, topPx }) => (
+                  <div
+                    key={evt.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      e.dataTransfer.setData("text/event-id", evt.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
+                    className="absolute cursor-grab active:cursor-grabbing"
+                    style={{
+                      top: `${topPx}px`,
+                      left: 2,
+                      right: 2,
+                      zIndex: 5,
+                    }}
+                  >
+                    <TimeGridEventBlock event={evt} />
+                  </div>
+                ))}
               </div>
             );
           })}
@@ -414,13 +698,18 @@ function DayView({
   day,
   events,
   onEventClick,
+  onEventDrop,
 }: {
   day: Date;
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
 }) {
+  const now = useNow();
   const dayStr = format(day, "yyyy-MM-dd");
   const dayEvts = events.filter((e) => e.date === dayStr);
+  const showNowLine = isToday(day);
+  const [dragOverHour, setDragOverHour] = useState<number | null>(null);
 
   return (
     <div className="overflow-x-auto">
@@ -444,6 +733,9 @@ function DayView({
 
         {/* Time grid */}
         <div className="relative">
+          {showNowLine && (
+            <NowIndicator now={now} hourHeight={HOUR_HEIGHT} leftOffset={64} />
+          )}
           {HOURS.map((h) => {
             const hourEvts = dayEvts.filter((e) => {
               if (!e.time) return false;
@@ -453,7 +745,24 @@ function DayView({
             return (
               <div
                 key={h}
-                className="flex border-b border-dashed border-border/30 min-h-[60px]"
+                className={[
+                  "flex border-b border-dashed border-border/30 min-h-[60px] transition-colors",
+                  dragOverHour === h ? "bg-primary/10" : "",
+                ].join(" ")}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverHour(h);
+                }}
+                onDragLeave={() => setDragOverHour((prev) => prev === h ? null : prev)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverHour(null);
+                  const eventId = e.dataTransfer.getData("text/event-id");
+                  if (!eventId || !onEventDrop) return;
+                  const timeStr = `${String(h).padStart(2, "0")}:00`;
+                  onEventDrop(eventId, dayStr, timeStr);
+                }}
               >
                 <div className="w-16 shrink-0 flex items-start justify-end pr-2 pt-1">
                   <span className="text-[10px] text-muted-foreground/50 font-semibold tabular-nums">
@@ -464,10 +773,16 @@ function DayView({
                   {hourEvts.map((evt) => (
                     <div
                       key={evt.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.setData("text/event-id", evt.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
                       onClick={() => onEventClick(evt)}
-                      className="mb-1 cursor-pointer"
+                      className="mb-1.5 cursor-grab active:cursor-grabbing"
                     >
-                      <EventPill event={evt} />
+                      <TimeGridEventBlock event={evt} />
                     </div>
                   ))}
                 </div>
@@ -491,7 +806,7 @@ type Props = {
   onDateChange: (d: Date) => void;
   onEventClick: (eventId: string) => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   onAddEvent?: () => void;
 };
 
@@ -545,6 +860,7 @@ export function CustomMonthAgenda({
         color: (props.color as EventColor) ?? "default",
         isRecurring: !!props.recurrence && (props.recurrence as string) !== "none",
         status: (props.status as "draft" | "active") ?? "active",
+        latestResult: (props.latestResult as CalendarEvent["latestResult"]) ?? null,
       };
     });
   }, [events]);
@@ -745,6 +1061,7 @@ export function CustomMonthAgenda({
               weekDays={weekDays}
               events={calendarEvents}
               onEventClick={handleEventClick}
+              onEventDrop={onEventDrop}
             />
           </div>
         )}
@@ -756,6 +1073,7 @@ export function CustomMonthAgenda({
               day={currentDate}
               events={calendarEvents}
               onEventClick={handleEventClick}
+              onEventDrop={onEventDrop}
             />
           </div>
         )}

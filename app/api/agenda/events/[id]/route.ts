@@ -145,7 +145,7 @@ export async function PATCH(
         ? (body.endsAt ? new Date(String(body.endsAt)) : null)
         : existing.ends_at;
       const recurrenceRule = body.recurrenceRule !== undefined
-        ? String(body.recurrenceRule)
+        ? (body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null)
         : existing.recurrence_rule;
       const recurrenceUntil = body.recurrenceUntil !== undefined
         ? (body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null)
@@ -186,7 +186,7 @@ export async function PATCH(
     const timezone = body.timezone !== undefined ? String(body.timezone) : existing.timezone;
     const startsAt = body.startsAt !== undefined ? new Date(String(body.startsAt)) : existing.starts_at;
     const endsAt = body.endsAt !== undefined ? (body.endsAt ? new Date(String(body.endsAt)) : null) : existing.ends_at;
-    const recurrenceRule = body.recurrenceRule !== undefined ? String(body.recurrenceRule) : existing.recurrence_rule;
+    const recurrenceRule = body.recurrenceRule !== undefined ? (body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null) : existing.recurrence_rule;
     const recurrenceUntil = body.recurrenceUntil !== undefined
       ? (body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null)
       : existing.recurrence_until;

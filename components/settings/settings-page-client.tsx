@@ -33,6 +33,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import {
+  loadNotificationSettings,
+  saveNotificationSettings,
+} from "@/components/providers/notification-provider";
 
 // ── Theme options ────────────────────────────────────────────────────────────
 
@@ -68,7 +72,16 @@ export function SettingsPageClient() {
   const [uninstallConfirmText, setUninstallConfirmText] = useState("");
   const [uninstalling, setUninstalling] = useState(false);
 
-  useEffect(() => { setMounted(true); }, []);
+  // Notification settings
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifSound, setNotifSound] = useState(true);
+
+  useEffect(() => {
+    setMounted(true);
+    const s = loadNotificationSettings();
+    setNotifEnabled(s.enabled);
+    setNotifSound(s.sound);
+  }, []);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -195,6 +208,76 @@ export function SettingsPageClient() {
                 </Button>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Notifications ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <IconCircleCheck className="size-5 text-primary" />
+            Notifications
+          </CardTitle>
+          <CardDescription>Control live notifications for task and event updates</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {/* Enable / disable notifications */}
+          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/10 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Enable notifications</p>
+              <p className="text-xs text-muted-foreground">Show toast alerts when tasks complete, fail, or need approval</p>
+            </div>
+            <Button
+              variant={notifEnabled ? "default" : "outline"}
+              size="sm"
+              className="cursor-pointer gap-1.5 min-w-[80px]"
+              onClick={() => {
+                const next = !notifEnabled;
+                setNotifEnabled(next);
+                saveNotificationSettings({ enabled: next, sound: notifSound });
+                toast.success(next ? "Notifications enabled" : "Notifications disabled");
+              }}
+            >
+              {notifEnabled ? "On" : "Off"}
+            </Button>
+          </div>
+
+          {/* Sound toggle */}
+          <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/10 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Notification sound</p>
+              <p className="text-xs text-muted-foreground">Play a chime when notifications appear</p>
+            </div>
+            <Button
+              variant={notifSound ? "default" : "outline"}
+              size="sm"
+              className="cursor-pointer gap-1.5 min-w-[80px]"
+              disabled={!notifEnabled}
+              onClick={() => {
+                const next = !notifSound;
+                setNotifSound(next);
+                saveNotificationSettings({ enabled: notifEnabled, sound: next });
+                toast.success(next ? "Sound enabled" : "Sound disabled");
+              }}
+            >
+              {notifSound ? "🔊 On" : "🔇 Off"}
+            </Button>
+          </div>
+
+          {/* What triggers notifications */}
+          <div className="rounded-lg border bg-muted/5 px-4 py-3">
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Notifications are triggered by:</p>
+            <div className="grid grid-cols-2 gap-1.5 text-xs text-muted-foreground">
+              <span>🚀 Ticket picked up</span>
+              <span>✅ Ticket completed</span>
+              <span>❌ Task failed</span>
+              <span>📝 Plan ready for approval</span>
+              <span>🤖 Agent responded</span>
+              <span>🔄 Retry scheduled</span>
+              <span>🟢 Agent started</span>
+              <span>🔴 System errors</span>
+            </div>
           </div>
         </CardContent>
       </Card>

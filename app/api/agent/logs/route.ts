@@ -10,44 +10,42 @@ export async function GET(request: Request) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 200);
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
   const offset = (page - 1) * limit;
+  const agentIdFilter = url.searchParams.get("agentId")?.trim() || null;
 
-  const [{ count }] = await sql`select count(*)::int as count from agent_logs`;
+  const [{ count }] = agentIdFilter
+    ? await sql`select count(*)::int as count from agent_logs where runtime_agent_id = ${agentIdFilter}`
+    : await sql`select count(*)::int as count from agent_logs`;
 
-  const rows = await sql`
-    select
-      l.id,
-      l.agent_id,
-      l.runtime_agent_id,
-      l.occurred_at,
-      l.level,
-      l.type,
-      l.run_id,
-      l.message,
-      l.event_id,
-      l.event_type,
-      l.direction,
-      l.channel_type,
-      l.session_key,
-      l.source_message_id,
-      l.correlation_id,
-      l.status,
-      l.retry_count,
-      l.message_preview,
-      l.is_json,
-      l.contains_pii,
-      l.memory_source,
-      l.memory_key,
-      l.collection,
-      l.query_text,
-      l.result_count,
-      l.raw_payload,
-      a.openclaw_agent_id as agent_name
-    from agent_logs l
-    left join agents a on a.id = l.agent_id
-    order by l.occurred_at desc
-    limit ${limit}
-    offset ${offset}
-  `;
+  const rows = agentIdFilter
+    ? await sql`
+      select
+        l.id, l.agent_id, l.runtime_agent_id, l.occurred_at, l.level, l.type,
+        l.run_id, l.message, l.event_id, l.event_type, l.direction, l.channel_type,
+        l.session_key, l.source_message_id, l.correlation_id, l.status, l.retry_count,
+        l.message_preview, l.is_json, l.contains_pii, l.memory_source, l.memory_key,
+        l.collection, l.query_text, l.result_count, l.raw_payload,
+        a.openclaw_agent_id as agent_name
+      from agent_logs l
+      left join agents a on a.id = l.agent_id
+      where l.runtime_agent_id = ${agentIdFilter}
+      order by l.occurred_at desc
+      limit ${limit}
+      offset ${offset}
+    `
+    : await sql`
+      select
+        l.id, l.agent_id, l.runtime_agent_id, l.occurred_at, l.level, l.type,
+        l.run_id, l.message, l.event_id, l.event_type, l.direction, l.channel_type,
+        l.session_key, l.source_message_id, l.correlation_id, l.status, l.retry_count,
+        l.message_preview, l.is_json, l.contains_pii, l.memory_source, l.memory_key,
+        l.collection, l.query_text, l.result_count, l.raw_payload,
+        a.openclaw_agent_id as agent_name
+      from agent_logs l
+      left join agents a on a.id = l.agent_id
+      order by l.occurred_at desc
+      limit ${limit}
+      offset ${offset}
+    `;
 
   return NextResponse.json({
     logs: rows,

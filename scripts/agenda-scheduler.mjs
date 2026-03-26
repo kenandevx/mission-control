@@ -45,7 +45,7 @@ async function expandOccurrences(event, from, to) {
   const until = event.recurrence_until ? new Date(event.recurrence_until) : to;
   const rangeEnd = new Date(Math.min(to.getTime(), until.getTime()));
 
-  if (!event.recurrence_rule) {
+  if (!event.recurrence_rule || event.recurrence_rule === "null" || event.recurrence_rule === "none") {
     if (startDate >= from && startDate <= to) {
       return [startDate];
     }

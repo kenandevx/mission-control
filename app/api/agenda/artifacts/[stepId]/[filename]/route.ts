@@ -15,11 +15,17 @@ export async function GET(
       select artifact_payload from agenda_run_steps where id = ${stepId}
     `;
 
-    if (!step?.artifact_payload?.files) {
+    // Handle both properly-encoded jsonb and double-stringified legacy data
+    let payload = step?.artifact_payload;
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); } catch { payload = null; }
+    }
+
+    if (!payload?.files) {
       return NextResponse.json({ ok: false, error: "No artifacts" }, { status: 404 });
     }
 
-    const file = (step.artifact_payload.files as { name: string; mimeType: string; path: string }[]).find(
+    const file = (payload.files as { name: string; mimeType: string; path: string }[]).find(
       (f) => f.name === decodeURIComponent(filename)
     );
 

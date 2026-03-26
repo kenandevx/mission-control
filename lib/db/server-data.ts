@@ -106,10 +106,13 @@ export async function getAgentsAndLogsData() {
   };
 }
 
-export async function getAgentDetailsData() {
+export async function getAgentDetailsData(agentId?: string) {
   const data = await getAgentsAndLogsData();
+  const agent = agentId
+    ? data.agents.find((a) => a.id === agentId) ?? data.agents[0] ?? null
+    : data.agents[0] ?? null;
   return {
-    agent: data.agents[0] ?? null,
+    agent,
     logs: data.logs,
     pageInfo: data.pageInfo,
     healthActivity: {
@@ -249,5 +252,58 @@ async function getActivityLogs(): Promise<DashboardActivityLog[]> {
 }
 
 async function getChartData(): Promise<ChartPoint[]> {
-  return [];
+  const sql = getSql();
+
+  // Get last 90 days of data in 3 parallel queries
+  const [createdRows, completedRows, logRows] = await Promise.all([
+    // Tickets created per day
+    sql`
+      select date_trunc('day', created_at)::date::text as day, count(*)::int as n
+      from tickets
+      where created_at >= now() - interval '90 days'
+      group by 1 order by 1
+    `,
+    // Tickets moved to done/completed per day (using updated_at when execution_state = 'done')
+    sql`
+      select date_trunc('day', updated_at)::date::text as day, count(*)::int as n
+      from tickets
+      where execution_state = 'done'
+        and updated_at >= now() - interval '90 days'
+      group by 1 order by 1
+    `,
+    // Logs per day
+    sql`
+      select date_trunc('day', occurred_at)::date::text as day, count(*)::int as n
+      from agent_logs
+      where occurred_at >= now() - interval '90 days'
+      group by 1 order by 1
+    `,
+  ]);
+
+  // Build lookup maps
+  const createdMap = new Map<string, number>();
+  for (const r of createdRows) createdMap.set(r.day, r.n);
+  const completedMap = new Map<string, number>();
+  for (const r of completedRows) completedMap.set(r.day, r.n);
+  const logMap = new Map<string, number>();
+  for (const r of logRows) logMap.set(r.day, r.n);
+
+  // Generate 90-day range
+  const points: ChartPoint[] = [];
+  const now = new Date();
+  const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  for (let offset = 89; offset >= 0; offset--) {
+    const d = new Date(base);
+    d.setUTCDate(base.getUTCDate() - offset);
+    const dateStr = d.toISOString().slice(0, 10);
+    points.push({
+      date: dateStr,
+      created: createdMap.get(dateStr) ?? 0,
+      completed: completedMap.get(dateStr) ?? 0,
+      logs: logMap.get(dateStr) ?? 0,
+    });
+  }
+
+  return points;
 }

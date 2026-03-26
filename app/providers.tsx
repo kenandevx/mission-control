@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { ThemeProvider } from "@/components/providers/theme-provider";
+import { NotificationProvider } from "@/components/providers/notification-provider";
 
 function StartupEventHook() {
   const mountedRef = useRef(false);
@@ -37,6 +38,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
       <StartupEventHook />
+      <NotificationProvider />
       {children}
     </ThemeProvider>
   );

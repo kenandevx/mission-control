@@ -175,7 +175,7 @@ export function AgendaClientWrapper() {
     setEventModalOpen(true);
   }, []);
 
-  const handleEventDrop = useCallback(async (eventId: string, newDate: string) => {
+  const handleEventDrop = useCallback(async (eventId: string, newDate: string, newTime?: string) => {
     try {
       // Fetch current event to get existing time + timezone
       const res = await fetch(`/api/agenda/events/${eventId}`, { cache: "reload" });
@@ -184,18 +184,24 @@ export function AgendaClientWrapper() {
       const evt = json.event;
       const tz = evt.timezone || "Europe/Amsterdam";
 
-      // Extract current time from starts_at in the event's timezone
-      const d = new Date(evt.starts_at);
-      const fmt = new Intl.DateTimeFormat("en-CA", {
-        timeZone: tz,
-        hour: "2-digit", minute: "2-digit", hour12: false,
-      });
-      const parts = fmt.formatToParts(d);
-      const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-      const existingTime = `${get("hour")}:${get("minute")}`;
+      // Use the new time if provided (week/day view drop), otherwise keep existing time
+      let timeToUse: string;
+      if (newTime) {
+        timeToUse = newTime;
+      } else {
+        // Extract current time from starts_at in the event's timezone
+        const d = new Date(evt.starts_at);
+        const fmt = new Intl.DateTimeFormat("en-CA", {
+          timeZone: tz,
+          hour: "2-digit", minute: "2-digit", hour12: false,
+        });
+        const parts = fmt.formatToParts(d);
+        const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+        timeToUse = `${get("hour")}:${get("minute")}`;
+      }
 
-      // Build new starts_at with new date but same time
-      const newStartsAt = buildTzAwareISO(newDate, existingTime, tz);
+      // Build new starts_at with new date and time
+      const newStartsAt = buildTzAwareISO(newDate, timeToUse, tz);
 
       const patchRes = await fetch(`/api/agenda/events/${eventId}`, {
         method: "PATCH",
@@ -204,7 +210,7 @@ export function AgendaClientWrapper() {
       });
       const patchJson = await patchRes.json();
       if (patchJson.ok) {
-        toast.success("Event moved");
+        toast.success(newTime ? `Event moved to ${newDate} ${newTime}` : "Event moved");
         void document.dispatchEvent(new CustomEvent("agenda-refresh"));
       } else {
         toast.error(patchJson.error ?? "Failed to move event");
