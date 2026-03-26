@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
+import { enqueueTicket } from "@/lib/tasks/ticket-queue";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- action-based route with validated body fields */
 type Json = Record<string, any>;
 
 const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
@@ -210,24 +212,30 @@ export async function POST(request: Request) {
       const position = Number(posRows[0]?.pos ?? 0);
       const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
       const assigneeIds = Array.isArray(body.assigneeIds) ? body.assigneeIds.map(String) : [];
+      const processVersionIds = Array.isArray(body.processVersionIds) ? body.processVersionIds.map(String) : [];
 
       const rows = await sql`
         insert into tickets (
           workspace_id, board_id, column_id, title, description, priority, due_date,
           tags, assignee_ids, assigned_agent_id, execution_mode, plan_text, plan_approved, scheduled_for, execution_state,
-          checklist_done, checklist_total, comments_count, attachments_count, position, telegram_chat_id
+          checklist_done, checklist_total, comments_count, attachments_count, position, telegram_chat_id, process_version_ids
         ) values (
           ${wid}, ${boardId}, ${columnId}, ${title}, ${String(body.description || "")}, ${String(body.priority || "low")}, ${body.dueDate || null},
           ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${String(body.assignedAgentId || "")}, ${String(body.executionMode || "direct")}, ${String(body.planText || "")}, ${Boolean(body.planApproved)}, ${body.scheduledFor || null}, ${String(body.executionState || "open")},
-          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}
+          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}, ${sql.array(processVersionIds)}::uuid[]
         )
         returning *
       `;
       const created = rows[0];
       if (created?.id) {
         await logTaskAudit(sql, wid, { event: 'Ticket created', details: created.title || title, level: 'success', ticketId: created.id });
-        // Notify if created in a ready state
-        if (created.execution_state === 'queued' || created.execution_state === 'ready_to_execute') {
+        // Auto-enqueue if agent assigned
+        if (created.assigned_agent_id && created.execution_state === 'open') {
+          await sql`update tickets set execution_state='queued', updated_at=now() where id=${created.id}`;
+          created.execution_state = 'queued';
+          await enqueueTicket(created.id);
+          await sql`select pg_notify('ticket_ready', ${created.id}::text)`;
+        } else if (created.execution_state === 'queued' || created.execution_state === 'ready_to_execute') {
           await sql`select pg_notify('ticket_ready', ${created.id}::text)`;
         }
       }
@@ -239,6 +247,7 @@ export async function POST(request: Request) {
       if (!ticketId) return fail("Ticket id is required.");
       const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
       const assigneeIds = Array.isArray(body.assigneeIds) ? body.assigneeIds.map(String) : [];
+      const processVersionIds = Array.isArray(body.processVersionIds) ? body.processVersionIds.map(String) : [];
 
       const beforeRows = await sql`select * from tickets where id=${ticketId} limit 1`;
       const before = beforeRows[0];
@@ -253,6 +262,7 @@ export async function POST(request: Request) {
           tags = case when ${body.tags === undefined} then tags else ${sql.array(tags)} end,
           assignee_ids = case when ${body.assigneeIds === undefined} then assignee_ids else ${sql.array(assigneeIds)} end,
           assigned_agent_id = coalesce(${body.assignedAgentId || null}, assigned_agent_id),
+          process_version_ids = case when ${body.processVersionIds === undefined} then process_version_ids else ${sql.array(processVersionIds)}::uuid[] end,
           execution_mode = coalesce(${body.executionMode || null}, execution_mode),
           plan_text = case when ${body.planText === undefined} then plan_text else ${body.planText ?? null} end,
           plan_approved = coalesce(${body.planApproved ?? null}, plan_approved),
@@ -298,6 +308,13 @@ export async function POST(request: Request) {
             level: updated.plan_approved ? 'success' : 'warning',
             ticketId: updated.id,
           });
+        }
+        // Auto-enqueue if agent was just assigned and state is still open
+        if (updated.assigned_agent_id && updated.execution_state === 'open' && (!before.assigned_agent_id || before.assigned_agent_id !== updated.assigned_agent_id)) {
+          await sql`update tickets set execution_state='queued', updated_at=now() where id=${ticketId}`;
+          updated.execution_state = 'queued';
+          await enqueueTicket(ticketId);
+          await logTaskAudit(sql, wid, { event: 'Auto-queued', details: `Agent ${updated.assigned_agent_id} assigned, auto-queued for execution.`, level: 'info', ticketId: updated.id });
         }
       }
       return ok({ ticket: updated });
@@ -595,6 +612,34 @@ export async function POST(request: Request) {
         level: "info",
       });
       return ok({ workerSettings });
+    }
+
+    if (action === "listProcesses") {
+      const rows = await sql`
+        select p.id, p.name, p.description, pv.id as version_id, pv.version_number
+        from processes p
+        left join process_versions pv on pv.process_id = p.id
+        where p.workspace_id = ${wid}
+        order by p.name, pv.version_number
+      `;
+      return ok({ rows });
+    }
+
+    if (action === "startExecution") {
+      const ticketId = String(body.ticketId || "");
+      if (!ticketId) return fail("Ticket id is required.");
+
+      const rows = await sql`select * from tickets where id=${ticketId} limit 1`;
+      const ticket = rows[0];
+      if (!ticket) return fail("Ticket not found.", 404);
+      if (!ticket.assigned_agent_id) return fail("No agent assigned to this ticket.");
+
+      await sql`update tickets set execution_state='queued', updated_at=now() where id=${ticketId}`;
+      await enqueueTicket(ticketId);
+      await logTaskAudit(sql, wid, { event: 'Execution started', details: `Queued for agent ${ticket.assigned_agent_id}`, level: 'info', ticketId });
+
+      const updated = await sql`select * from tickets where id=${ticketId} limit 1`;
+      return ok({ ticket: updated[0] });
     }
 
     return fail(`Unsupported action: ${action}`);

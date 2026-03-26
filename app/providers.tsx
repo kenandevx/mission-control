@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
-import { ThemeProvider } from "next-themes";
+import { useEffect, useRef } from "react";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 
 function StartupEventHook() {
+  const mountedRef = useRef(false);
   useEffect(() => {
+    if (mountedRef.current) return;
+    mountedRef.current = true;
     const fired = sessionStorage.getItem("mission-control-startup-event-fired");
     if (fired) return;
     sessionStorage.setItem("mission-control-startup-event-fired", "1");
@@ -32,7 +35,7 @@ function StartupEventHook() {
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+    <ThemeProvider>
       <StartupEventHook />
       {children}
     </ThemeProvider>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { ClearLogsButton } from "@/components/agents/clear-logs-button";
 import { LogsExplorer } from "@/components/agents/logs-explorer";
@@ -12,6 +12,24 @@ type PageInfo = {
   limit: number;
   totalCount: number;
   pageCount: number;
+};
+
+type LogRow = {
+  id: string;
+  agentId: string;
+  occurredAt: string;
+  level: string;
+  type: string;
+  eventType?: string;
+  channelType?: string;
+  direction?: string;
+  message?: string;
+  messagePreview?: string;
+  runId?: string;
+  sessionKey?: string;
+  sourceMessageId?: string;
+  memorySource?: string;
+  rawPayload?: unknown;
 };
 
 type Props = {
@@ -28,31 +46,23 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
 
   const isFirstPage = pageInfo.page === 1;
 
-  useEffect(() => {
-    const es = new EventSource("/api/agent/logs/stream");
-    es.addEventListener("log_row", (event) => {
-      if (!isFirstPage) return;
-      try {
-        const parsed = JSON.parse((event as MessageEvent).data || "{}");
-        const row = parsed?.row;
-        if (!row) return;
-        setLogs((prev) => {
-          const exists = prev.some((x: unknown) => (x as { id?: string })?.id === row.id);
-          if (exists) return prev;
-          const next = [row, ...prev];
-          return next.slice(0, pageInfo.limit);
-        });
-        setPageInfo((prev) => ({ ...prev, totalCount: prev.totalCount + 1, pageCount: Math.max(1, Math.ceil((prev.totalCount + 1) / prev.limit)) }));
-      } catch {
-        // ignore malformed stream row
-      }
+  const handleLiveRow = useCallback((row: LogRow, totalCount: number) => {
+    setLogs((prev) => {
+      const exists = prev.some((x) => x.id === row.id);
+      if (exists) return prev;
+      const next = [row as unknown as AgentLog, ...prev];
+      return next.slice(0, pageInfo.limit);
     });
-    return () => es.close();
-  }, [isFirstPage, pageInfo.limit]);
+    setPageInfo((prev) => ({
+      ...prev,
+      totalCount: totalCount > 0 ? totalCount : prev.totalCount + 1,
+      pageCount: Math.max(1, Math.ceil((totalCount > 0 ? totalCount : prev.totalCount + 1) / prev.limit)),
+    }));
+  }, [pageInfo.limit]);
 
   const onPageChange = async (next: number) => {
     const target = Math.max(1, next);
-    const res = await fetch(`/api/agent/logs?limit=${pageInfo.limit}&page=${target}`, { cache: "no-store" });
+    const res = await fetch(`/api/agent/logs?limit=${pageInfo.limit}&page=${target}`, { cache: "reload" });
     const json = await res.json();
     setLogs(Array.isArray(json?.logs) ? json.logs : []);
     setPageInfo((prev) => ({ ...prev, ...(json?.pageInfo || {}), page: target }));
@@ -61,13 +71,13 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
   const titleActions = useMemo(
     () => (
       <div className="flex w-full items-center justify-between gap-2">
-        <LogsLiveRefresh />
+        <LogsLiveRefresh isFirstPage={isFirstPage} pageLimit={pageInfo.limit} onLiveRow={handleLiveRow} />
         <div className="flex items-center gap-2">
           <ClearLogsButton />
         </div>
       </div>
     ),
-    [],
+    [isFirstPage, pageInfo.limit, handleLiveRow],
   );
 
   return (

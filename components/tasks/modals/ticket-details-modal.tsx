@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AssigneeMiniCard } from "@/components/tasks/modals/assignee-mini-card";
-import { SectionCardHeader } from "@/components/tasks/modals/section-card-header";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,9 +22,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { TICKET_PRIORITY_OPTIONS } from "@/types/tasks";
@@ -31,25 +40,68 @@ import type {
   TicketAttachment,
   TicketComment,
   TicketDetailsForm,
-  TicketExecutionState,
   TicketSubtask,
 } from "@/types/tasks";
 import {
+  CheckSquareIcon,
+  ClipboardListIcon,
   CopyIcon,
   DownloadIcon,
   EyeIcon,
   FileIcon,
-  GitBranchIcon,
+  FileTextIcon,
   ImageIcon,
+  ListIcon,
   MoreHorizontalIcon,
+  PaperclipIcon,
+  PlayIcon,
   PlusIcon,
+  RefreshCwIcon,
   SendHorizonalIcon,
+  SettingsIcon,
+  SquarePenIcon,
+  TagIcon,
   Trash2Icon,
+  UserIcon,
   XIcon,
+  ZapIcon,
 } from "lucide-react";
 
-type TabValue = "project" | "comments" | "activity";
+type ProcessOption = {
+  id: string;
+  name: string;
+  versionId: string;
+  versionNumber: number;
+};
+
 type ActivityFilter = "all" | "execution" | "comments";
+
+const executionLabel = (value: string) =>
+  value.replaceAll("_", " ").replace(/^\w/, (c) => c.toUpperCase());
+
+const formatCommentDate = (value: string) =>
+  new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const formatActivityDate = formatCommentDate;
+
+const initialsFromName = (name: string) => {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "OC";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+};
+
+const formatBytes = (size: number) =>
+  size < 1024
+    ? `${size} B`
+    : size / 1024 < 1024
+      ? `${(size / 1024).toFixed(1)} KB`
+      : `${(size / 1024 / 1024).toFixed(1)} MB`;
 
 type Props = {
   mode?: "create" | "edit";
@@ -57,6 +109,7 @@ type Props = {
   form: TicketDetailsForm;
   board: BoardState;
   assignees: Assignee[];
+  processes?: ProcessOption[];
   attachments: TicketAttachment[];
   attachmentsLoading: boolean;
   attachmentsUploading: boolean;
@@ -83,124 +136,11 @@ type Props = {
   onCancelExecution?: () => void;
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
+  onStartExecution?: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onClose: () => void;
 };
-
-const formatCommentDate = (value: string) =>
-  new Date(value).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-const formatActivityDate = (value: string) =>
-  new Date(value).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-const initialsFromName = (name: string) => {
-  const parts = name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length === 0) return "OC";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
-};
-
-const formatBytes = (size: number) => {
-  if (size < 1024) return `${size} B`;
-  const kb = size / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(1)} MB`;
-};
-
-const shortenText = (value: string, max = 72) => {
-  const text = value.trim().replace(/\s+/g, " ");
-  if (!text) return "";
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 3).trimEnd()}...`;
-};
-
-const priorityLabel: Record<TicketDetailsForm["priority"], string> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  urgent: "Urgent",
-};
-
-const executionLabel = (value: TicketDetailsForm["executionState"]) =>
-  value.replaceAll("_", " ").replace(/^\w/, (char) => char.toUpperCase());
-
-const EXECUTION_STEPS: Array<{ key: TicketExecutionState; label: string }> = [
-  { key: "open", label: "Open" },
-  { key: "draft", label: "Draft" },
-  { key: "planning", label: "Planning" },
-  { key: "awaiting_approval", label: "Awaiting approval" },
-  { key: "ready_to_execute", label: "Ready" },
-  { key: "executing", label: "Executing" },
-  { key: "done", label: "Done" },
-  { key: "failed", label: "Failed" },
-];
-
-function ExecutionStepper({
-  state,
-  onChange,
-}: {
-  state: TicketExecutionState;
-  onChange: (state: TicketExecutionState) => void;
-}) {
-  const isTerminal = state === "failed" || state === "done";
-  const activeIndex = EXECUTION_STEPS.findIndex((s) => s.key === state);
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {EXECUTION_STEPS.map((step, index) => {
-        const isActive = step.key === state;
-        const isPast = !isTerminal && index < activeIndex;
-        return (
-          <button
-            key={step.key}
-            type="button"
-            onClick={() => onChange(step.key)}
-            className={cn(
-              "rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
-              isActive
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : isPast
-                ? "bg-primary/15 text-primary hover:bg-primary/25"
-                : "bg-muted text-muted-foreground hover:bg-muted/80",
-            )}
-          >
-            {step.label}
-          </button>
-        );
-      })}
-      {isTerminal && (
-        <>
-          <span className="text-xs text-muted-foreground/50">·</span>
-          <span
-            className={cn(
-              "rounded-full px-2.5 py-0.5 text-xs font-medium",
-              state === "failed"
-                ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-muted-foreground",
-            )}
-          >
-            {state === "failed" ? "Failed" : "Cancelled"}
-          </span>
-        </>
-      )}
-    </div>
-  );
-}
 
 export function TicketDetailsModal({
   mode = "edit",
@@ -208,6 +148,7 @@ export function TicketDetailsModal({
   form,
   board,
   assignees,
+  processes = [],
   attachments,
   attachmentsLoading,
   attachmentsUploading,
@@ -234,103 +175,77 @@ export function TicketDetailsModal({
   onCancelExecution,
   onApprovePlan,
   onRejectPlan,
+  onStartExecution,
   onCopy,
   onDelete,
   onClose,
 }: Props) {
-  const [tab, setTab] = useState<TabValue>("project");
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
-  const [overviewCollapsed, setOverviewCollapsed] = useState(false);
-  const [tasksCollapsed, setTasksCollapsed] = useState(false);
-  const [hideComplete, setHideComplete] = useState(false);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [createFiles, setCreateFiles] = useState<File[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<TicketAttachment | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
-  const titleInputRef = useRef<HTMLInputElement | null>(null);
 
-
-  const assigneeById = useMemo(
-    () => Object.fromEntries(assignees.map((assignee) => [assignee.id, assignee])),
-    [assignees],
-  );
-  const selectedAssignees = form.assigneeIds
-    .map((assigneeId) => assigneeById[assigneeId])
-    .filter(Boolean);
-  const statusTitle = board.columns[form.statusId]?.title || "Unknown";
-  const ticketRef = form.id ? `T-${String(form.id).slice(0, 4).toUpperCase()}` : "T-NEW";
-  const shortDescription = shortenText(form.description || "", 72);
-  const dueLabel = form.dueDate ? `Due ${new Date(form.dueDate).toLocaleDateString()}` : "No due date";
-  const statusLower = statusTitle.trim().toLowerCase();
-  const inProgressLane = statusLower === "in progress" || statusLower === "doing";
-  const hasRuntimeAgent = Boolean(form.assignedAgentId && form.assignedAgentId.trim());
-  const executableState =
-    form.executionState === "pending" ||
-    form.executionState === "queued" ||
-    form.executionState === "ready_to_execute";
-  const canBePickedUp = inProgressLane && hasRuntimeAgent && (executableState || (form.executionMode === "planned" && form.planApproved));
-
-  const visibleSubtasks = hideComplete
-    ? subtasks.filter((subtask) => !subtask.completed)
-    : subtasks;
-
-  const filteredActivity = activity.filter((entry) => {
-    if (activityFilter === "all") return true;
-    const event = String(entry.event || "").toLowerCase();
-    const details = String(entry.details || "").toLowerCase();
-    const source = String(entry.source || "").toLowerCase();
-
-    if (activityFilter === "execution") {
-      return event.startsWith("ticket.") || event === "agent response" || event === "agent error"
-        || event.includes("plan") || event.includes("execute") || event.includes("pickup")
-        || event.includes("complete") || event.includes("fail") || event.includes("retry")
-        || event.includes("approve") || event.includes("reject");
-    }
-
-    if (activityFilter === "comments") {
-      return event.includes("comment") || details.includes("comment");
-    }
-
-    return true;
-  });
-
-  useEffect(() => {
-    if (!isEditingTitle) {
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      titleInputRef.current?.focus();
-      titleInputRef.current?.select();
-    });
-  }, [isEditingTitle]);
+  const isEditing = mode === "edit";
+  const saveLabel = isEditing ? "Save changes" : "Create ticket";
 
   const addCreateFiles = (selection: FileList | null) => {
-    if (!selection || selection.length === 0) {
-      return;
-    }
-    const incoming = Array.from(selection);
-    setCreateFiles((previous) => [...previous, ...incoming]);
+    if (selection?.length) setCreateFiles((prev) => [...prev, ...Array.from(selection)]);
   };
+  const removeCreateFile = (index: number) =>
+    setCreateFiles((prev) => prev.filter((_, i) => i !== index));
 
-  const removeCreateFile = (index: number) => {
-    setCreateFiles((previous) => previous.filter((_, currentIndex) => currentIndex !== index));
-  };
-
-  const saveLabel = mode === "create" ? "Create ticket" : "Save";
   const handleSave = () => {
-    if (mode === "create") {
-      onSave(createFiles);
-      return;
-    }
-    onSave();
+    onSave(mode === "create" ? createFiles : undefined);
   };
 
-  const toggleAssignee = (assigneeId: string) => {
-    const next = form.assigneeIds.includes(assigneeId)
-      ? form.assigneeIds.filter((id) => id !== assigneeId)
-      : [...form.assigneeIds, assigneeId];
-    onChange({ assigneeIds: next });
-  };
+  const toggleAssignee = (assigneeId: string) =>
+    onChange({
+      assigneeIds: form.assigneeIds.includes(assigneeId)
+        ? form.assigneeIds.filter((id) => id !== assigneeId)
+        : [...form.assigneeIds, assigneeId],
+    });
+
+  const removeProcess = (pvId: string) =>
+    onChange({
+      processVersionIds: form.processVersionIds.filter((id) => id !== pvId),
+    });
+
+  // Execution control visibility
+  const hasAgent = Boolean(form.assignedAgentId);
+  const showStartExecution =
+    isEditing && hasAgent && (form.executionState === "open" || form.executionState === "draft");
+  const showRetry = isEditing && form.executionState === "failed";
+  const showCancel =
+    isEditing &&
+    (form.executionState === "executing" || form.executionState === "planning");
+  const showApproval = isEditing && form.executionState === "awaiting_approval";
+  const showExecutionControls =
+    showStartExecution || showRetry || showCancel || showApproval;
+
+  const filteredActivity = useMemo(() => {
+    if (activityFilter === "all") return activity;
+    if (activityFilter === "execution") {
+      return activity.filter((e) => {
+        const ev = (e.event || "").toLowerCase();
+        return (
+          ev.includes("plan") ||
+          ev.includes("execute") ||
+          ev.includes("fail") ||
+          ev.includes("retry") ||
+          ev.includes("picked") ||
+          ev.includes("completed") ||
+          ev.includes("queued")
+        );
+      });
+    }
+    return activity.filter((e) =>
+      (e.event || "").toLowerCase().includes("comment"),
+    );
+  }, [activity, activityFilter]);
+
+  const selectedAssignees = form.assigneeIds
+    .map((id) => assignees.find((a) => a.id === id))
+    .filter(Boolean) as Assignee[];
 
   return (
     <>
@@ -340,729 +255,881 @@ export function TicketDetailsModal({
           if (!isOpen) onClose();
         }}
       >
-        <DialogContent
-          showCloseButton={false}
-          className="fixed inset-y-0 right-0 left-auto top-0 h-[100dvh] w-[100vw] max-w-[100vw] min-w-0 translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-l border-border/70 bg-background p-0 shadow-2xl data-[state=open]:slide-in-from-right-full data-[state=closed]:slide-out-to-right-full sm:w-[92vw] md:w-[70vw] lg:w-[48vw] xl:w-[40vw] 2xl:w-[34vw] sm:min-w-[360px] sm:max-w-[720px]"
-        >
-          <DialogHeader className="sr-only">
-            <DialogTitle>Task details</DialogTitle>
-            <DialogDescription>View and edit ticket details, comments, and activity.</DialogDescription>
+        <DialogContent className="sm:max-w-[640px] max-h-[92vh] overflow-y-auto p-0">
+          {/* Header */}
+          <DialogHeader className="px-6 pt-6 pb-0">
+            <div className="flex items-center gap-3 mb-1">
+              <div
+                className={cn(
+                  "flex items-center justify-center size-9 rounded-lg shrink-0",
+                  isEditing ? "bg-primary/10" : "bg-primary",
+                )}
+              >
+                <ClipboardListIcon
+                  className={cn(
+                    "size-4.5",
+                    isEditing ? "text-primary" : "text-primary-foreground",
+                  )}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="text-lg">
+                  {isEditing ? "Edit ticket" : "New ticket"}
+                </DialogTitle>
+                <DialogDescription className="text-xs mt-0.5">
+                  {isEditing
+                    ? "Update details, manage subtasks, attachments, and execution."
+                    : "Create a new ticket with description, processes, and assignment."}
+                </DialogDescription>
+              </div>
+              {isEditing && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="cursor-pointer text-muted-foreground hover:bg-muted"
+                    onClick={onCopy}
+                    aria-label="Duplicate"
+                  >
+                    <CopyIcon className="h-4 w-4" />
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="cursor-pointer text-muted-foreground hover:bg-muted"
+                        aria-label="More actions"
+                      >
+                        <MoreHorizontalIcon className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={onDelete}
+                        className="cursor-pointer"
+                      >
+                        <Trash2Icon className="h-4 w-4" />
+                        Delete ticket
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
+            </div>
           </DialogHeader>
 
-          <Tabs
-            value={tab}
-            onValueChange={(value) => setTab(value as TabValue)}
-            className="flex h-full min-h-0 flex-col"
-          >
-            <div className="border-b border-border/70 bg-background">
-              <div className="px-4 pt-4 sm:px-6">
-                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-2">
-                    <GitBranchIcon className="h-3.5 w-3.5" />
-                    <span>{ticketRef}</span>
-                  </div>
-                  <div className="mx-auto flex items-center -space-x-2">
-                    {selectedAssignees.slice(0, 3).map((assignee) => (
-                      <Avatar key={assignee.id} className="h-6 w-6 border border-border bg-background">
-                        <AvatarFallback className="text-[10px]">{initialsFromName(assignee.name)}</AvatarFallback>
-                      </Avatar>
+          <div className="flex flex-col gap-5 px-6 py-5">
+            {/* Title */}
+            <div className="flex flex-col gap-2">
+              <Label
+                htmlFor="td-title"
+                className="text-xs font-semibold text-foreground/80"
+              >
+                Title <span className="text-destructive ml-0.5">*</span>
+              </Label>
+              <Input
+                id="td-title"
+                placeholder="e.g. Fix authentication flow"
+                value={form.title}
+                onChange={(e) => onChange({ title: e.target.value })}
+                className="h-10"
+                autoFocus
+              />
+            </div>
+
+            {/* Description */}
+            <div className="flex flex-col gap-2">
+              <Label
+                htmlFor="td-desc"
+                className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5"
+              >
+                <FileTextIcon className="size-3.5 text-primary" />
+                Description
+              </Label>
+              <Textarea
+                id="td-desc"
+                placeholder="Add notes, implementation details, or context..."
+                value={form.description}
+                onChange={(e) => onChange({ description: e.target.value })}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+
+            {/* Processes */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <ListIcon className="size-3.5 text-primary" />
+                Attached processes
+              </Label>
+
+              {form.processVersionIds.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {form.processVersionIds.map((pvId) => {
+                    const proc = processes.find((p) => p.versionId === pvId);
+                    return (
+                      <Badge
+                        key={pvId}
+                        variant="secondary"
+                        className="gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-semibold"
+                      >
+                        {proc
+                          ? `${proc.name}${proc.versionNumber ? ` v${proc.versionNumber}` : ""}`
+                          : pvId.slice(0, 8)}
+                        <button
+                          type="button"
+                          onClick={() => removeProcess(pvId)}
+                          className="ml-0.5 cursor-pointer hover:text-destructive rounded-sm transition-colors"
+                        >
+                          <XIcon className="size-3" />
+                        </button>
+                      </Badge>
+                    );
+                  })}
+                </div>
+              )}
+
+              {processes.length > 0 ? (
+                <Select
+                  onValueChange={(v) => {
+                    if (v && !form.processVersionIds.includes(v)) {
+                      onChange({
+                        processVersionIds: [...form.processVersionIds, v],
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-full cursor-pointer">
+                    <SelectValue placeholder="Attach a process..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {processes.filter(
+                      (p) => !form.processVersionIds.includes(p.versionId),
+                    ).length === 0 ? (
+                      <SelectItem value="__empty__" disabled>
+                        All processes attached
+                      </SelectItem>
+                    ) : (
+                      processes
+                        .filter(
+                          (p) => !form.processVersionIds.includes(p.versionId),
+                        )
+                        .map((p) => (
+                          <SelectItem key={p.versionId} value={p.versionId}>
+                            {p.name}
+                            {p.versionNumber ? ` (v${p.versionNumber})` : ""}
+                          </SelectItem>
+                        ))
+                    )}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-[11px] text-muted-foreground/70">
+                  No processes available. Create processes in the Processes page.
+                </p>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Assignment & Priority */}
+            <div className="flex flex-col gap-4">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <UserIcon className="size-3.5 text-primary" />
+                Assignment &amp; Priority
+              </Label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-[11px] text-muted-foreground font-medium">
+                    Agent
+                  </Label>
+                  <Select
+                    value={form.assignedAgentId || "__none__"}
+                    onValueChange={(v) =>
+                      onChange({ assignedAgentId: v === "__none__" ? "" : v })
+                    }
+                  >
+                    <SelectTrigger className="h-10 cursor-pointer">
+                      <SelectValue placeholder="No agent (manual)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        No agent (manual)
+                      </SelectItem>
+                      {assignees.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name || a.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-[11px] text-muted-foreground font-medium">
+                    Priority
+                  </Label>
+                  <Select
+                    value={form.priority}
+                    onValueChange={(v) =>
+                      onChange({
+                        priority: v as TicketDetailsForm["priority"],
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-10 cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TICKET_PRIORITY_OPTIONS.map((opt) => (
+                        <SelectItem
+                          key={opt.key}
+                          value={opt.key}
+                          className="cursor-pointer"
+                        >
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Assignees (collaborators) */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-[11px] text-muted-foreground font-medium">
+                  Assignees / Collaborators
+                </Label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-between cursor-pointer h-10"
+                    >
+                      <span className="truncate">
+                        {selectedAssignees.length > 0
+                          ? `${selectedAssignees.length} selected — ${selectedAssignees.map((a) => a.name).join(", ")}`
+                          : "Assign people"}
+                      </span>
+                      <MoreHorizontalIcon className="h-4 w-4 shrink-0" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-64">
+                    {assignees.map((assignee) => (
+                      <DropdownMenuItem
+                        key={assignee.id}
+                        onClick={() => toggleAssignee(assignee.id)}
+                        className="cursor-pointer"
+                      >
+                        <span className="mr-2">
+                          {form.assigneeIds.includes(assignee.id) ? "✓" : ""}
+                        </span>
+                        {assignee.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+
+            {/* Status & Execution */}
+            <div className="flex flex-col gap-4">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <SettingsIcon className="size-3.5 text-primary" />
+                Status &amp; Execution
+              </Label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-[11px] text-muted-foreground font-medium">
+                    Column / Status
+                  </Label>
+                  <Select
+                    value={form.statusId}
+                    onValueChange={(v) => onChange({ statusId: v })}
+                  >
+                    <SelectTrigger className="h-10 cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {board.columnOrder.map((colId) => (
+                        <SelectItem
+                          key={colId}
+                          value={colId}
+                          className="cursor-pointer"
+                        >
+                          {board.columns[colId]?.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-[11px] text-muted-foreground font-medium">
+                    Execution mode
+                  </Label>
+                  <Select
+                    value={form.executionMode}
+                    onValueChange={(v) =>
+                      onChange({
+                        executionMode:
+                          v as TicketDetailsForm["executionMode"],
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-10 cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="direct" className="cursor-pointer">
+                        Direct
+                      </SelectItem>
+                      <SelectItem value="planned" className="cursor-pointer">
+                        Planned (approval)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {isEditing && (
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="text-xs font-normal"
+                  >
+                    {executionLabel(form.executionState)}
+                  </Badge>
+                  {form.executionMode === "planned" && (
+                    <Badge
+                      variant="outline"
+                      className="text-xs font-normal"
+                    >
+                      {form.planApproved ? "Plan approved" : "Plan pending"}
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Schedule & Labels */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label
+                  htmlFor="td-due"
+                  className="text-[11px] text-muted-foreground font-medium flex items-center gap-1.5"
+                >
+                  Due date
+                </Label>
+                <Input
+                  id="td-due"
+                  type="date"
+                  value={form.scheduledFor || form.dueDate}
+                  onChange={(e) =>
+                    onChange({
+                      dueDate: e.target.value,
+                      scheduledFor: e.target.value,
+                    })
+                  }
+                  className="h-10"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label
+                  htmlFor="td-labels"
+                  className="text-[11px] text-muted-foreground font-medium flex items-center gap-1.5"
+                >
+                  <TagIcon className="size-3 text-muted-foreground" />
+                  Labels
+                </Label>
+                <Input
+                  id="td-labels"
+                  value={form.tagsText}
+                  placeholder="bug, ui, backend"
+                  onChange={(e) => onChange({ tagsText: e.target.value })}
+                  className="h-10"
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Subtasks */}
+            <div className="flex flex-col gap-3">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <CheckSquareIcon className="size-3.5 text-primary" />
+                Subtasks
+              </Label>
+
+              <div className="flex items-center gap-2">
+                <Input
+                  value={subtaskDraft}
+                  onChange={(e) => onSubtaskDraftChange(e.target.value)}
+                  placeholder="Add subtask..."
+                  className="h-9 flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onAddSubtask();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onAddSubtask}
+                  className="cursor-pointer"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+
+              {subtasksLoading ? (
+                <p className="text-xs text-muted-foreground">
+                  Loading subtasks...
+                </p>
+              ) : subtasks.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No subtasks yet.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {subtasks.map((subtask) => (
+                    <div
+                      key={subtask.id}
+                      className={cn(
+                        "flex items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-2 py-2",
+                        subtask.completed && "opacity-70",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Checkbox
+                          checked={subtask.completed}
+                          onCheckedChange={(checked) =>
+                            onToggleSubtask(subtask.id, Boolean(checked))
+                          }
+                        />
+                        <p
+                          className={cn(
+                            "truncate text-sm",
+                            subtask.completed &&
+                              "text-muted-foreground line-through",
+                          )}
+                        >
+                          {subtask.title}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => onDeleteSubtask(subtask.id)}
+                        className="cursor-pointer"
+                        aria-label={`Delete ${subtask.title}`}
+                      >
+                        <Trash2Icon className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Attachments */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                  <PaperclipIcon className="size-3.5 text-primary" />
+                  Attachments
+                </Label>
+                <Input
+                  ref={attachmentInputRef}
+                  type="file"
+                  className="hidden"
+                  multiple
+                  onChange={(e) => {
+                    if (mode === "create") {
+                      addCreateFiles(e.target.files);
+                    } else {
+                      onUploadAttachments(e.target.files);
+                    }
+                    e.currentTarget.value = "";
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => attachmentInputRef.current?.click()}
+                  disabled={isEditing ? attachmentsUploading : false}
+                  className="cursor-pointer"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Upload
+                </Button>
+              </div>
+
+              {mode === "create" ? (
+                createFiles.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border/70 p-4 text-center text-xs text-muted-foreground">
+                    No attachments. Click Upload to add files.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {createFiles.map((file, index) => (
+                      <div
+                        key={`${file.name}-${file.lastModified}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm">{file.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(file.size)}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => removeCreateFile(index)}
+                          className="cursor-pointer"
+                        >
+                          <Trash2Icon className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
                     ))}
                   </div>
-                  <div className="ml-auto flex items-center gap-1">
-                    <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-muted" aria-label="Duplicate" onClick={onCopy} disabled={mode !== "edit"}>
-                      <CopyIcon className="h-4 w-4" />
-                    </Button>
-                    <Button onClick={handleSave} size="sm" className="h-7 rounded-md bg-primary/10 px-2 text-xs text-foreground hover:bg-muted">
-                      {saveLabel}
-                    </Button>
-                    {mode === "edit" ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-muted" aria-label="More actions">
-                            <MoreHorizontalIcon className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                            <Trash2Icon className="h-4 w-4" />
-                            Delete task
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : null}
-                    <Button variant="ghost" size="icon-sm" onClick={onClose} className="text-muted-foreground hover:bg-muted" aria-label="Close">
-                      <XIcon className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-4 px-4 pb-4 pt-12 sm:px-6">
-                <div className="flex items-center gap-3">
-                  <span className="h-3.5 w-3.5 rounded-full border border-border bg-muted" />
-                  <div className="min-w-0 flex-1">
-                    {isEditingTitle ? (
-                      <Input
-                        ref={titleInputRef}
-                        value={form.title}
-                        placeholder="Untitled task"
-                        onChange={(event) => onChange({ title: event.target.value })}
-                        onBlur={() => setIsEditingTitle(false)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === "Escape") {
-                            event.preventDefault();
-                            setIsEditingTitle(false);
-                          }
-                        }}
-                        className="h-11 border-0 bg-transparent pl-4 pr-0 text-2xl font-medium tracking-tight leading-tight text-foreground shadow-none focus-visible:ring-0"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingTitle(true)}
-                        className="flex min-h-11 w-full cursor-text items-center text-left"
-                        aria-label="Edit ticket title"
+                )
+              ) : attachmentsLoading ? (
+                <p className="text-xs text-muted-foreground">
+                  Loading attachments...
+                </p>
+              ) : attachments.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border/70 p-4 text-center text-xs text-muted-foreground">
+                  No attachments yet.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {attachments.map((att) => {
+                    const isImage = att.mimeType.startsWith("image/");
+                    return (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2"
                       >
-                        <h2 className="text-2xl font-medium tracking-tight leading-tight text-foreground">
-                          {form.title || "Untitled task"}
-                        </h2>
-                      </button>
-                    )}
-                    {shortDescription ? <p className="text-sm text-muted-foreground">{shortDescription}</p> : null}
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm shadow-sm">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="font-normal">{executionLabel(form.executionState)}</Badge>
-                    <Badge variant="outline" className="font-normal">{priorityLabel[form.priority]} priority</Badge>
-                    <Badge variant="outline" className="font-normal">{statusTitle}</Badge>
-                    <Badge variant="outline" className="font-normal">{dueLabel}</Badge>
-                  </div>
-
-                  {!canBePickedUp && (
-                    <p className="text-xs text-amber-600">
-                      Not pickup-ready — requires column "In progress", runtime agent, and pending/queued state.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="px-4 pb-3 sm:px-6">
-                <TabsList className="h-10 w-full justify-start gap-1 rounded-none border-b border-border bg-transparent p-0">
-                  <TabsTrigger value="project" className="rounded-none border-b-2 border-transparent px-3 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:text-sm">
-                    Subtasks
-                    <span className="ml-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{subtasks.length}</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="comments" className="rounded-none border-b-2 border-transparent px-3 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:text-sm">
-                    Comments
-                  </TabsTrigger>
-                  <TabsTrigger value="activity" className="rounded-none border-b-2 border-transparent px-3 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:text-sm">
-                    Activity
-                  </TabsTrigger>
-                </TabsList>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-              <TabsContent value="project" className="m-0 flex flex-col gap-4 pb-4">
-                <Card className="gap-0 border-border/70 bg-card/70 py-0 shadow-sm">
-                  <SectionCardHeader
-                    label="OVERVIEW"
-                    collapsed={overviewCollapsed}
-                    onToggle={() => setOverviewCollapsed((current) => !current)}
-                  />
-                  {!overviewCollapsed && (
-                    <CardContent className="space-y-4 p-4 sm:p-5">
-                      {/* Row 1: Status, Priority, Date — full width */}
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <div className="space-y-1.5">
-                          <Label>Status</Label>
-                          <Select value={form.statusId} onValueChange={(value) => onChange({ statusId: value })}>
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {board.columnOrder.map((columnId) => (
-                                <SelectItem key={columnId} value={columnId}>
-                                  {board.columns[columnId]?.title}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <Label>Priority</Label>
-                          <Select
-                            value={form.priority}
-                            onValueChange={(value) =>
-                              onChange({ priority: value as TicketDetailsForm["priority"] })
-                            }
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TICKET_PRIORITY_OPTIONS.map((option) => (
-                                <SelectItem key={option.key} value={option.key}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <Label htmlFor="ticket-date">Due date</Label>
-                          <Input
-                            id="ticket-date"
-                            type="date"
-                            value={form.scheduledFor || form.dueDate}
-                            onChange={(event) =>
-                              onChange({ dueDate: event.target.value, scheduledFor: event.target.value })
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      {/* Row 2: Execution Mode + action buttons — full width */}
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            <Label>Execution</Label>
-                            <Select
-                              value={form.executionMode}
-                              onValueChange={(value) =>
-                                onChange({ executionMode: value as TicketDetailsForm["executionMode"] })
-                              }
-                            >
-                              <SelectTrigger className="w-full h-9">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="direct">Direct</SelectItem>
-                                <SelectItem value="planned">Planned (approval)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          {mode === "edit" && (
-                            <div className="flex flex-wrap justify-center gap-2 pb-1.5 w-full">
-                              {form.approvalState === "pending" ? (
-                                <>
-                                  <Button type="button" variant="outline" size="default" onClick={onRejectPlan} className="h-9">
-                                    Reject plan
-                                  </Button>
-                                  <Button type="button" variant="default" size="default" onClick={onApprovePlan} className="h-9">
-                                    Approve plan
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button type="button" variant="outline" size="default" onClick={onRetryNow} className="h-9">
-                                    Retry now
-                                  </Button>
-                                  <Button type="button" variant="destructive" size="default" onClick={onCancelExecution} className="h-9">
-                                    Cancel execution
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        {form.executionMode === "planned" ? (
-                          <div
-                            className={cn(
-                              "rounded-md border px-3 py-2 text-xs",
-                              form.planApproved
-                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
-                                : "border-amber-500/30 bg-amber-500/10 text-amber-700",
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            {isImage ? (
+                              <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            ) : (
+                              <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
                             )}
-                          >
-                            {form.planApproved
-                              ? "✓ Plan approved — ticket can proceed."
-                              : "⚠ Plan mode will generate a plan and wait for your approval before executing."}
+                            <p className="truncate text-sm">{att.name}</p>
                           </div>
-                        ) : null}
-                      </div>
-
-                      {/* Row 3: Labels + Assignees — full width */}
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="ticket-labels">Labels</Label>
-                          <Input
-                            id="ticket-labels"
-                            value={form.tagsText}
-                            placeholder="bug, ui, backend"
-                            onChange={(event) => onChange({ tagsText: event.target.value })}
-                          />
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(att.size)}
+                          </p>
                         </div>
-
-                        <div className="space-y-1.5">
-                          <Label>Assignees</Label>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="outline" className="w-full justify-between" size="sm">
-                                <span>
-                                  {selectedAssignees.length > 0
-                                    ? `${selectedAssignees.length} selected — ${selectedAssignees
-                                        .map((a) => a.name)
-                                        .join(", ")}`
-                                    : "Assign people"}
-                                </span>
-                                <MoreHorizontalIcon className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-64">
-                              {assignees.map((assignee) => (
-                                <DropdownMenuItem key={assignee.id} onClick={() => toggleAssignee(assignee.id)}>
-                                  <span className="mr-2">{form.assigneeIds.includes(assignee.id) ? "✓" : ""}</span>
-                                  {assignee.name}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </div>
-
-                      {/* Row 4: Description (full width), then Attachments */}
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="ticket-description">Description</Label>
-                          <Textarea
-                            id="ticket-description"
-                            value={form.description}
-                            rows={mode === "create" ? 6 : 7}
-                            onChange={(event) => onChange({ description: event.target.value })}
-                            placeholder="Add notes, implementation details, or context..."
-                            className="resize-none"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <Label>Attachments</Label>
-                            <Input
-                              ref={attachmentInputRef}
-                              type="file"
-                              className="hidden"
-                              multiple
-                              onChange={(event) => {
-                                if (mode === "create") {
-                                  addCreateFiles(event.target.files);
-                                } else {
-                                  onUploadAttachments(event.target.files);
-                                }
-                                event.currentTarget.value = "";
-                              }}
-                            />
+                        <div className="flex items-center gap-1">
+                          {isImage && (
                             <Button
                               variant="ghost"
-                              size="sm"
-                              onClick={() => attachmentInputRef.current?.click()}
-                              disabled={mode === "edit" ? attachmentsUploading : false}
+                              size="icon-sm"
+                              onClick={() => setPreviewAttachment(att)}
+                              className="cursor-pointer"
                             >
-                              <PlusIcon className="h-4 w-4" />
-                              Upload
+                              <EyeIcon className="h-4 w-4" />
                             </Button>
-                          </div>
-
-                          {mode === "create" ? (
-                            createFiles.length === 0 ? (
-                              <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
-                                No attachments. Click Upload to add files.
-                              </p>
-                            ) : (
-                              <ScrollArea className="h-40 rounded-lg border border-border/70">
-                                <div className="space-y-2 p-2">
-                                  {createFiles.map((file, index) => (
-                                    <div
-                                      key={`${file.name}-${file.lastModified}-${index}`}
-                                      className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-2 py-2"
-                                    >
-                                      <div className="min-w-0 flex-1">
-                                        <p className="truncate text-sm">{file.name}</p>
-                                        <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                                      </div>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        onClick={() => removeCreateFile(index)}
-                                        aria-label={`Remove ${file.name}`}
-                                      >
-                                        <Trash2Icon className="h-4 w-4 text-destructive" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              </ScrollArea>
-                            )
-                          ) : attachmentsLoading ? (
-                            <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
-                              Loading attachments...
-                            </p>
-                          ) : attachments.length === 0 ? (
-                            <p className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
-                              No attachments yet.
-                            </p>
-                          ) : (
-                            <ScrollArea className="h-40 rounded-lg border border-border/70">
-                              <div className="space-y-2 p-2">
-                                {attachments.map((attachment) => {
-                                  const isImage = attachment.mimeType.startsWith("image/");
-                                  return (
-                                    <div
-                                      key={attachment.id}
-                                      className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/25 p-2"
-                                    >
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
-                                          {isImage ? (
-                                            <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                          ) : (
-                                            <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                          )}
-                                          <p className="truncate text-sm">{attachment.name}</p>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground">{formatBytes(attachment.size)}</p>
-                                      </div>
-                                      <div className="flex items-center gap-1">
-                                        {isImage ? (
-                                          <Button
-                                            variant="ghost"
-                                            size="icon-sm"
-                                            onClick={() => setPreviewAttachment(attachment)}
-                                            aria-label={`Preview ${attachment.name}`}
-                                          >
-                                            <EyeIcon className="h-4 w-4" />
-                                          </Button>
-                                        ) : null}
-                                        <Button variant="ghost" size="icon-sm" asChild>
-                                          <a
-                                            href={attachment.url}
-                                            download={attachment.name}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            aria-label={`Download ${attachment.name}`}
-                                          >
-                                            <DownloadIcon className="h-4 w-4" />
-                                          </a>
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon-sm"
-                                          onClick={() => onDeleteAttachment(attachment.id)}
-                                          aria-label={`Delete ${attachment.name}`}
-                                        >
-                                          <Trash2Icon className="h-4 w-4 text-destructive" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </ScrollArea>
                           )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  )}
-                </Card>
-                {mode === "edit" ? (
-                  <Card className="gap-0 border-border/70 bg-card/70 py-0 shadow-sm">
-                    <SectionCardHeader
-                      label="TASKS"
-                      count={subtasks.length}
-                      collapsed={tasksCollapsed}
-                      onToggle={() => setTasksCollapsed((current) => !current)}
-                    />
-                    {!tasksCollapsed && (
-                      <CardContent className="space-y-4 p-4 sm:p-5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Input
-                            value={subtaskDraft}
-                            onChange={(event) => onSubtaskDraftChange(event.target.value)}
-                            placeholder="Add subtask..."
-                            className="h-9 min-w-[220px] flex-1"
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                onAddSubtask();
-                              }
-                            }}
-                          />
-                          <Button size="sm" variant="secondary" onClick={onAddSubtask}>
-                            <PlusIcon className="h-4 w-4" />
-                            Add task
+                          <Button variant="ghost" size="icon-sm" asChild>
+                            <a
+                              href={att.url}
+                              download={att.name}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <DownloadIcon className="h-4 w-4" />
+                            </a>
                           </Button>
                           <Button
-                            variant={hideComplete ? "secondary" : "ghost"}
-                            size="sm"
-                            onClick={() => setHideComplete((current) => !current)}
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => onDeleteAttachment(att.id)}
+                            className="cursor-pointer"
                           >
-                            Hide complete
+                            <Trash2Icon className="h-4 w-4 text-destructive" />
                           </Button>
                         </div>
-
-                        {subtasksLoading ? (
-                          <p className="text-xs text-muted-foreground">Loading tasks...</p>
-                        ) : visibleSubtasks.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No tasks to show.</p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {visibleSubtasks.map((subtask) => (
-                              <div
-                                key={subtask.id}
-                                className={cn(
-                                  "flex items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-2 py-2",
-                                  subtask.completed && "opacity-70",
-                                )}
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <Checkbox
-                                    checked={subtask.completed}
-                                    onCheckedChange={(checked) =>
-                                      onToggleSubtask(subtask.id, Boolean(checked))
-                                    }
-                                  />
-                                  <p
-                                    className={cn(
-                                      "truncate text-sm",
-                                      subtask.completed && "text-muted-foreground line-through",
-                                    )}
-                                  >
-                                    {subtask.title}
-                                  </p>
-                                </div>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() => onDeleteSubtask(subtask.id)}
-                                  aria-label={`Delete ${subtask.title}`}
-                                >
-                                  <Trash2Icon className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </CardContent>
-                    )}
-                  </Card>
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="comments" className="m-0 pb-4">
-                <div className="space-y-4 rounded-xl border border-border/70 bg-card/70 p-4 sm:p-5">
-                  {mode === "create" ? (
-                    <p className="text-sm text-muted-foreground">
-                      Comments are available after creating the ticket.
-                    </p>
-                  ) : (
-                    <>
-                      <div className="rounded-xl border border-[#1A212B] bg-[#10151C] p-3">
-                        <div className="flex items-start gap-2">
-                          <Avatar className="mt-1 h-7 w-7 border border-[#2a3240]">
-                            <AvatarFallback className="text-[10px]">ME</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1 space-y-2">
-                            <div className="flex items-center gap-2 rounded-lg border border-[#202733] bg-[#0B0F14] px-2 py-1.5 focus-within:ring-1 focus-within:ring-ring">
-                              <Input
-                                id="comment-draft"
-                                value={commentDraft}
-                                onChange={(event) => onCommentDraftChange(event.target.value)}
-                                placeholder="Write a comment"
-                                className="h-7 border-0 bg-transparent px-1 text-sm text-foreground shadow-none focus-visible:ring-0"
-                              />
-                              <Button
-                                size="icon-sm"
-                                variant="ghost"
-                                onClick={onAddComment}
-                                disabled={!commentDraft.trim()}
-                                className="h-7 w-7 rounded-md bg-[#1B222D] text-foreground hover:bg-[#273142]"
-                                aria-label="Send comment"
-                              >
-                                <SendHorizonalIcon className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                            <p className="text-right text-[11px] text-muted-foreground">Comments are visible to workspace collaborators.</p>
-                          </div>
-                        </div>
                       </div>
-
-                      <Separator className="bg-border/70" />
-
-                      {commentsLoading ? (
-                        <p className="text-xs text-muted-foreground">Loading comments...</p>
-                      ) : comments.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">No comments yet.</p>
-                      ) : (
-                        <ScrollArea className="h-[360px] pr-1">
-                          <div className="space-y-3">
-                            {comments.map((comment) => (
-                              <div key={comment.id} className="flex items-start gap-3">
-                                <Avatar className="mt-0.5 h-8 w-8 border border-border/70">
-                                  <AvatarFallback className="bg-muted text-[10px]">
-                                    {initialsFromName(comment.authorName)}
-                                  </AvatarFallback>
-                                </Avatar>
-
-                                <div className="min-w-0 flex-1 rounded-xl border border-border/70 bg-muted/20 p-3">
-                                  <div className="mb-1.5 flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-medium">{comment.authorName}</p>
-                                      <span className="text-xs text-muted-foreground">
-                                        {formatCommentDate(comment.createdAt)}
-                                      </span>
-                                    </div>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      onClick={() => onDeleteComment(comment.id)}
-                                      aria-label="Delete comment"
-                                    >
-                                      <Trash2Icon className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                  </div>
-
-                                  <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
-                                    {comment.content}
-                                  </p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      )}
-                    </>
-                  )}
+                    );
+                  })}
                 </div>
-              </TabsContent>
+              )}
+            </div>
 
-              <TabsContent value="activity" className="m-0 pb-4">
-                <Card className="gap-0 border-border/70 bg-card/70 py-0 shadow-sm">
-                  <CardContent className="space-y-3 p-4 sm:p-5">
-                    <p className="text-sm font-medium">Activity</p>
-                    {mode === "create" ? (
-                      <p className="text-sm text-muted-foreground">
-                        Activity is available after creating the ticket.
-                      </p>
-                    ) : activityLoading ? (
-                      <p className="text-xs text-muted-foreground">Loading activity...</p>
-                    ) : activity.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No activity yet.</p>
-                    ) : (
+            {/* Execution Controls */}
+            {showExecutionControls && (
+              <>
+                <Separator />
+                <div className="flex flex-col gap-3">
+                  <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                    <ZapIcon className="size-3.5 text-primary" />
+                    Execution Controls
+                  </Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {showStartExecution && (
+                      <Button
+                        size="sm"
+                        onClick={onStartExecution}
+                        className="gap-1.5 cursor-pointer"
+                      >
+                        <PlayIcon className="h-3.5 w-3.5" />
+                        Start execution
+                      </Button>
+                    )}
+                    {showRetry && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onRetryNow}
+                        className="gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCwIcon className="h-3.5 w-3.5" />
+                        Retry
+                      </Button>
+                    )}
+                    {showCancel && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onCancelExecution}
+                        className="gap-1.5 cursor-pointer"
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                        Cancel
+                      </Button>
+                    )}
+                    {showApproval && (
                       <>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Button type="button" size="sm" variant={activityFilter === "all" ? "default" : "outline"} onClick={() => setActivityFilter("all")}>All</Button>
-                          <Button type="button" size="sm" variant={activityFilter === "execution" ? "default" : "outline"} onClick={() => setActivityFilter("execution")}>Execution</Button>
-                          <Button type="button" size="sm" variant={activityFilter === "comments" ? "default" : "outline"} onClick={() => setActivityFilter("comments")}>Comments</Button>
-                        </div>
-                        <ScrollArea className="h-[360px] pr-1">
-                          <div className="space-y-2">
-                            {filteredActivity.length === 0 ? (
-                              <p className="text-xs text-muted-foreground">No activity for this filter.</p>
-                            ) : null}
-                            {filteredActivity.map((entry) => {
-                              const isAgentResponse = entry.event === "Agent response" || entry.event === "Agent error";
-                              const isPlanGenerated = entry.event === "Plan generated";
-                              return (
-                              <div
-                                key={entry.id}
-                                className={cn(
-                                  "rounded-xl border px-3 py-2.5",
-                                  isAgentResponse && entry.level === "info"
-                                    ? "border-primary/30 bg-primary/5"
-                                    : "border-border/70 bg-muted/20"
-                                )}
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    {isAgentResponse ? (
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                                        🤖 {entry.source || "Agent"}
-                                      </span>
-                                    ) : isPlanGenerated ? (
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
-                                        📝 Planner
-                                      </span>
-                                    ) : (
-                                      <span
-                                        className={cn(
-                                          "inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                                          entry.level === "success" && "bg-emerald-500/15 text-emerald-400",
-                                          entry.level === "warning" && "bg-amber-500/15 text-amber-400",
-                                          entry.level === "error" && "bg-destructive/15 text-destructive",
-                                          entry.level === "info" && "bg-blue-500/15 text-blue-400",
-                                        )}
-                                      >
-                                        {entry.event}
-                                      </span>
-                                    )}
-                                    {!isAgentResponse && !isPlanGenerated && (
-                                      <p className="text-sm font-medium">{entry.event}</p>
-                                    )}
-                                    {entry.source && !isAgentResponse && (
-                                      <span className="text-[10px] text-muted-foreground">via {entry.source}</span>
-                                    )}
-                                  </div>
-                                  <span className="text-xs text-muted-foreground">
-                                    {formatActivityDate(entry.occurredAt)}
-                                  </span>
-                                </div>
-
-                                {isAgentResponse && entry.details && (
-                                  <div className="mt-2 rounded-md border border-primary/20 bg-background/90 px-3 py-2">
-                                    <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-foreground/90">
-                                      {entry.details}
-                                    </p>
-                                  </div>
-                                )}
-
-                                {!isAgentResponse && (entry.details || entry.source) && (
-                                  <div className="mt-1 rounded-md border border-border/60 bg-background/80 px-2 py-1.5">
-                                    <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Details</p>
-                                    <p className="max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-foreground/90">
-                                      {entry.details}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                            })}
-                          </div>
-                        </ScrollArea>
+                        <Button
+                          size="sm"
+                          onClick={onApprovePlan}
+                          className="gap-1.5 cursor-pointer"
+                        >
+                          Approve plan
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={onRejectPlan}
+                          className="gap-1.5 cursor-pointer"
+                        >
+                          Reject plan
+                        </Button>
                       </>
                     )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </div>
-          </Tabs>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Comments — edit mode only */}
+            {isEditing && (
+              <>
+                <Separator />
+                <div className="flex flex-col gap-3">
+                  <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                    <SquarePenIcon className="size-3.5 text-primary" />
+                    Comments
+                  </Label>
+
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 flex items-center gap-2 rounded-lg border border-border/70 bg-muted/10 px-2 py-1.5 focus-within:ring-1 focus-within:ring-ring">
+                      <Input
+                        value={commentDraft}
+                        onChange={(e) => onCommentDraftChange(e.target.value)}
+                        placeholder="Write a comment..."
+                        className="h-7 border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && commentDraft.trim()) {
+                            e.preventDefault();
+                            onAddComment();
+                          }
+                        }}
+                      />
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        onClick={onAddComment}
+                        disabled={!commentDraft.trim()}
+                        className="h-7 w-7 cursor-pointer"
+                        aria-label="Send comment"
+                      >
+                        <SendHorizonalIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {commentsLoading ? (
+                    <p className="text-xs text-muted-foreground">
+                      Loading comments...
+                    </p>
+                  ) : comments.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No comments yet.
+                    </p>
+                  ) : (
+                    <ScrollArea className="max-h-[200px]">
+                      <div className="space-y-2">
+                        {comments.map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/20 p-2.5"
+                          >
+                            <Avatar className="mt-0.5 h-6 w-6 border border-border/70">
+                              <AvatarFallback className="bg-muted text-[9px]">
+                                {initialsFromName(comment.authorName)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-medium">
+                                  {comment.authorName}
+                                </p>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {formatCommentDate(comment.createdAt)}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 whitespace-pre-wrap text-xs leading-5 text-foreground">
+                                {comment.content}
+                              </p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => onDeleteComment(comment.id)}
+                              className="cursor-pointer shrink-0"
+                            >
+                              <Trash2Icon className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Activity — edit mode only */}
+            {isEditing && (
+              <>
+                <Separator />
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                      <ZapIcon className="size-3.5 text-primary" />
+                      Activity
+                    </Label>
+                    <div className="flex gap-1">
+                      {(["all", "execution", "comments"] as const).map(
+                        (filter) => (
+                          <Button
+                            key={filter}
+                            type="button"
+                            size="sm"
+                            variant={
+                              activityFilter === filter ? "default" : "outline"
+                            }
+                            onClick={() => setActivityFilter(filter)}
+                            className="h-6 px-2 text-[10px] cursor-pointer capitalize"
+                          >
+                            {filter}
+                          </Button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+
+                  {activityLoading ? (
+                    <p className="text-xs text-muted-foreground">
+                      Loading activity...
+                    </p>
+                  ) : filteredActivity.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No activity yet.
+                    </p>
+                  ) : (
+                    <ScrollArea className="max-h-[200px]">
+                      <div className="space-y-1.5">
+                        {filteredActivity.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium">
+                                {entry.event}
+                              </p>
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatActivityDate(entry.occurredAt)}
+                              </span>
+                            </div>
+                            {entry.details && (
+                              <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-foreground/80 line-clamp-3">
+                                {entry.details}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="px-6 pb-6 pt-0 gap-2">
+            <Button
+              variant="ghost"
+              onClick={onClose}
+              className="cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSave} className="gap-1.5 cursor-pointer">
+              <ClipboardListIcon className="size-3.5" />
+              {saveLabel}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Image preview dialog */}
       <Dialog
         open={Boolean(previewAttachment)}
         onOpenChange={(isOpen) => {
-          if (!isOpen) {
-            setPreviewAttachment(null);
-          }
+          if (!isOpen) setPreviewAttachment(null);
         }}
       >
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{previewAttachment?.name ?? "Image preview"}</DialogTitle>
+            <DialogTitle>
+              {previewAttachment?.name ?? "Image preview"}
+            </DialogTitle>
             <DialogDescription>
-              Preview of attached image. Use the download button to save.
+              Preview of attached image.
             </DialogDescription>
           </DialogHeader>
-          {previewAttachment ? (
+          {previewAttachment && (
             <div className="space-y-3">
               <div className="overflow-hidden rounded-md border bg-muted/20">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={previewAttachment.url}
                   alt={previewAttachment.name}
@@ -1084,7 +1151,7 @@ export function TicketDetailsModal({
                 </Button>
               </div>
             </div>
-          ) : null}
+          )}
         </DialogContent>
       </Dialog>
     </>

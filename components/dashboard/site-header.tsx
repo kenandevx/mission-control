@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/breadcrumb"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import { WorkerStatus } from "./worker-status"
 
 export function SiteHeader() {
   return (
@@ -25,7 +24,6 @@ export function SiteHeader() {
             </BreadcrumbList>
           </Breadcrumb>
         </div>
-        <WorkerStatus />
       </div>
     </header>
   )

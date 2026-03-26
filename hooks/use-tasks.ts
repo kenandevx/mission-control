@@ -2277,7 +2277,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
 
   const reloadBoards = async () => {
     try {
-      const res = await fetch("/api/tasks", { cache: "no-store" });
+      const res = await fetch("/api/tasks", { cache: "reload" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (json.ok) {

@@ -8,6 +8,9 @@ import {
   IconListDetails,
   IconLogs,
   IconRobot,
+  IconCalendar,
+  IconStack2,
+  IconSettings,
 } from "@tabler/icons-react"
 
 import { NavMain } from "@/components/layout/nav-main"
@@ -29,8 +32,11 @@ const data = {
   navMain: [
     { title: "Dashboard", url: "/dashboard", icon: IconDashboard },
     { title: "Boards", url: "/boards", icon: IconListDetails },
+    { title: "Agenda", url: "/agenda", icon: IconCalendar },
+    { title: "Processes", url: "/processes", icon: IconStack2 },
     { title: "Agents", url: "/agents", icon: IconRobot },
     { title: "Logs", url: "/logs", icon: IconLogs },
+    { title: "Settings", url: "/settings", icon: IconSettings },
   ],
 }
 

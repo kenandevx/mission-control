@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { usePendingApprovalsCount } from "./use-pending-approvals-count";
@@ -26,8 +26,12 @@ export function ApprovalsList() {
     }
   };
 
+  const startedRef = useRef(false);
   useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
     fetchTickets();
+    return () => { startedRef.current = false; };
   }, []);
 
   const approve = async (ticketId: string) => {

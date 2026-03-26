@@ -64,6 +64,7 @@ export type TicketRecord = {
   planApproved: boolean;
   scheduledFor: string | null;
   executionState: TicketExecutionState;
+  processVersionIds: string[];
   checklistDone: number;
   checklistTotal: number;
   attachmentsCount: number;
@@ -110,6 +111,7 @@ export type CreateTicketPayload = {
   planText?: string | null;
   planApproved?: boolean;
   scheduledFor?: string | null;
+  processVersionIds?: string[];
   checklistDone?: number;
   checklistTotal?: number;
   attachmentsCount?: number;
@@ -131,6 +133,7 @@ export type UpdateTicketPatch = {
   planApproved?: boolean;
   scheduledFor?: string | null;
   executionState?: TicketExecutionState;
+  processVersionIds?: string[];
   checklistDone?: number;
   checklistTotal?: number;
   attachmentsCount?: number;

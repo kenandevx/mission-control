@@ -29,7 +29,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ── Service definitions ─────────────────────────────────────
-SERVICES="task-worker gateway-sync bridge-logger nextjs"
+SERVICES="task-worker gateway-sync bridge-logger agenda-scheduler agenda-worker nextjs"
 
 declare -A SERVICE_CMDS
 declare -A SERVICE_LOG_FILES
@@ -43,7 +43,9 @@ done
 SERVICE_CMDS[task-worker]="node scripts/task-worker.mjs"
 SERVICE_CMDS[gateway-sync]="node scripts/gateway-sync.mjs"
 SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
-SERVICE_CMDS[nextjs]="bash -c 'npm start'"
+SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
+SERVICE_CMDS[agenda-worker]="node scripts/agenda-worker.mjs"
+SERVICE_CMDS[nextjs]="cd \"$PROJECT_ROOT\" && npm start"
 
 # ── Helpers ────────────────────────────────────────────────
 pid_running() {
@@ -53,9 +55,16 @@ pid_running() {
 
 kill_port() {
   local port=$1
-  if command -v fuser >/dev/null 2>&1 && fuser "$port/tcp" >/dev/null 2>&1; then
-    fuser -k "$port/tcp" 2>/dev/null || true
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k 3000/tcp 2>/dev/null || true
     sleep 1
+  fi
+  # Fallback: also try to kill any remaining next-server directly
+  local pid
+  pid=$(lsof -ti:3000 2>/dev/null) || true
+  if [ -n "$pid" ]; then
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 0.5
   fi
 }
 
@@ -132,6 +141,12 @@ stop_service() {
       bridge-logger)
         pkill -f "bridge-logger.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
         ;;
+      agenda-scheduler)
+        pkill -f "agenda-scheduler.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
+        ;;
+      agenda-worker)
+        pkill -f "agenda-worker.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
+        ;;
       nextjs)
         kill_port 3000
         echo "  $svc — port 3000 cleared"
@@ -161,6 +176,10 @@ case "$CMD" in
   start)
     echo "[mc-services] Starting services..."
     for svc in $SERVICES; do
+      if [ "${2:-}" = "--dev" ] && [ "$svc" = "nextjs" ]; then
+        echo "  $svc — skipped (--dev mode)"
+        continue
+      fi
       start_service "$svc"
     done
     echo "[mc-services] All services started."

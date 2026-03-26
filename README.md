@@ -1,4 +1,4 @@
-# OpenClaw Mission Control v1.0.0
+# OpenClaw Mission Control v1.1.3
 
 > **Local-first OpenClaw dashboard** — Boards, real-time logs, worker queue management, and agent observability.
 
@@ -77,6 +77,29 @@ Live agent log explorer with:
 - **Clear logs button** — wipe agent logs for a fresh start
 
 Log types tracked: `workflow` (chat messages), `tool` (tool calls and outcomes), `memory` (qdrant/vector operations), `system` (startup, shutdown, errors)
+
+### Agenda (`/agenda`)
+
+Calendar-based scheduling UI for automated agent tasks. Uses a custom month/week/day grid.
+
+Features:
+- **Stats cards**: Active events, today's runs, published processes, failed runs (24h) — same card style as the dashboard
+- **Month / Week / Day views** with date navigation and "New Event" button
+- **Event click → details sheet**: Overview (schedule, agent, recurrence, latest run status), Runs (attempt history with status badges), Output (agent output per step) — all using dashboard-style gradient cards
+- **Create/Edit event modal**: Title, free prompt, agent, attached processes (multi-select), status (draft/active), date/time with timezone, recurrence (none/daily/weekly/monthly with weekday picker)
+- **Timezone-aware**: Times are stored as UTC in the database; the UI converts to/from the event's IANA timezone using `Intl.DateTimeFormat`. The `buildTzAwareISO()` helper ensures wall-clock time round-trips correctly regardless of DST.
+- **Recurring edit scope**: Editing a recurring event prompts "Only this occurrence" (occurrence override) or "This and all upcoming" (series split)
+- **Draft/Active**: Draft events are visible but ignored by the scheduler — nothing runs until the user activates them
+
+### Processes (`/processes`)
+
+Reusable step-by-step execution blueprints attached to agenda events.
+
+Features:
+- Process list with create, edit, duplicate, archive
+- Ordered steps with instruction, optional skill, optional agent override, optional timeout
+- Draft/Published state — only published versions selectable in Agenda
+- Version tracking — editing a used process creates a new version
 
 ### Approvals (`/approvals`)
 
@@ -171,6 +194,11 @@ The gateway-sync script (`scripts/gateway-sync.mjs`) runs on startup and one-tim
 ┌─────────────────────────────────────────────────────────────┐
 │              Next.js App (port 3000)                       │
 │   Server Components + API Routes + SSE endpoints            │
+│   ┌──────────────────────────────┐                          │
+│   │  Runtime Cache (30s TTL)     │                          │
+│   │  Shared by: /api/agents,    │                          │
+│   │  collector, server-data      │                          │
+│   └──────────────────────────────┘                          │
 └─────────────┬─────────────────────────┬───────────────────┘
               │                         │
               │ HTTP/REST               │ LISTEN/NOTIFY
@@ -201,10 +229,13 @@ The gateway-sync script (`scripts/gateway-sync.mjs`) runs on startup and one-tim
 | Service | Where | Why |
 |---|---|---|
 | PostgreSQL | Docker | No host dependency, portable |
+| Redis | Docker (or host) | BullMQ job queue for agenda execution |
 | Next.js | Host (or Docker) | Node.js 24+ on host, hot-reload dev |
 | task-worker | Host | Calls openclaw binary + needs `~/.openclaw` access |
 | gateway-sync | Host | Calls openclaw binary |
 | bridge-logger | Host | Tails log files from `~/.openclaw` |
+| agenda-scheduler | Host | Expands RRULE occurrences, enqueues to BullMQ |
+| agenda-worker | Host | Executes agenda jobs via openclaw agent CLI |
 
 ### Services
 
@@ -216,10 +247,13 @@ The gateway-sync script (`scripts/gateway-sync.mjs`) runs on startup and one-tim
 | `task-worker` | Long-lived Node.js process | Event-driven ticket executor |
 | `bridge-logger` | Long-lived Node.js process | Log file ingestion → DB |
 | `gateway-sync` | One-shot Node.js process | Import sessions from openclaw CLI |
+| `agenda-scheduler` | Long-lived Node.js process | Expands RRULE occurrences, enqueues due jobs to Redis/BullMQ |
+| `agenda-worker` | Long-lived Node.js process | Consumes agenda queue, runs agent steps, writes results to DB |
 
 ### Data flow
 
-- **Tickets**: Created/updated via `POST /api/tasks` → written to `tickets` → `pg_notify('ticket_ready')` wakes worker → worker builds a structured prompt (title, description, subtasks, notes/comments, metadata) → calls `openclaw agent` → writes agent's response + completion/failure to `ticket_activity` → updates `execution_state`
+- **Tickets**: Created/updated via `POST /api/tasks` → written to `tickets` → `pg_notify('ticket_ready')` wakes worker → worker builds a structured prompt (title, description, subtasks, notes/comments, metadata) → calls `openclaw agent` → writes agent's response + completion/failure to `ticket_activity` → updates `execution_state`. Failed tickets retry up to 3 times with exponential backoff (30s, 120s, 480s) using `scheduled_for`.
+- **Runtime data**: All runtime CLI calls (`openclaw agents list`, `openclaw sessions`) go through a shared cache layer (`lib/runtime/cache.ts`) with 30s TTL. Both commands run in parallel using async `execFile`. Consumers: `/api/agents`, `collector.ts`, `server-data.ts`.
 - **Logs**: Session JSONL lines parsed by bridge-logger → `agent_logs` rows → `pg_notify('agent_logs')` → SSE stream to browser
 - **Activity**: All mutations write to `ticket_activity` and `activity_logs` → `pg_notify('ticket_activity')` → SSE → UI activity feed
 - **Worker metrics**: `GET /api/tasks/worker-metrics` reads `worker_settings` + active/queued ticket counts
@@ -251,7 +285,6 @@ mission-control/
 │   │   │   │   └── stream/       # GET — SSE stream for new log rows
 │   │   ├── notifications/        # POST — push notifications
 │   │   ├── setup/                # POST — first-run setup
-│   │   └── _proxy.ts             # Proxy utility for authenticated gateway calls
 │   ├── agents/
 │   │   ├── page.tsx             # Agent list + status cards
 │   │   └── [agentId]/page.tsx   # Per-agent detail page
@@ -291,7 +324,8 @@ mission-control/
 │   │   ├── server-data.ts   # SSR data loaders (getBoardsPageData, getDashboardData, etc.)
 │   │   └── index.ts          # DB export
 │   ├── runtime/
-│   │   ├── collector.ts     # collectRuntimeSnapshots() — reads openclaw sessions CLI
+│   │   ├── cache.ts         # Runtime cache layer (30s TTL) — parallel async CLI calls, shared by all consumers
+│   │   ├── collector.ts     # collectRuntimeSnapshots() — builds snapshots + assignees from cached CLI data
 │   │   ├── merge.ts         # mergeAgentWithRuntime() — overlay runtime data on DB agents
 │   │   └── types.ts         # RuntimeSnapshot, RuntimeAssignee types
 │   ├── agent-log-utils.ts   # Log formatting helpers
@@ -311,7 +345,6 @@ mission-control/
 │   ├── install.sh           # First-time setup: clone, env, Docker build/start
 │   ├── update.sh           # git pull + Docker rebuild + service restart
 │   ├── uninstall.sh         # Stop and remove Docker services + volumes
-│   ├── openclaw.container.json  # Legacy: was for in-container task-worker; task-worker now runs on host
 │   └── repair-agent-log-attribution.mjs  # Fix log rows with missing agent_id
 │
 ├── db/
@@ -334,6 +367,15 @@ mission-control/
 | `/api/events` | GET | SSE: `worker_tick` + `ticket_activity` events |
 | `/api/agent/logs/stream` | GET | SSE: `log_row` events for live log view |
 | `/api/agent/logs` | GET | Paginated log query with filters |
+| `/api/agenda/events` | GET | List events (with date range filter) |
+| `/api/agenda/events` | POST | Create event |
+| `/api/agenda/events/:id` | GET | Event detail with processes + occurrences |
+| `/api/agenda/events/:id` | PATCH | Update event (supports recurring edit scopes) |
+| `/api/agenda/events/:id` | DELETE | Delete event + cascade |
+| `/api/agenda/stats` | GET | Agenda stats (active events, today's runs, etc.) |
+| `/api/processes` | GET/POST | List/create processes |
+| `/api/processes/:id` | GET/PATCH/DELETE | Process CRUD |
+| `/api/skills` | GET | List installed skills from OpenClaw runtime |
 | `/health` | GET | Liveness probe |
 
 ### Database tables
@@ -356,6 +398,15 @@ mission-control/
 | `worker_settings` | Worker enabled/disabled, poll interval, max concurrency |
 | `app_settings` | Single-row settings: gateway token, setup completed flag |
 | `notification_channels` | Notification routing config |
+| `processes` | Reusable execution blueprints |
+| `process_versions` | Versioned snapshots of a process |
+| `process_steps` | Ordered steps within a process version |
+| `agenda_events` | Scheduled events (one-time or recurring) |
+| `agenda_event_processes` | Join table: event → process versions |
+| `agenda_occurrences` | Materialized run instances (one per scheduled time) |
+| `agenda_occurrence_overrides` | Per-occurrence field overrides for recurring series |
+| `agenda_run_attempts` | Execution attempts per occurrence (retry history) |
+| `agenda_run_steps` | Per-step execution results within a run attempt |
 
 ---
 
@@ -380,6 +431,8 @@ mission-control/
 | `task-worker.mjs` | Host daemon (via mc-services) | Event-driven ticket executor. Listens for `ticket_ready` notifications. Polls every `poll_interval_seconds` as fallback. Uses `SELECT ... FOR UPDATE SKIP LOCKED` to prevent double-pickup. |
 | `bridge-logger.mjs` | Host daemon (via mc-services) | Long-lived daemon. Tails session JSONL files + gateway log files. Deduplicates within 30s window. Inserts into `agent_logs`. Emits `pg_notify('agent_logs')`. Dead-letter file on insert failure, replay every 30s. |
 | `gateway-sync.mjs` | Host one-shot (via mc-services) | On startup, imports all openclaw sessions into the DB. Resolves gateway token from `app_settings` if not in env. |
+| `agenda-scheduler.mjs` | Host daemon (via mc-services) | Runs every 60s. Finds active agenda events, expands RRULE over a 14-day lookahead + 10-min backfill, upserts `agenda_occurrences`, enqueues due jobs to BullMQ with correct delay. Ignores draft events. |
+| `agenda-worker.mjs` | Host daemon (via mc-services) | BullMQ consumer. Marks occurrence running, creates run attempt, executes free prompt + process steps sequentially via `openclaw agent --json`, stores per-step output/errors, marks final status. Agent fallback: `null`/`"null"` → `main`. |
 
 ### npm scripts
 
@@ -397,8 +450,8 @@ mission-control/
 | `npm run worker:tasks` | Run task-worker directly (for debugging) |
 | `npm run bridge:logger:check` | Syntax-check bridge-logger.mjs |
 | `npm run worker:tasks:check` | Syntax-check task-worker.mjs |
-| `mc-services start` | Start all 4 host daemons: task-worker, gateway-sync, bridge-logger, Next.js |
-| `mc-services stop` | Stop all 4 host daemons |
+| `mc-services start` | Start all 6 host daemons: task-worker, gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, Next.js |
+| `mc-services stop` | Stop all 6 host daemons |
 | `mc-services status` | Show service status + last log lines |
 
 ---
@@ -654,6 +707,78 @@ mc-services restart bridge-logger
 ---
 
 ## Changelog
+
+### v1.1.3 — 2026-03-25
+
+**Agenda system — fixes and polish**
+
+- **Fixed event click → details**: API returns `{ event, processes, occurrences }` at top level; front-end was reading fields from `json` instead of `json.event`, causing all detail fields to be `undefined`. Details sheet, edit modal, and process IDs now populate correctly.
+- **Fixed timezone round-trip**: Front-end was sending naive ISO strings (`2026-03-26T00:26:00`) which the server stored as UTC. Added `buildTzAwareISO()` that computes the correct UTC offset for the event's IANA timezone, so `00:26 Europe/Amsterdam` stores as `23:26Z` and displays back as `00:26`.
+- **Fixed recurrence defaulting to "weekly"**: `parseRecurrence()` fell through to `"weekly"` for unrecognized strings including `"none"`. Now `"none"` is handled explicitly; unknown strings default to `"none"`.
+- **Fixed recurrence select not updating**: `buildInitialForm()` re-parsed already-resolved recurrence types as RRULE strings. Now detects valid types and uses them directly.
+- **Fixed `--agent null` crash**: When no agent is assigned, `default_agent_id` is SQL NULL, but `String(null)` produced the string `"null"` which is truthy. Worker now treats `"null"` as falsy, falling back to `main`. API routes sanitize `agentId` on save.
+- **Fixed `AgendaStatsCards` duplicate render**: Component was rendered twice in the wrapper (once outside, once inside the content div), showing 8 cards. Removed duplicate.
+- **Fixed stats endpoint**: Replaced SSE-only `EventSource` approach with a standard JSON GET endpoint + 30s polling. Cards load immediately and refresh on `agenda-refresh` events.
+- **Fixed `updated_at` column**: `agenda_occurrence_overrides` table was missing this column; added via migration.
+- **Agenda stats cards**: Redesigned to match dashboard `SectionCards` — gradient background, `CardAction` badges with `IconTrendingUp`, `CardFooter` descriptions, `md:grid-cols-4` layout.
+- **Details sheet redesign**: All cards in the event details popup now use dashboard-style gradient cards with `data-slot="card"`, `CardAction`, `CardFooter`. Consistent badge styling, compact delete button.
+- **Layout alignment**: Stats cards wrapped in same `@container/main` + `py-4 md:py-6` structure as dashboard. Title/description padding aligned in details sheet.
+
+### v1.1.2 — 2026-03-25
+
+**Performance & reliability**
+
+- **Runtime cache layer** (`lib/runtime/cache.ts`): All `openclaw agents list` and `openclaw sessions` CLI calls now go through a single shared cache with 30-second TTL. Both commands run in parallel using async `execFile` instead of sequential `execSync`. Deduplicates concurrent refreshes. Consumers: `/api/agents/route.ts`, `collector.ts`, `server-data.ts`. Eliminates ~4.3s blocking on the agents page.
+- **Collector rewrite** (`lib/runtime/collector.ts`): Fully async — no more `execFileSync`. Agent IDs discovered dynamically from CLI output instead of hardcoded `AGENT_IDS` array. Removed `emitRuntimeEvent()` (was writing noisy DB rows on every snapshot). Removed `(result as any).__assignees` hack — assignees now returned as a proper typed field via `CollectorResult`.
+- **Server data cleanup** (`lib/db/server-data.ts`): `getWorkspaceAssignees()` and `getAgentsAndLogsData()` use the cache layer via the rewritten collector. No more duplicate `collectRuntimeSnapshots()` calls or `as any` casts.
+- **Agents API** (`/api/agents/route.ts`): Replaced two sequential `execSync` calls with the shared cache layer. Same response shape preserved.
+
+**Task worker improvements** (`scripts/task-worker.mjs`)
+
+- **Direct file reads**: `getOpenclawConfig()` and `getRecentChatId()` now use `fs.readFile` + `JSON.parse` instead of spawning child Node.js processes
+- **Shared prompt builder**: Extracted `buildTicketPrompt()` function used by both `generatePlan()` and `executeTicket()`, eliminating duplicated prompt assembly
+- **Retry with backoff**: Failed tickets retry up to 3 times with exponential backoff (30s, 120s, 480s) using the existing `scheduled_for` column. Final failure marks ticket as `failed`
+- **Removed dead code**: `dispatchToAgent()`, `getOrCreateSession()`, `hasTelegramBinding()` — none were called in the main execution flow
+
+### v1.1.1 — 2026-03-25
+
+**Code audit & cleanup**
+
+- **Removed dead files**: `page.module.scss` (unused SCSS), `dashboard-cards.tsx` (replaced by `SectionCards`), `stats-chart.tsx`, `worker-status.tsx`, `activity-logs.tsx` (never imported), `proxy.ts` (root stub), `app/api/_proxy.ts` (stub), `app/api/dashboard/stats/route.ts` (used `better-sqlite3` incorrectly), `lib/tasks/worker-core.ts` (TS duplicate of `.mjs`)
+- **Removed dead dependencies**: `better-sqlite3`, `@types/better-sqlite3`, `sass` — no remaining consumers
+- **Removed dead code**: `fetchActivityStats()` in dashboard page (defined but never called), `loadAgentIdentity()` in server-data (defined but never called)
+- **Fixed StrictMode double-invocation guards**: Added `useRef` guards to `providers.tsx`, `use-processes.ts`, `approvals-list.tsx`, `use-pending-approvals-count.ts`, `agenda-stats-cards.tsx`
+- **Fixed `cache: "no-store"`**: Replaced all occurrences with `cache: "reload"` (Turbopack compatibility) across hooks, components, and adapter
+- **Fixed tsconfig**: Removed duplicate `skipLibCheck` key
+- **Fixed unused imports**: Removed `IconTrendingDown` from `section-cards.tsx`, `readFileSync` from `server-data.ts`
+- **Dashboard stats**: Moved stats fetching from deleted `better-sqlite3` route to new `getDashboardStats()` in `server-data.ts` using PostgreSQL
+- **Type safety**: Added eslint-disable comment for action-based API routes that require `Record<string, any>` for dynamic body handling
+
+### v1.1.0 — 2026-03-25
+
+**Agenda / Calendar — complete redesign**
+
+- **Custom month grid** — built from scratch with `date-fns`, replacing FullCalendar. Matches the JSONC spec: 108px day cells, 7-column grid, date badge header, compact pastel event pills, Mon–Sun week header
+- **Month / Week / Day views** — fully functional view switching with correct date navigation per view unit
+- **Week view** — time-grid with 24-hour slots, day columns, hour gutter, today column tinting
+- **Day view** — single-day time grid with large day-number focal header
+- **Event pills** — pastel color palette (blue/green/orange/pink/purple/gray), hover animation (lift + shadow), recurring icon, time prefix, truncate
+- **Premium event modal** — complete visual redesign with section icons (free prompt, agent, schedule, repeat), grid layout for date/time fields, weekday selector buttons, recurrence selector with icons
+- **Edit existing event** — Edit button on details sheet opens pre-filled modal; all fields (title, prompt, agent, processes, status, dates, times, timezone, recurrence) correctly pre-populated
+- **Recurring edit scope dialog** — when editing a recurring event, modal closes and a styled AlertDialog asks: "Only this occurrence" (creates occurrence override) or "This and all upcoming" (splits series); PATCH API handles both scopes
+- **Correct timezone handling** — start/end times extracted using `Intl.DateTimeFormat` with the event's IANA timezone, not browser local time
+- **Correct recurrence parsing** — RRULE strings (e.g. `FREQ=WEEKLY;BYDAY=MO`) parsed to display type (`weekly`) for form, raw rule preserved for API
+
+**Agents page — fixed**
+
+- `AgentsClientGrid` was using `execFile` from `node:child_process` directly in a browser component — silently failing and showing zero agents. Now uses `/api/agents` route (runs server-side in Node.js with `execSync`)
+- API route enriched with session runtime data (`lastHeartbeatAt`, `status`) from `openclaw sessions --all-agents --json`
+
+**Performance — StrictMode deduplication**
+
+- All `useEffect` hooks that make API calls now use `useRef`-based guards to prevent double-invocation in React 19 StrictMode
+- Agenda page reduced from 8 calls → 3 calls (agents + processes + events) on initial load
+- Processes page reduced from 7 calls → 3 calls (processes + agents + skills) on initial load
 
 ### v1.0.0 — 2026-03-24
 

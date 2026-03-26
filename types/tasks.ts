@@ -28,6 +28,9 @@ export type TicketExecutionState =
 
 export type TicketExecutionMode = "direct" | "planned";
 
+export type TaskType = "one_time" | "repeatable";
+export type Frequency = "daily" | "weekly";
+
 export type Ticket = {
   id: string;
   title: string;
@@ -44,6 +47,15 @@ export type Ticket = {
   planApproved?: boolean;
   scheduledFor?: string | null;
   executionState?: TicketExecutionState;
+  processVersionIds?: string[];
+  taskType?: TaskType;
+  frequency?: Frequency;
+  weekdays?: string[];
+  startTime?: string;
+  startDateMode?: string;
+  endDateMode?: string;
+  endDate?: string | null;
+  modelOverride?: string;
   checklistDone: number;
   checklistTotal: number;
   comments: number;
@@ -136,6 +148,15 @@ export type CreateTicketForm = {
   assigneeIds: string[];
   assignedAgentId: string;
   executionMode: TicketExecutionMode;
+  processVersionIds: string[];
+  taskType: TaskType;
+  frequency: Frequency;
+  weekdays: string[];
+  startTime: string;
+  startDateMode: string;
+  endDateMode: string;
+  endDate: string;
+  modelOverride: string;
 };
 
 export type TicketDetailsForm = {
@@ -154,6 +175,7 @@ export type TicketDetailsForm = {
   planText: string;
   planApproved: boolean;
   executionState: TicketExecutionState;
+  processVersionIds: string[];
   checklistDone: number;
   checklistTotal: number;
   comments: number;
@@ -307,6 +329,7 @@ export const emptyCreateForm = (statusId: string): CreateTicketForm => ({
   assigneeIds: [],
   assignedAgentId: "",
   executionMode: "direct",
+  processVersionIds: [],
 });
 
 const MONTH_SHORT = [

@@ -109,7 +109,7 @@ export function ChartAreaInteractive({ data }: { data: ChartPoint[] }) {
   }, [chartData, timeRange])
 
   return (
-    <Card className="@container/card">
+    <Card className="@container/card" style={{ marginInline: "calc(var(--spacing) * 6)" }}>
       <CardHeader>
         <CardTitle>Activity Overview</CardTitle>
         <CardDescription>

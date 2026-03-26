@@ -244,3 +244,155 @@ values (1, true, 20, 3)
 on conflict (id) do nothing;
 
 alter table worker_settings add column if not exists last_tick_at timestamptz;
+
+-- ─── Phase 2: Processes ──────────────────────────────────────────────────────
+
+create table if not exists processes (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  name text not null,
+  description text,
+  status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_processes_workspace on processes(workspace_id);
+create index if not exists idx_processes_status on processes(status);
+
+create table if not exists process_versions (
+  id uuid primary key default gen_random_uuid(),
+  process_id uuid not null references processes(id) on delete cascade,
+  version_number integer not null,
+  created_at timestamptz not null default now(),
+  published_at timestamptz,
+  unique (process_id, version_number)
+);
+
+create index if not exists idx_process_versions_process on process_versions(process_id);
+
+create table if not exists process_steps (
+  id uuid primary key default gen_random_uuid(),
+  process_version_id uuid not null references process_versions(id) on delete cascade,
+  step_order integer not null,
+  title text not null default '',
+  instruction text not null default '',
+  skill_key text,
+  agent_id text,
+  timeout_seconds integer,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_process_steps_version on process_steps(process_version_id);
+
+-- ─── Phase 2: Agenda ──────────────────────────────────────────────────────────
+
+create table if not exists agenda_events (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  title text not null,
+  free_prompt text,
+  default_agent_id text,
+  timezone text not null default 'Europe/Amsterdam',
+  starts_at timestamptz not null,
+  ends_at timestamptz,
+  recurrence_rule text,
+  recurrence_until timestamptz,
+  status text not null default 'draft' check (status in ('draft', 'active')),
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_agenda_events_workspace on agenda_events(workspace_id);
+create index if not exists idx_agenda_events_status on agenda_events(status);
+
+create table if not exists agenda_event_processes (
+  id uuid primary key default gen_random_uuid(),
+  agenda_event_id uuid not null references agenda_events(id) on delete cascade,
+  process_version_id uuid not null references process_versions(id) on delete cascade,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_agenda_event_processes_event on agenda_event_processes(agenda_event_id);
+
+create table if not exists agenda_occurrences (
+  id uuid primary key default gen_random_uuid(),
+  agenda_event_id uuid not null references agenda_events(id) on delete cascade,
+  scheduled_for timestamptz not null,
+  status text not null default 'scheduled' check (status in ('scheduled', 'queued', 'running', 'succeeded', 'failed', 'cancelled')),
+  latest_attempt_no integer not null default 0,
+  locked_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (agenda_event_id, scheduled_for)
+);
+
+create index if not exists idx_agenda_occurrences_event on agenda_occurrences(agenda_event_id);
+create index if not exists idx_agenda_occurrences_status on agenda_occurrences(status);
+create index if not exists idx_agenda_occurrences_scheduled on agenda_occurrences(scheduled_for);
+
+create table if not exists agenda_occurrence_overrides (
+  id uuid primary key default gen_random_uuid(),
+  occurrence_id uuid not null references agenda_occurrences(id) on delete cascade,
+  overridden_title text,
+  overridden_free_prompt text,
+  overridden_agent_id text,
+  overridden_status text,
+  overridden_starts_at timestamptz,
+  overridden_ends_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_agenda_occurrence_overrides_occurrence on agenda_occurrence_overrides(occurrence_id);
+
+create table if not exists agenda_run_attempts (
+  id uuid primary key default gen_random_uuid(),
+  occurrence_id uuid not null references agenda_occurrences(id) on delete cascade,
+  attempt_no integer not null,
+  queue_job_id text,
+  status text not null default 'running' check (status in ('running', 'succeeded', 'failed')),
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  summary text,
+  error_message text
+);
+
+create index if not exists idx_agenda_run_attempts_occurrence on agenda_run_attempts(occurrence_id);
+
+create table if not exists agenda_run_steps (
+  id uuid primary key default gen_random_uuid(),
+  run_attempt_id uuid not null references agenda_run_attempts(id) on delete cascade,
+  process_version_id uuid references process_versions(id) on delete set null,
+  process_step_id uuid,
+  step_order integer not null default 0,
+  agent_id text,
+  skill_key text,
+  input_payload jsonb not null default '{}',
+  output_payload jsonb,
+  artifact_payload jsonb,
+  status text not null default 'pending' check (status in ('pending', 'running', 'succeeded', 'failed')),
+  started_at timestamptz,
+  finished_at timestamptz,
+  error_message text
+);
+
+create index if not exists idx_agenda_run_steps_attempt on agenda_run_steps(run_attempt_id);
+
+-- Ticket scheduling v2
+alter table tickets add column if not exists task_type text not null default 'one_time';
+alter table tickets add column if not exists frequency text;
+alter table tickets add column if not exists weekdays text[] not null default '{}'::text[];
+alter table tickets add column if not exists start_time text;
+alter table tickets add column if not exists start_date_mode text not null default 'now';
+alter table tickets add column if not exists end_date_mode text not null default 'forever';
+alter table tickets add column if not exists end_date date;
+alter table tickets add column if not exists model_override text not null default '';
+
+-- Agenda event model override
+alter table agenda_events add column if not exists model_override text not null default '';
+
+-- Process version label + step model override
+alter table process_versions add column if not exists version_label text not null default '';
+alter table process_steps add column if not exists model_override text not null default '';

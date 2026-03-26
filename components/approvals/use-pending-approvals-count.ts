@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function usePendingApprovalsCount() {
   const [count, setCount] = useState(0);
@@ -22,16 +22,22 @@ export function usePendingApprovalsCount() {
     }
   };
 
+  const startedRef = useRef(false);
   useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
     fetchCount();
+    return () => { startedRef.current = false; };
   }, []);
 
-  // Listen for ticket_activity to keep count live
+  const sseRef = useRef(false);
   useEffect(() => {
+    if (sseRef.current) return;
+    sseRef.current = true;
     if (typeof window === "undefined") return;
     const es = new EventSource("/api/events");
     es.addEventListener("ticket_activity", fetchCount);
-    return () => es.close();
+    return () => { es.close(); sseRef.current = false; };
   }, []);
 
   return { count, loading, refresh: fetchCount };

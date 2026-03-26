@@ -26,7 +26,7 @@ export default function SetupPage() {
 
     const load = async () => {
       try {
-        const response = await fetch("/api/setup", { cache: "no-store" });
+        const response = await fetch("/api/setup", { cache: "reload" });
         const payload = await response.json();
         if (!response.ok) {
           throw new Error(payload.error || "Failed to load setup.");

@@ -1,7 +1,7 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { PageHeader } from "@/components/layout/page-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { AgentsClientGrid, AgentsPageSkeleton } from "./agents-client";
+import { AgentsClientGrid } from "./agents-client";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +17,7 @@ export default function AgentsPage() {
       <SidebarInset>
         <PageHeader page="Agents" />
         <div className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">
-          {/* Server-rendered skeleton shown immediately; replaced after client hydrates */}
-          <AgentsPageSkeleton />
-          {/* Client-side agent cards — loaded async after hydration */}
+          {/* Client renders skeleton until agents are fetched — SSR renders nothing */}
           <AgentsClientGrid showAgentDebug={showAgentDebug} />
         </div>
       </SidebarInset>

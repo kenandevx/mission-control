@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { getSql } from "@/lib/local-db";
 import { collectRuntimeSnapshots } from "@/lib/runtime/collector";
+import type { CollectorResult } from "@/lib/runtime/collector";
 import { mergeAgentWithRuntime } from "@/lib/runtime/merge";
-import type { AgentHealthActivity, AgentLogPageInfo } from "@/types/agents";
+import type { AgentHealthActivity, AgentLogPageInfo, AgentStatus } from "@/types/agents";
 import type { BoardHydration, BoardState, Column, Ticket, TicketPriority } from "@/types/tasks";
 
 type BoardRow = { id: string; workspace_id: string; name: string; description: string | null };
@@ -57,54 +57,30 @@ export async function getSetupStatus(): Promise<boolean> {
   return Boolean(row.setup_completed ?? true);
 }
 
-function loadAgentIdentity(agentId: string) {
-  const roots = [
-    `/home/clawdbot/.openclaw/agents/${agentId}/IDENTITY.md`,
-    `/home/clawdbot/.openclaw/workspace/agents/${agentId}/IDENTITY.md`,
-    `/home/clawdbot/.openclaw/workspace/${agentId}/IDENTITY.md`,
-  ];
-  for (const path of roots) {
-    try {
-      const text = readFileSync(path, "utf8");
-      const name = (text.match(/^#\s*(.+)$/m)?.[1] || text.match(/^Name:\s*(.+)$/im)?.[1] || agentId).trim();
-      const emoji = (text.match(/^Emoji:\s*(.+)$/im)?.[1] || "").trim();
-      return { name, emoji };
-    } catch {}
-  }
-  return { name: agentId, emoji: "" };
-}
-
 export async function getSidebarUser() {
   return null;
 }
 
 export async function getWorkspaceAssignees() {
-  const snapshots = (await collectRuntimeSnapshots().catch(() => ({}))) as any;
-  return Object.values(snapshots)
-    .filter((snapshot: any) => snapshot?.agentId)
-    .map((snapshot: any) => ({
-      id: snapshot.agentId,
-      name: snapshot.identity?.name || snapshot.name || snapshot.agentId,
-      initials:
-        (snapshot.identity?.name || snapshot.name || snapshot.agentId)
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part: string) => part[0]?.toUpperCase() || "")
-          .join("") || snapshot.agentId.slice(0, 2).toUpperCase(),
-      color: "#64748b",
-      source: "runtime",
-    }));
+  const result: CollectorResult = await collectRuntimeSnapshots().catch(() => ({ snapshots: {}, assignees: [] }));
+  return result.assignees.map((a) => ({
+    id: a.id,
+    name: a.name,
+    initials: a.initials,
+    color: a.color,
+    source: "runtime" as const,
+  }));
 }
 
 export async function getAgentsAndLogsData() {
-  const runtimeSnapshots = (await collectRuntimeSnapshots().catch(() => ({}))) as any;
-  const agents = Object.values(runtimeSnapshots)
-    .filter((value: any) => value && value.agentId)
-    .map((snapshot: any) => ({
+  const result: CollectorResult = await collectRuntimeSnapshots().catch(() => ({ snapshots: {}, assignees: [] }));
+  const { snapshots } = result;
+  const agents = Object.values(snapshots)
+    .filter((snapshot) => snapshot && snapshot.agentId)
+    .map((snapshot) => ({
       id: snapshot.agentId,
       name: snapshot.identity?.name || snapshot.name || snapshot.agentId,
-      status: snapshot.status === "running" || snapshot.status === "degraded" ? snapshot.status : "idle",
+      status: (snapshot.status === "running" || snapshot.status === "degraded" ? snapshot.status : "idle") as AgentStatus,
       runtime: {
         model: snapshot.model ?? null,
         queueDepth: snapshot.queueDepth ?? null,
@@ -114,8 +90,8 @@ export async function getAgentsAndLogsData() {
       },
     }));
 
-  const logs: any[] = [];
-  const mergedAgents = agents.map((agent) => mergeAgentWithRuntime(agent, runtimeSnapshots as any));
+  const logs: unknown[] = [];
+  const mergedAgents = agents.map((agent) => mergeAgentWithRuntime(agent, snapshots));
   return {
     agents: mergedAgents,
     logs,
@@ -219,6 +195,30 @@ export async function getBoardsPageData(): Promise<BoardHydration[]> {
       data: state,
     } as BoardHydration;
   });
+}
+
+export async function getDashboardStats(): Promise<{
+  boards: number;
+  tickets: number;
+  logs: number;
+  agendaEvents: number;
+  processes: number;
+}> {
+  const sql = getSql();
+  const [boardsRow, ticketsRow, logsRow, agendaRow, processRow] = await Promise.all([
+    sql`SELECT COUNT(*)::int as count FROM boards`,
+    sql`SELECT COUNT(*)::int as count FROM tickets`,
+    sql`SELECT COUNT(*)::int as count FROM agent_logs`,
+    sql`SELECT COUNT(*)::int as count FROM agenda_events`,
+    sql`SELECT COUNT(*)::int as count FROM process_versions`,
+  ]);
+  return {
+    boards: (boardsRow[0]?.count as number) ?? 0,
+    tickets: (ticketsRow[0]?.count as number) ?? 0,
+    logs: (logsRow[0]?.count as number) ?? 0,
+    agendaEvents: (agendaRow[0]?.count as number) ?? 0,
+    processes: (processRow[0]?.count as number) ?? 0,
+  };
 }
 
 export async function getDashboardData() {

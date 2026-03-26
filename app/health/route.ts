@@ -7,7 +7,7 @@ export async function GET() {
     // Check DB connectivity
     await sql`select 1`;
     return NextResponse.json({ status: "ok", timestamp: new Date().toISOString() });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ status: "error", error: "database_unavailable" }, { status: 503 });
   }
 }

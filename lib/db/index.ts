@@ -55,7 +55,7 @@ const adapter: TaskDataAdapter = {
   },
 
   async listBoards() {
-    const res = await fetch("/api/tasks", { cache: "no-store" });
+    const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
     const boards = Array.isArray(data.boards) ? data.boards : [];
     return boards.map((row: any) => ({
@@ -101,7 +101,7 @@ const adapter: TaskDataAdapter = {
   },
 
   async listColumns(boardId: string) {
-    const res = await fetch("/api/tasks", { cache: "no-store" });
+    const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
     const rows = (Array.isArray(data.columns) ? data.columns : []).filter((row: any) => row.board_id === boardId);
     return rows.map((row: any) => ({
@@ -131,7 +131,7 @@ const adapter: TaskDataAdapter = {
 
   async updateColumn(columnId: string, patch: UpdateColumnPatch) {
     await post("updateColumn", { columnId, ...patch });
-    const res = await fetch("/api/tasks", { cache: "no-store" });
+    const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
     const row = (Array.isArray(data.columns) ? data.columns : []).find((c: any) => c.id === columnId);
     if (!row) throw new Error("Column not found.");
@@ -155,7 +155,7 @@ const adapter: TaskDataAdapter = {
   },
 
   async listTickets(boardId: string) {
-    const res = await fetch("/api/tasks", { cache: "no-store" });
+    const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
     const rows = (Array.isArray(data.tickets) ? data.tickets : []).filter((row: any) => row.board_id === boardId);
     return rows.map(toTicketRecord);

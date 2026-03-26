@@ -547,8 +547,8 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
   const rangeEnd = Math.min(totalCount, page * 50);
 
   return (
-    <div className="grid gap-4">
-      <Card>
+    <div className="grid gap-4 h-full">
+      <Card className="h-full">
         <CardHeader>
           <CardTitle>Runtime Logs</CardTitle>
 
@@ -602,8 +602,8 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-3">
-          <div className="rounded-md border overflow-hidden max-h-[65vh] overflow-y-auto">
+        <CardContent className="space-y-3 flex flex-col h-full">
+          <div className="rounded-md border overflow-hidden flex-1 min-h-0 overflow-y-auto">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>

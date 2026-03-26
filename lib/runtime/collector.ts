@@ -1,15 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync } from "node:child_process";
-import { getSql } from "@/lib/local-db";
-import type { RuntimeAssignee, RuntimeSnapshot, RuntimeSnapshotMap, RuntimeStatus } from "@/lib/runtime/types";
+import { getCachedAgents, getCachedSessions } from "@/lib/runtime/cache";
+import type { RuntimeAssignee, RuntimeSnapshot, RuntimeSnapshotMap } from "@/lib/runtime/types";
 
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.join(os.homedir(), ".openclaw");
 const AGENT_WORKSPACES_DIR = path.join(OPENCLAW_HOME, "workspace", "agents");
 const IDENTITY_PATH = path.join(OPENCLAW_HOME, "workspace", "IDENTITY.md");
 const STALE_SEC = 120;
-const AGENT_IDS = ["main", "research-agent", "developer-agent", "writer-agent", "test-agent"];
 
 function parseTime(value: unknown): string | null {
   if (value == null || value === "") return null;
@@ -35,30 +33,13 @@ function normalizeRuntimeName(value: unknown): string {
   return text && text.toLowerCase() !== "assistant" ? text.slice(0, 120) : "";
 }
 
-function initialsFromName(name: string) {
+function initialsFromName(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("");
   return initials || name.slice(0, 2).toUpperCase() || "?";
 }
 
-
-async function emitRuntimeEvent(agentId: string, level: "info" | "warning" | "error", eventType: string, message: string, extra: Record<string, unknown> = {}) {
-  try {
-    const sql = getSql();
-    const workspace = await sql`select id from workspaces order by created_at asc limit 1`;
-    const workspaceId = workspace[0]?.id ?? null;
-    if (!workspaceId) return;
-    const agentRows = await sql`select id from agents where workspace_id = ${workspaceId} and openclaw_agent_id = ${agentId} limit 1`;
-    const agentDbId = agentRows[0]?.id ?? null;
-    if (!agentDbId) return;
-    await sql`
-      insert into agent_logs (workspace_id, agent_id, runtime_agent_id, occurred_at, level, type, message, event_type, message_preview, raw_payload)
-      values (${workspaceId}, ${agentDbId}, ${agentId}, now(), ${level}, 'system', ${message}, ${eventType}, ${message.slice(0, 240)}, ${JSON.stringify(extra)}::jsonb)
-    `;
-  } catch {}
-}
-
-async function readIdentityProfile(filePath: string) {
+async function readIdentityProfile(filePath: string): Promise<string> {
   try {
     const source = await fs.readFile(filePath, "utf8");
     const match = source.match(/^Name:\s*(.+)$/im) || source.match(/^\- Name:\s*(.+)$/im);
@@ -68,16 +49,7 @@ async function readIdentityProfile(filePath: string) {
   }
 }
 
-function readSessionsJson() {
-  try {
-    const output = execFileSync("openclaw", ["sessions", "--all-agents", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return JSON.parse(output) as { stores?: { agentId?: string }[]; sessions?: Array<Record<string, unknown>> };
-  } catch {
-    return { stores: [], sessions: [] };
-  }
-}
-
-function latestSessionsByAgent(sessionJson: { sessions?: Array<Record<string, unknown>> }) {
+function latestSessionsByAgent(sessionJson: { sessions?: Array<Record<string, unknown>> }): Map<string, Array<Record<string, unknown>>> {
   const byAgent = new Map<string, Array<Record<string, unknown>>>();
   for (const session of sessionJson.sessions || []) {
     const agentId = String(session.agentId || "").trim();
@@ -93,19 +65,49 @@ function latestSessionsByAgent(sessionJson: { sessions?: Array<Record<string, un
   return byAgent;
 }
 
-export async function collectRuntimeSnapshots(): Promise<RuntimeSnapshotMap> {
-  const sessionJson = readSessionsJson();
-  const latestByAgent = latestSessionsByAgent(sessionJson);
-  const agentIds = Array.from(new Set([...(sessionJson.stores || []).map((s) => String(s.agentId || "").trim()).filter(Boolean), ...latestByAgent.keys(), ...AGENT_IDS]));
-  const mainIdentity = await readIdentityProfile(IDENTITY_PATH);
-  const result: RuntimeSnapshotMap = {};
+export type CollectorResult = {
+  snapshots: RuntimeSnapshotMap;
+  assignees: RuntimeAssignee[];
+};
 
-  const runtimeAssignees: RuntimeAssignee[] = [];
+export async function collectRuntimeSnapshots(): Promise<CollectorResult> {
+  const [registeredAgents, sessionJson] = await Promise.all([
+    getCachedAgents(),
+    getCachedSessions(),
+  ]);
+
+  const latestByAgent = latestSessionsByAgent(sessionJson as { sessions?: Array<Record<string, unknown>> });
+
+  // Discover agent IDs dynamically from CLI output + sessions
+  const agentIdSet = new Set<string>();
+  for (const a of registeredAgents) {
+    if (a.id) agentIdSet.add(a.id);
+  }
+  const stores = (sessionJson as Record<string, unknown>).stores;
+  if (Array.isArray(stores)) {
+    for (const s of stores) {
+      const id = String((s as Record<string, unknown>)?.agentId || "").trim();
+      if (id) agentIdSet.add(id);
+    }
+  }
+  for (const key of latestByAgent.keys()) {
+    agentIdSet.add(key);
+  }
+
+  const agentIds = Array.from(agentIdSet);
+  const mainIdentity = await readIdentityProfile(IDENTITY_PATH);
+
+  const assignees: RuntimeAssignee[] = [];
+  const snapshots: RuntimeSnapshotMap = {};
+
+  // Build identity names
+  const identityNames = new Map<string, string>();
   for (const agentId of agentIds) {
     const isMain = agentId === "main";
     const fileIdentity = isMain ? "" : await readIdentityProfile(path.join(AGENT_WORKSPACES_DIR, agentId, "IDENTITY.md"));
     const name = isMain ? mainIdentity || "main" : fileIdentity || agentId;
-    runtimeAssignees.push({ id: agentId, name, initials: initialsFromName(name), color: "#64748b" });
+    identityNames.set(agentId, name);
+    assignees.push({ id: agentId, name, initials: initialsFromName(name), color: "#64748b" });
   }
 
   for (const agentId of agentIds) {
@@ -115,17 +117,9 @@ export async function collectRuntimeSnapshots(): Promise<RuntimeSnapshotMap> {
     const activeRuns = latest?.kind === "direct" && heartbeatAge != null && heartbeatAge < STALE_SEC ? 1 : 0;
     const queueDepth = Math.max(0, latestByAgent.get(agentId)?.length || 0);
     const model = normalizeRuntimeName(latest?.model || null) || null;
-    const name = runtimeAssignees.find((item) => item.id === agentId)?.name || agentId;
-    if (latest) {
-      await emitRuntimeEvent(agentId, "info", "runtime.snapshot", `Runtime snapshot collected for ${agentId}`, {
-        model: latest?.model ?? null,
-        heartbeatAt: lastHeartbeatAt,
-        activeRuns,
-        queueDepth,
-      });
-    }
+    const name = identityNames.get(agentId) || agentId;
 
-    result[agentId] = {
+    snapshots[agentId] = {
       agentId,
       name,
       status: heartbeatAge == null ? "unknown" : heartbeatAge > STALE_SEC ? "degraded" : "running",
@@ -144,6 +138,5 @@ export async function collectRuntimeSnapshots(): Promise<RuntimeSnapshotMap> {
     };
   }
 
-  (result as any).__assignees = runtimeAssignees;
-  return result;
+  return { snapshots, assignees };
 }

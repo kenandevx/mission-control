@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowRightIcon } from "lucide-react";
@@ -15,6 +15,7 @@ type AgentEntry = {
   model: string | null;
   queueDepth: number | null;
   lastHeartbeatAt: string | null;
+  isDefault?: boolean;
 };
 
 function resolveAgentCardStatus(
@@ -32,65 +33,82 @@ function resolveAgentCardStatus(
 
 function AgentsPageSkeleton() {
   return (
-    <>
+    <div className="flex flex-col gap-6">
+      {/* Stat cards skeleton */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card><CardHeader className="pb-2"><CardDescription>Total agents</CardDescription><CardTitle className="text-2xl">—</CardTitle></CardHeader></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Running</CardDescription><CardTitle className="text-2xl text-emerald-700 dark:text-emerald-300">—</CardTitle></CardHeader></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Responses (1h)</CardDescription><CardTitle className="text-2xl text-blue-700 dark:text-blue-300">—</CardTitle></CardHeader></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Memory ops (1h)</CardDescription><CardTitle className="text-2xl text-fuchsia-700 dark:text-fuchsia-300">—</CardTitle></CardHeader></Card>
+        {["Total agents", "Running", "Responses (1h)", "Memory ops (1h)"].map((label) => (
+          <Card key={label}>
+            <CardHeader className="pb-2">
+              <CardDescription>{label}</CardDescription>
+              <div className="h-8 w-12 rounded animate-pulse bg-muted mt-1" />
+            </CardHeader>
+          </Card>
+        ))}
       </div>
-      <p className="text-sm text-muted-foreground">Loading agents…</p>
-    </>
+
+      {/* Agent cards skeleton */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {[1, 2, 3, 4].map((i) => (
+          <Card key={i}>
+            <CardHeader className="gap-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-2">
+                  <div className="h-4 w-32 rounded animate-pulse bg-muted" />
+                </div>
+                <div className="h-5 w-16 rounded-full animate-pulse bg-muted" />
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Model</span>
+                <div className="h-3 w-24 rounded animate-pulse bg-muted" />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Last heartbeat</span>
+                <div className="h-3 w-20 rounded animate-pulse bg-muted" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
   );
 }
 
 function AgentsClientGrid({ showAgentDebug }: { showAgentDebug: boolean }) {
   const [agents, setAgents] = useState<AgentEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
+  const startedRef = useRef(false);
+
+  // Set mounted=true after first client render — SSR renders nothing (no hydration mismatch)
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    if (startedRef.current) return;
+    startedRef.current = true;
+
     const load = async () => {
       try {
-        const { execFile } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const execFileAsync = promisify(execFile);
-        let raw: any[] = [];
-        try {
-          const { stdout } = await execFileAsync(
-            "openclaw",
-            ["sessions", "--all-agents", "--json"],
-            { timeout: 8000 },
-          );
-          raw = JSON.parse(stdout);
-        } catch {
-          // no runtime data available
-        }
-        if (cancelled) return;
-
-        const entries: AgentEntry[] = raw
-          .filter((s: any) => s?.agentId)
-          .map((s: any) => ({
-            id: s.agentId,
-            name: s.identity?.name || s.name || s.agentId,
-            status: s.status === "running" || s.status === "degraded" ? s.status : "idle",
-            model: s.model ?? null,
-            queueDepth: s.queueDepth ?? null,
-            lastHeartbeatAt: s.lastHeartbeatAt ?? null,
-          }));
-
-        setAgents(entries);
+        const res = await fetch("/api/agents", { cache: "reload" });
+        const json = await res.json();
+        setAgents(json.agents ?? []);
       } catch (err) {
         console.error("Failed to load agents", err);
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     };
     void load();
-    return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading agents…</p>;
+  // During SSR and before client mount — render nothing (matches server output)
+  if (!mounted) return null;
+
+  // Show skeleton while fetching
+  if (loading) return <AgentsPageSkeleton />;
 
   if (agents.length === 0) {
     return (
@@ -104,15 +122,12 @@ function AgentsClientGrid({ showAgentDebug }: { showAgentDebug: boolean }) {
   }
 
   const referenceTs = Date.now();
-  const runningCount = agents.filter(
-    (a) => resolveAgentCardStatus(a.status, a.lastHeartbeatAt, referenceTs) === "running",
-  ).length;
 
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card><CardHeader className="pb-2"><CardDescription>Total agents</CardDescription><CardTitle className="text-2xl">{agents.length}</CardTitle></CardHeader></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Running</CardDescription><CardTitle className="text-2xl text-emerald-700 dark:text-emerald-300">{runningCount}</CardTitle></CardHeader></Card>
+        <Card><CardHeader className="pb-2"><CardDescription>Running</CardDescription><CardTitle className="text-2xl text-emerald-700 dark:text-emerald-300">{agents.filter((a) => resolveAgentCardStatus(a.status, a.lastHeartbeatAt, Date.now()) === "running").length}</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Responses (1h)</CardDescription><CardTitle className="text-2xl text-blue-700 dark:text-blue-300">—</CardTitle></CardHeader></Card>
         <Card><CardHeader className="pb-2"><CardDescription>Memory ops (1h)</CardDescription><CardTitle className="text-2xl text-fuchsia-700 dark:text-emerald-300">—</CardTitle></CardHeader></Card>
       </div>
@@ -138,8 +153,7 @@ function AgentsClientGrid({ showAgentDebug }: { showAgentDebug: boolean }) {
                     <span className="text-muted-foreground">Last heartbeat</span>
                     <span>{agent.lastHeartbeatAt ? formatDistanceToNow(new Date(agent.lastHeartbeatAt), { addSuffix: true }) : "unknown"}</span>
                   </div>
-                  <div className="flex items-center justify-between"><span className="text-muted-foreground">Queue depth</span><span>{agent.queueDepth ?? "unknown"}</span></div>
-                  <div className="flex items-center justify-end text-primary"><span>Open</span><ArrowRightIcon className="ml-1 size-4" /></div>
+                  <div className="pt-12 flex items-end justify-end text-primary"><span>Open</span><ArrowRightIcon className="ml-1 size-4" /></div>
                 </CardContent>
               </Card>
             </Link>
