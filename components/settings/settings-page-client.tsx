@@ -14,18 +14,13 @@ import {
   IconLoader2,
   IconPalette,
   IconBell,
-  IconBellOff,
   IconCalendarCog,
   IconCloudDownload,
-  IconVolume,
-  IconVolumeOff,
   IconShieldBolt,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -69,10 +64,10 @@ const NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ c
 
 function SectionHeading({ title, description }: { title: string; description?: string }): React.ReactNode {
   return (
-    <div className="mb-4">
-      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+    <div className="mb-6">
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
       {description && (
-        <p className="text-[13px] text-muted-foreground mt-0.5">{description}</p>
+        <p className="text-sm text-muted-foreground mt-1">{description}</p>
       )}
     </div>
   );
@@ -88,11 +83,11 @@ function SettingRow({
   children: React.ReactNode;
 }): React.ReactNode {
   return (
-    <div className="flex items-center justify-between gap-6 py-3 first:pt-0 last:pb-0">
+    <div className="flex items-center justify-between gap-8 px-5 py-4">
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium leading-tight">{label}</p>
+        <p className="text-sm font-medium">{label}</p>
         {description && (
-          <p className="text-[12px] text-muted-foreground mt-0.5 leading-snug">{description}</p>
+          <p className="text-[13px] text-muted-foreground mt-0.5 leading-relaxed">{description}</p>
         )}
       </div>
       <div className="shrink-0">{children}</div>
@@ -285,34 +280,43 @@ export function SettingsPageClient(): React.ReactNode {
     <section>
       <SectionHeading title="Appearance" description="Choose how Mission Control looks." />
 
-      <div className="rounded-lg border bg-card">
-        <div className="p-4">
-          <Label className="text-sm font-medium">Theme</Label>
-          <p className="text-[12px] text-muted-foreground mb-3">Select your preferred color scheme.</p>
+      <div className="rounded-xl border bg-card p-6">
+        <p className="text-sm font-medium mb-1">Theme</p>
+        <p className="text-[13px] text-muted-foreground mb-5">Select your preferred color scheme.</p>
 
-          {/* Segmented control */}
-          <div className="inline-flex rounded-lg border bg-muted/40 p-1 gap-1">
-            {themeOptions.map((option) => {
-              const Icon = option.icon;
-              const isActive = mounted && theme === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setTheme(option.value)}
-                  className={[
-                    "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-sm font-medium transition-all cursor-pointer",
-                    isActive
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  ].join(" ")}
-                >
-                  <Icon className="size-3.5" />
+        <div className="grid grid-cols-3 gap-3">
+          {themeOptions.map((option) => {
+            const Icon = option.icon;
+            const isActive = mounted && theme === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setTheme(option.value)}
+                className={[
+                  "flex flex-col items-center gap-2.5 rounded-xl border-2 px-4 py-5 transition-all cursor-pointer",
+                  isActive
+                    ? "border-primary bg-primary/5 shadow-sm"
+                    : "border-border hover:border-primary/40 hover:bg-muted/30",
+                ].join(" ")}
+              >
+                <div className={[
+                  "flex items-center justify-center size-11 rounded-xl transition-colors",
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground",
+                ].join(" ")}>
+                  <Icon className="size-5" />
+                </div>
+                <span className={[
+                  "text-sm font-medium",
+                  isActive ? "text-primary" : "text-muted-foreground",
+                ].join(" ")}>
                   {option.label}
-                </button>
-              );
-            })}
-          </div>
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -322,55 +326,63 @@ export function SettingsPageClient(): React.ReactNode {
     <section>
       <SectionHeading title="Notifications" description="Control live alerts for task and event updates." />
 
-      <div className="rounded-lg border bg-card divide-y">
-        {/* Enable toggle */}
+      <div className="rounded-xl border bg-card divide-y">
         <SettingRow
           label="Enable notifications"
           description="Toast alerts for completions, failures, and approvals"
         >
-          <Button
-            variant={notifEnabled ? "default" : "outline"}
-            size="sm"
-            className="cursor-pointer min-w-[56px] h-7 text-xs"
+          <button
+            type="button"
             onClick={() => {
               const next = !notifEnabled;
               setNotifEnabled(next);
               saveNotificationSettings({ enabled: next, sound: notifSound });
               toast.success(next ? "Notifications enabled" : "Notifications disabled");
             }}
+            className={[
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",
+              notifEnabled ? "bg-primary" : "bg-muted",
+            ].join(" ")}
           >
-            {notifEnabled ? "On" : "Off"}
-          </Button>
+            <span className={[
+              "pointer-events-none inline-block size-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+              notifEnabled ? "translate-x-5" : "translate-x-0",
+            ].join(" ")} />
+          </button>
         </SettingRow>
 
-        {/* Sound toggle */}
         <SettingRow
           label="Sound"
           description="Play a chime when notifications appear"
         >
-          <Button
-            variant={notifSound ? "default" : "outline"}
-            size="sm"
-            className="cursor-pointer min-w-[56px] h-7 text-xs"
-            disabled={!notifEnabled}
+          <button
+            type="button"
             onClick={() => {
+              if (!notifEnabled) return;
               const next = !notifSound;
               setNotifSound(next);
               saveNotificationSettings({ enabled: notifEnabled, sound: next });
               toast.success(next ? "Sound enabled" : "Sound disabled");
             }}
+            className={[
+              "relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors",
+              !notifEnabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
+              notifSound && notifEnabled ? "bg-primary" : "bg-muted",
+            ].join(" ")}
           >
-            {notifSound ? "On" : "Off"}
-          </Button>
+            <span className={[
+              "pointer-events-none inline-block size-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
+              notifSound && notifEnabled ? "translate-x-5" : "translate-x-0",
+            ].join(" ")} />
+          </button>
         </SettingRow>
       </div>
 
-      {/* Triggers */}
-      <div className="mt-4">
-        <p className="text-xs font-medium text-muted-foreground mb-2">Active triggers</p>
-        <div className="flex flex-wrap gap-1.5">
+      <div className="mt-6">
+        <p className="text-sm font-medium mb-3">Active triggers</p>
+        <div className="flex flex-wrap gap-2">
           {["Picked up", "Completed", "Failed", "Needs approval", "Agent responded", "Retry", "Agent started", "System error"].map((t) => (
-            <Badge key={t} variant="secondary" className="text-[11px] font-normal py-0.5 px-2">
+            <Badge key={t} variant="secondary" className="text-xs font-normal py-1 px-3 rounded-full">
               {t}
             </Badge>
           ))}
@@ -383,82 +395,79 @@ export function SettingsPageClient(): React.ReactNode {
     <section>
       <SectionHeading title="Agenda" description="Configure the scheduling worker behavior." />
 
-      <div className="rounded-lg border bg-card divide-y">
-        {/* Concurrency */}
-        <div className="px-4">
-          <SettingRow
-            label="Concurrency"
-            description="Maximum parallel jobs (1–10)"
-          >
+      <div className="rounded-xl border bg-card divide-y">
+        <SettingRow
+          label="Concurrency"
+          description="Maximum parallel jobs (1–10)"
+        >
+          <Input
+            type="number"
+            min={1}
+            max={10}
+            value={agendaConcurrency}
+            onChange={(e) => setAgendaConcurrency(Math.max(1, Math.min(10, parseInt(e.target.value) || 5)))}
+            className="h-9 w-20 text-center text-sm"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Execution window"
+          description="How late a job can start before it's marked needs_retry"
+        >
+          <div className="flex items-center gap-2">
             <Input
               type="number"
               min={1}
-              max={10}
-              value={agendaConcurrency}
-              onChange={(e) => setAgendaConcurrency(Math.max(1, Math.min(10, parseInt(e.target.value) || 5)))}
-              className="h-8 w-20 text-center text-sm"
+              max={1440}
+              value={defaultExecWindow}
+              onChange={(e) => setDefaultExecWindow(Math.max(1, Math.min(1440, parseInt(e.target.value) || 30)))}
+              className="h-9 w-20 text-center text-sm"
             />
-          </SettingRow>
-        </div>
+            <span className="text-sm text-muted-foreground">min</span>
+          </div>
+        </SettingRow>
 
-        {/* Execution Window */}
-        <div className="px-4">
-          <SettingRow
-            label="Execution window"
-            description="Late start threshold in minutes"
-          >
-            <div className="relative">
-              <Input
-                type="number"
-                min={1}
-                max={1440}
-                value={defaultExecWindow}
-                onChange={(e) => setDefaultExecWindow(Math.max(1, Math.min(1440, parseInt(e.target.value) || 30)))}
-                className="h-8 w-24 text-center text-sm pr-9"
-              />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground pointer-events-none">
-                min
-              </span>
-            </div>
-          </SettingRow>
-        </div>
-
-        {/* Max Retries */}
-        <div className="px-4">
-          <SettingRow
-            label="Max retries"
-            description="Auto-retries before marking as failed (0–5)"
-          >
-            <Input
-              type="number"
-              min={0}
-              max={5}
-              value={maxRetries}
-              onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, parseInt(e.target.value) || 1)))}
-              className="h-8 w-20 text-center text-sm"
-            />
-          </SettingRow>
-        </div>
+        <SettingRow
+          label="Max retries"
+          description="Auto-retries before trying fallback model (0–5)"
+        >
+          <Input
+            type="number"
+            min={0}
+            max={5}
+            value={maxRetries}
+            onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, parseInt(e.target.value) || 1)))}
+            className="h-9 w-20 text-center text-sm"
+          />
+        </SettingRow>
       </div>
 
       {/* Retry flow info */}
-      <div className="mt-4 rounded-lg border border-dashed bg-muted/20 px-4 py-3">
-        <p className="text-xs font-medium text-muted-foreground mb-2">Retry flow</p>
-        <div className="space-y-1 text-[12px] text-muted-foreground">
-          <p><span className="text-blue-500 font-medium">1.</span> Fails → instant retry (same model, up to {maxRetries}×)</p>
-          <p><span className="text-amber-500 font-medium">2.</span> All retries exhausted → fallback model (if set per event)</p>
-          <p><span className="text-red-500 font-medium">3.</span> Still failing → marked <code className="text-[11px] bg-muted px-1 py-0.5 rounded">needs_retry</code></p>
+      <div className="mt-5 rounded-xl border border-dashed border-muted-foreground/25 bg-muted/10 p-5">
+        <p className="text-sm font-medium mb-3">Retry flow</p>
+        <div className="space-y-2.5">
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center size-6 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold shrink-0 mt-0.5">1</div>
+            <p className="text-sm text-muted-foreground">Fails → instant retry with same model, up to <span className="font-medium text-foreground">{maxRetries}×</span></p>
+          </div>
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center size-6 rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">2</div>
+            <p className="text-sm text-muted-foreground">All retries exhausted → tries <span className="font-medium text-foreground">fallback model</span> (if set per event)</p>
+          </div>
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center size-6 rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">3</div>
+            <p className="text-sm text-muted-foreground">Still failing → marked <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">needs_retry</code> + Telegram alert</p>
+          </div>
         </div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-5">
         <Button
-          size="sm"
           disabled={agendaSettingsLoading}
-          className="cursor-pointer gap-1.5 h-8"
+          className="cursor-pointer gap-2 h-10 px-6"
           onClick={saveAgendaSettings}
         >
-          {agendaSettingsLoading && <IconLoader2 className="size-3.5 animate-spin" />}
+          {agendaSettingsLoading && <IconLoader2 className="size-4 animate-spin" />}
           Save changes
         </Button>
       </div>
@@ -469,44 +478,42 @@ export function SettingsPageClient(): React.ReactNode {
     <section>
       <SectionHeading title="System Updates" description="Check for and install Mission Control updates." />
 
-      <div className="rounded-lg border bg-card">
-        <div className="px-4">
-          <SettingRow
-            label="Check for updates"
-            description="Pull latest changes from the upstream repository"
+      <div className="rounded-xl border bg-card">
+        <SettingRow
+          label="Check for updates"
+          description="Pull latest changes from the upstream repository"
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={checkUpdates}
+            disabled={checking || updating}
+            className="gap-2 cursor-pointer h-9 px-4"
           >
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={checkUpdates}
-              disabled={checking || updating}
-              className="gap-1.5 cursor-pointer h-8 text-xs"
-            >
-              {checking ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconRefresh className="size-3.5" />}
-              {checking ? "Checking…" : "Check now"}
-            </Button>
-          </SettingRow>
-        </div>
+            {checking ? <IconLoader2 className="size-4 animate-spin" /> : <IconRefresh className="size-4" />}
+            {checking ? "Checking…" : "Check now"}
+          </Button>
+        </SettingRow>
       </div>
 
       {/* Update result banner */}
       {updateInfo && (
-        <div className="mt-3">
+        <div className="mt-4">
           {updateInfo.behind === 0 ? (
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-2.5 text-sm text-emerald-700 dark:text-emerald-400">
-              <IconCircleCheck className="size-4 shrink-0" />
-              <span className="font-medium">Up to date</span>
+            <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-5 py-4 text-sm text-emerald-700 dark:text-emerald-400">
+              <IconCircleCheck className="size-5 shrink-0" />
+              <span className="font-medium">You&apos;re up to date</span>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2.5">
-              <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
-                <IconAlertTriangle className="size-4 shrink-0" />
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-4">
+              <div className="flex items-center gap-3 text-sm text-amber-700 dark:text-amber-400">
+                <IconAlertTriangle className="size-5 shrink-0" />
                 <div>
                   <span className="font-medium">
                     {updateInfo.behind} update{updateInfo.behind === 1 ? "" : "s"} available
                   </span>
                   {updateInfo.latestCommit && (
-                    <p className="text-[11px] opacity-80 mt-0.5">Latest: {updateInfo.latestCommit}</p>
+                    <p className="text-xs opacity-80 mt-0.5">Latest: {updateInfo.latestCommit}</p>
                   )}
                 </div>
               </div>
@@ -514,10 +521,10 @@ export function SettingsPageClient(): React.ReactNode {
                 size="sm"
                 onClick={runUpdate}
                 disabled={updating}
-                className="gap-1.5 cursor-pointer shrink-0 h-8 text-xs"
+                className="gap-2 cursor-pointer shrink-0 h-9 px-4"
               >
-                {updating ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconDownload className="size-3.5" />}
-                {updating ? "Updating…" : "Update"}
+                {updating ? <IconLoader2 className="size-4 animate-spin" /> : <IconDownload className="size-4" />}
+                {updating ? "Updating…" : "Update now"}
               </Button>
             </div>
           )}
@@ -530,50 +537,44 @@ export function SettingsPageClient(): React.ReactNode {
     <section>
       <SectionHeading title="Danger Zone" description="Irreversible actions — proceed with caution." />
 
-      <div className="rounded-lg border border-destructive/30 bg-card divide-y divide-destructive/15">
-        {/* Clean Reset */}
-        <div className="px-4">
-          <SettingRow
-            label="Clean reset"
-            description="Wipe the database and start fresh. All data will be permanently deleted."
+      <div className="rounded-xl border-2 border-destructive/30 bg-card divide-y divide-destructive/15">
+        <SettingRow
+          label="Clean reset"
+          description="Wipe the entire database — all boards, tickets, events, logs, and settings will be permanently deleted."
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setResetDialogOpen(true);
+              setResetConfirmText("");
+            }}
+            disabled={resetting}
+            className="shrink-0 cursor-pointer border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground h-9 px-4 gap-2"
           >
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setResetDialogOpen(true);
-                setResetConfirmText("");
-              }}
-              disabled={resetting}
-              className="shrink-0 cursor-pointer border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground h-8 text-xs gap-1"
-            >
-              {resetting ? <IconLoader2 className="size-3 animate-spin" /> : <IconTrash className="size-3" />}
-              Reset
-            </Button>
-          </SettingRow>
-        </div>
+            {resetting ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
+            Reset
+          </Button>
+        </SettingRow>
 
-        {/* Uninstall */}
-        <div className="px-4">
-          <SettingRow
-            label="Uninstall"
-            description="Stop services, remove Docker volumes and symlinks."
+        <SettingRow
+          label="Uninstall"
+          description="Stop all services, remove Docker volumes, and clean up symlinks. You'll need to re-run install.sh to set up again."
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setUninstallDialogOpen(true);
+              setUninstallConfirmText("");
+            }}
+            disabled={uninstalling}
+            className="shrink-0 cursor-pointer border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground h-9 px-4 gap-2"
           >
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setUninstallDialogOpen(true);
-                setUninstallConfirmText("");
-              }}
-              disabled={uninstalling}
-              className="shrink-0 cursor-pointer border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground h-8 text-xs gap-1"
-            >
-              {uninstalling ? <IconLoader2 className="size-3 animate-spin" /> : <IconTrash className="size-3" />}
-              Uninstall
-            </Button>
-          </SettingRow>
-        </div>
+            {uninstalling ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
+            Uninstall
+          </Button>
+        </SettingRow>
       </div>
     </section>
   );
@@ -591,15 +592,15 @@ export function SettingsPageClient(): React.ReactNode {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-1 flex-col px-3 py-4 sm:px-4 lg:px-6">
+    <div className="flex flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
       {/* Page header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Manage preferences and system configuration</p>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+        <p className="text-sm text-muted-foreground mt-1">Manage preferences and system configuration</p>
       </div>
 
       {/* Mobile nav — horizontal pills */}
-      <div className="flex sm:hidden gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
+      <div className="flex sm:hidden gap-2 mb-6 overflow-x-auto pb-1 -mx-1 px-1">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = activeSection === item.key;
@@ -609,13 +610,13 @@ export function SettingsPageClient(): React.ReactNode {
               type="button"
               onClick={() => setActiveSection(item.key)}
               className={[
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0",
+                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0",
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted/50 text-muted-foreground hover:bg-muted",
               ].join(" ")}
             >
-              <Icon className="size-3.5" />
+              <Icon className="size-4" />
               {item.label}
             </button>
           );
@@ -623,10 +624,10 @@ export function SettingsPageClient(): React.ReactNode {
       </div>
 
       {/* Two-column layout */}
-      <div className="flex gap-8 flex-1 min-h-0">
+      <div className="flex gap-12 flex-1 min-h-0">
         {/* Sidebar nav */}
-        <nav className="hidden sm:flex flex-col w-44 shrink-0">
-          <div className="flex flex-col gap-0.5 sticky top-4">
+        <nav className="hidden sm:flex flex-col w-52 shrink-0">
+          <div className="flex flex-col gap-1 sticky top-6">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.key;
@@ -636,15 +637,18 @@ export function SettingsPageClient(): React.ReactNode {
                   type="button"
                   onClick={() => setActiveSection(item.key)}
                   className={[
-                    "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer text-left",
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer text-left",
                     isActive
-                      ? "bg-muted text-foreground"
+                      ? "bg-primary/10 text-primary"
                       : item.key === "danger"
                         ? "text-muted-foreground hover:text-destructive hover:bg-destructive/5"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                   ].join(" ")}
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon className={[
+                    "size-[18px] shrink-0",
+                    isActive ? "text-primary" : "",
+                  ].join(" ")} />
                   {item.label}
                 </button>
               );
@@ -653,25 +657,25 @@ export function SettingsPageClient(): React.ReactNode {
         </nav>
 
         {/* Content area */}
-        <div className="flex-1 min-w-0 max-w-xl pb-8">
+        <div className="flex-1 min-w-0 max-w-2xl pb-12">
           {sections[activeSection]()}
         </div>
       </div>
 
       {/* ── Clean Reset Dialog ────────────────────────────────────────── */}
       <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertDialogTitle className="flex items-center gap-2.5 text-destructive">
               <IconAlertTriangle className="size-5" />
               Clean Reset
             </AlertDialogTitle>
-            <AlertDialogDescription className="text-sm">
+            <AlertDialogDescription className="text-sm leading-relaxed">
               This will <strong>wipe the entire database</strong> — all boards, tickets, events, logs, and settings
               will be permanently deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="flex flex-col gap-2 mt-2">
+          <div className="flex flex-col gap-3 mt-3">
             <p className="text-sm text-muted-foreground">
               Type <strong className="text-destructive">RESET</strong> to confirm:
             </p>
@@ -679,19 +683,19 @@ export function SettingsPageClient(): React.ReactNode {
               value={resetConfirmText}
               onChange={(e) => setResetConfirmText(e.target.value)}
               placeholder="Type RESET"
-              className="font-mono"
+              className="font-mono h-10"
               autoFocus
             />
           </div>
-          <AlertDialogFooter className="mt-4">
-            <AlertDialogCancel disabled={resetting}>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-5">
+            <AlertDialogCancel disabled={resetting} className="h-10">Cancel</AlertDialogCancel>
             <Button
               variant="destructive"
               onClick={runCleanReset}
               disabled={resetConfirmText !== "RESET" || resetting}
-              className="gap-1.5 cursor-pointer"
+              className="gap-2 cursor-pointer h-10"
             >
-              {resetting ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconTrash className="size-3.5" />}
+              {resetting ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
               {resetting ? "Resetting…" : "Confirm Reset"}
             </Button>
           </AlertDialogFooter>
@@ -700,18 +704,18 @@ export function SettingsPageClient(): React.ReactNode {
 
       {/* ── Uninstall Dialog ──────────────────────────────────────────── */}
       <AlertDialog open={uninstallDialogOpen} onOpenChange={setUninstallDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertDialogTitle className="flex items-center gap-2.5 text-destructive">
               <IconAlertTriangle className="size-5" />
               Uninstall Mission Control
             </AlertDialogTitle>
-            <AlertDialogDescription className="text-sm">
+            <AlertDialogDescription className="text-sm leading-relaxed">
               This will <strong>stop all services</strong>, remove Docker volumes, and clean up symlinks. Re-run{" "}
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">install.sh</code> to reinstall.
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">install.sh</code> to reinstall.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="flex flex-col gap-2 mt-2">
+          <div className="flex flex-col gap-3 mt-3">
             <p className="text-sm text-muted-foreground">
               Type <strong className="text-destructive">UNINSTALL</strong> to confirm:
             </p>
@@ -719,19 +723,19 @@ export function SettingsPageClient(): React.ReactNode {
               value={uninstallConfirmText}
               onChange={(e) => setUninstallConfirmText(e.target.value)}
               placeholder="Type UNINSTALL"
-              className="font-mono"
+              className="font-mono h-10"
               autoFocus
             />
           </div>
-          <AlertDialogFooter className="mt-4">
-            <AlertDialogCancel disabled={uninstalling}>Cancel</AlertDialogCancel>
+          <AlertDialogFooter className="mt-5">
+            <AlertDialogCancel disabled={uninstalling} className="h-10">Cancel</AlertDialogCancel>
             <Button
               variant="destructive"
               onClick={runUninstall}
               disabled={uninstallConfirmText !== "UNINSTALL" || uninstalling}
-              className="gap-1.5 cursor-pointer"
+              className="gap-2 cursor-pointer h-10"
             >
-              {uninstalling ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconTrash className="size-3.5" />}
+              {uninstalling ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
               {uninstalling ? "Uninstalling…" : "Confirm Uninstall"}
             </Button>
           </AlertDialogFooter>
