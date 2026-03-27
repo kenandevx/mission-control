@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
@@ -25,48 +25,6 @@ type ActivityEntry = {
   level: string;
   timestamp: string;
 };
-
-// ── Persistent store (survives remounts) ─────────────────────────────────────
-
-// Module-level singleton: keeps SSE connection + entries alive across
-// React component mount/unmount cycles (page navigations).
-let _globalEs: EventSource | null = null;
-let _globalEntries: ActivityEntry[] = [];
-let _globalConnected = false;
-const _listeners = new Set<() => void>();
-
-function notifyListeners() {
-  for (const fn of _listeners) fn();
-}
-
-function ensureConnection() {
-  if (_globalEs && _globalEs.readyState !== EventSource.CLOSED) return;
-
-  _globalEs = new EventSource("/api/notifications/stream");
-
-  _globalEs.addEventListener("connected", () => {
-    _globalConnected = true;
-    notifyListeners();
-  });
-
-  _globalEs.addEventListener("activity", (e) => {
-    try {
-      const entry: ActivityEntry = JSON.parse(e.data);
-      // Deduplicate by id
-      _globalEntries = [entry, ..._globalEntries.filter(x => x.id !== entry.id)].slice(0, MAX_ENTRIES);
-      _globalConnected = true;
-      notifyListeners();
-    } catch {
-      /* ignore parse errors */
-    }
-  });
-
-  _globalEs.onerror = () => {
-    _globalConnected = false;
-    notifyListeners();
-    // EventSource auto-reconnects
-  };
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,14 +60,73 @@ const LEVEL_CONFIG: Record<
 
 const MAX_ENTRIES = 8;
 
+// ── Singleton SSE (survives remounts, no reconnect flicker) ──────────────────
+
+let _globalEs: EventSource | null = null;
+let _globalEntries: ActivityEntry[] = [];
+let _globalConnected = false;
+let _initialLoaded = false;
+let _maxEntries = MAX_ENTRIES;
+const _listeners = new Set<() => void>();
+
+function notifyListeners() {
+  for (const fn of _listeners) fn();
+}
+
+async function loadInitialEntries() {
+  if (_initialLoaded) return;
+  _initialLoaded = true;
+  try {
+    const res = await fetch("/api/notifications/recent", { cache: "reload" });
+    const json = await res.json();
+    if (json.ok && Array.isArray(json.entries)) {
+      if (typeof json.limit === "number" && json.limit > 0) {
+        _maxEntries = json.limit;
+      }
+      _globalEntries = json.entries.slice(0, _maxEntries);
+      notifyListeners();
+    }
+  } catch {
+    /* ignore fetch errors */
+  }
+}
+
+function ensureConnection() {
+  if (_globalEs && _globalEs.readyState !== EventSource.CLOSED) return;
+
+  _globalEs = new EventSource("/api/notifications/stream");
+
+  _globalEs.addEventListener("connected", () => {
+    _globalConnected = true;
+    notifyListeners();
+  });
+
+  _globalEs.addEventListener("activity", (e) => {
+    try {
+      const entry: ActivityEntry = JSON.parse(e.data);
+      _globalEntries = [entry, ..._globalEntries.filter(x => x.id !== entry.id)].slice(0, _maxEntries);
+      _globalConnected = true;
+      notifyListeners();
+    } catch {
+      /* ignore parse errors */
+    }
+  });
+
+  _globalEs.onerror = () => {
+    _globalConnected = false;
+    notifyListeners();
+  };
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function NavActivity(): React.ReactElement {
   const [entries, setEntries] = useState<ActivityEntry[]>(_globalEntries);
   const [connected, setConnected] = useState(_globalConnected);
 
-  // Subscribe to the global singleton and ensure connection exists
   useEffect(() => {
+    // Fetch from DB on first mount, then SSE for live updates
+    void loadInitialEntries();
     ensureConnection();
 
     const listener = () => {
@@ -117,13 +134,10 @@ export function NavActivity(): React.ReactElement {
       setConnected(_globalConnected);
     };
     _listeners.add(listener);
-
-    // Sync initial state (connection may already be live from previous mount)
     listener();
 
     return () => {
       _listeners.delete(listener);
-      // Don't close the EventSource — keep it alive for next mount
     };
   }, []);
 
@@ -162,7 +176,7 @@ export function NavActivity(): React.ReactElement {
               return (
                 <div
                   key={entry.id}
-                  className="flex items-start gap-1.5 py-1 animate-in fade-in slide-in-from-top-1 duration-300"
+                  className="flex items-start gap-1.5 py-1"
                 >
                   <span
                     className={cn("mt-1 size-1.5 shrink-0 rounded-full", config.dot)}

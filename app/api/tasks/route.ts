@@ -63,12 +63,12 @@ async function logTaskAudit(
 
 async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
   const rows = await sql`
-    select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model
+    select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count
     from worker_settings
     where id = 1
     limit 1
   `;
-  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null, agenda_concurrency: 5, default_execution_window_minutes: 30, auto_retry_after_minutes: 0, max_retries: 1, default_fallback_model: "" };
+  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null, agenda_concurrency: 5, default_execution_window_minutes: 30, auto_retry_after_minutes: 0, max_retries: 1, default_fallback_model: "", sidebar_activity_count: 8 };
   return {
     enabled: Boolean(row.enabled),
     pollIntervalSeconds: Number(row.poll_interval_seconds || 20),
@@ -79,6 +79,7 @@ async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
     autoRetryAfterMinutes: Number(row.auto_retry_after_minutes || 0),
     maxRetries: Number(row.max_retries ?? 1),
     defaultFallbackModel: String(row.default_fallback_model || ""),
+    sidebarActivityCount: Number(row.sidebar_activity_count ?? 8),
   };
 }
 
@@ -234,7 +235,8 @@ export async function POST(request: Request) {
       `;
       const created = rows[0];
       if (created?.id) {
-        await logTaskAudit(sql, wid, { event: 'Ticket created', details: created.title || title, level: 'success', ticketId: created.id });
+        // Note: ticket_activity entry is created by the UI hook (use-tasks.ts) — only log to activity_logs/agent_logs here
+        await logTaskAudit(sql, wid, { event: 'Ticket created', details: created.title || title, level: 'success' });
         // Only notify if already queued (e.g. plan-approved ticket being re-created)
         if (created.execution_state === 'queued' || created.execution_state === 'ready_to_execute') {
           await sql`select pg_notify('ticket_ready', ${created.id}::text)`;
@@ -308,11 +310,11 @@ export async function POST(request: Request) {
           }
         }
         if (before.column_id !== updated.column_id) {
+          // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
           await logTaskAudit(sql, wid, {
             event: 'Moved column',
             details: 'Column changed.',
             level: 'info',
-            ticketId: updated.id,
           });
         }
         if (before.plan_approved !== updated.plan_approved) {
@@ -331,6 +333,7 @@ export async function POST(request: Request) {
       const ticketId = String(body.ticketId || "");
       if (!ticketId) return fail("Ticket id is required.");
       await sql`delete from tickets where id=${ticketId}`;
+      // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
       await logTaskAudit(sql, wid, { event: 'Ticket deleted', details: ticketId, level: 'warning' });
       return ok();
     }
@@ -405,7 +408,8 @@ export async function POST(request: Request) {
       if (!current) return fail("Ticket not found", 404);
 
       await sql`update tickets set column_id=${toColumnId}, updated_at=now() where id=${ticketId}`;
-      await logTaskAudit(sql, wid, { event: 'Moved ticket', details: 'Moved to a new column.', level: 'info', ticketId });
+      // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
+      await logTaskAudit(sql, wid, { event: 'Moved ticket', details: 'Moved to a new column.', level: 'info' });
 
       if (beforeTicketId) {
         const beforeRows = await sql`select position from tickets where id=${beforeTicketId} limit 1`;
@@ -638,6 +642,7 @@ export async function POST(request: Request) {
       const autoRetryAfterMinutes = body.autoRetryAfterMinutes === undefined ? null : Number(body.autoRetryAfterMinutes);
       const maxRetries = body.maxRetries === undefined ? null : Number(body.maxRetries);
       const defaultFallbackModel = body.defaultFallbackModel === undefined ? null : String(body.defaultFallbackModel || "");
+      const sidebarActivityCount = body.sidebarActivityCount === undefined ? null : Number(body.sidebarActivityCount);
 
       if (pollIntervalSeconds !== null && (!Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds < 5 || pollIntervalSeconds > 300)) {
         return fail("pollIntervalSeconds must be between 5 and 300");
@@ -657,10 +662,13 @@ export async function POST(request: Request) {
       if (maxRetries !== null && (!Number.isFinite(maxRetries) || maxRetries < 0 || maxRetries > 5)) {
         return fail("maxRetries must be between 0 and 5");
       }
+      if (sidebarActivityCount !== null && (!Number.isFinite(sidebarActivityCount) || sidebarActivityCount < 1 || sidebarActivityCount > 30)) {
+        return fail("sidebarActivityCount must be between 1 and 30");
+      }
 
       await sql`
-        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model)
-        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''))
+        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count)
+        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(${sidebarActivityCount}, 8))
         on conflict (id) do update
           set enabled = coalesce(${enabled}, worker_settings.enabled),
               poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
@@ -670,6 +678,7 @@ export async function POST(request: Request) {
               auto_retry_after_minutes = coalesce(${autoRetryAfterMinutes}, worker_settings.auto_retry_after_minutes),
               max_retries = coalesce(${maxRetries}, worker_settings.max_retries),
               default_fallback_model = coalesce(${defaultFallbackModel}, worker_settings.default_fallback_model),
+              sidebar_activity_count = coalesce(${sidebarActivityCount}, worker_settings.sidebar_activity_count),
               updated_at = now()
       `;
 

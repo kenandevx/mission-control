@@ -126,6 +126,7 @@ export function SettingsPageClient(): React.ReactNode {
   const [agendaSettingsLoading, setAgendaSettingsLoading] = useState(false);
   const [defaultFallbackModel, setDefaultFallbackModel] = useState("");
   const [maxRetries, setMaxRetries] = useState(1);
+  const [sidebarActivityCount, setSidebarActivityCount] = useState(8);
   const agendaMountedRef = useRef(false);
 
   useEffect(() => {
@@ -154,6 +155,7 @@ export function SettingsPageClient(): React.ReactNode {
           setAutoRetryAfterMinutes(json.workerSettings.autoRetryAfterMinutes ?? 0);
           setDefaultFallbackModel(json.workerSettings.defaultFallbackModel ?? "");
           setMaxRetries(json.workerSettings.maxRetries ?? 1);
+          setSidebarActivityCount(json.workerSettings.sidebarActivityCount ?? 8);
         }
       } catch {
         /* ignore */
@@ -262,6 +264,7 @@ export function SettingsPageClient(): React.ReactNode {
           agendaConcurrency,
           defaultExecutionWindowMinutes: defaultExecWindow,
           maxRetries,
+          sidebarActivityCount,
         }),
       });
       const json = await res.json();
@@ -437,6 +440,20 @@ export function SettingsPageClient(): React.ReactNode {
             max={5}
             value={maxRetries}
             onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, parseInt(e.target.value) || 1)))}
+            className="h-9 w-20 text-center text-sm"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Sidebar Activity Count"
+          description="Number of recent activity entries shown in the sidebar (1–30)"
+        >
+          <Input
+            type="number"
+            min={1}
+            max={30}
+            value={sidebarActivityCount}
+            onChange={(e) => setSidebarActivityCount(Math.max(1, Math.min(30, parseInt(e.target.value) || 8)))}
             className="h-9 w-20 text-center text-sm"
           />
         </SettingRow>

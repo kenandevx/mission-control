@@ -152,7 +152,7 @@ export async function GET(request: Request): Promise<Response> {
                 ao.status,
                 ao.agenda_event_id,
                 ae.title,
-                ae.agent_id
+                ae.default_agent_id AS agent_id
               FROM agenda_occurrences ao
               JOIN agenda_events ae ON ae.id = ao.agenda_event_id
               WHERE ao.id = ${occurrenceId}
