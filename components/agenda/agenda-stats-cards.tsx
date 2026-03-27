@@ -13,22 +13,18 @@ import {
 } from "@/components/ui/card";
 
 type AgendaStats = {
-  activeEvents: number;
-  todayOccurrences: number;
-  failedLast24h: number;
-  totalProcesses: number;
-  publishedProcesses: number;
+  totalEvents: number;
+  notRanYetCount: number;
+  failedCount: number;
 };
 
 async function fetchStats(): Promise<AgendaStats> {
   const res = await fetch("/api/agenda/stats", { cache: "reload" });
   const json = await res.json();
   return {
-    activeEvents: json.activeEvents ?? 0,
-    todayOccurrences: json.todayOccurrences ?? 0,
-    failedLast24h: json.failedLast24h ?? 0,
-    totalProcesses: json.totalProcesses ?? 0,
-    publishedProcesses: json.publishedProcesses ?? 0,
+    totalEvents: json.totalEvents ?? 0,
+    notRanYetCount: json.notRanYetCount ?? 0,
+    failedCount: json.failedCount ?? 0,
   };
 }
 
@@ -91,61 +87,58 @@ export function AgendaStatsCards() {
     <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-3">
       <Card data-slot="card">
         <CardHeader>
-          <CardDescription>Today&apos;s Runs</CardDescription>
+          <CardDescription>Total Events</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {stats.todayOccurrences}
+            {stats.totalEvents}
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <IconTrendingUp />
-              Occurrences
+              Events
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">Runs scheduled today</div>
-          <div className="text-muted-foreground">All active events</div>
+          <div className="line-clamp-1 flex gap-2 font-medium">All agenda events</div>
+          <div className="text-muted-foreground">Draft + active</div>
         </CardFooter>
       </Card>
 
       <Card data-slot="card">
         <CardHeader>
-          <CardDescription>Processes</CardDescription>
+          <CardDescription>Not Ran Yet</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {stats.publishedProcesses}
-            <span className="text-sm font-normal text-muted-foreground ml-1">
-              / {stats.totalProcesses}
-            </span>
+            {stats.notRanYetCount}
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <IconTrendingUp />
-              Published
+              Pending
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">Published processes</div>
-          <div className="text-muted-foreground">Out of total</div>
+          <div className="line-clamp-1 flex gap-2 font-medium">Queued + scheduled occurrences</div>
+          <div className="text-muted-foreground">Active events only</div>
         </CardFooter>
       </Card>
 
-      <Card data-slot="card" className={stats.failedLast24h > 0 ? "border-red-200 dark:border-red-900" : ""}>
+      <Card data-slot="card" className={stats.failedCount > 0 ? "border-red-200 dark:border-red-900" : ""}>
         <CardHeader>
-          <CardDescription>Failed (24h)</CardDescription>
-          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats.failedLast24h > 0 ? "text-red-600" : ""}`}>
-            {stats.failedLast24h}
+          <CardDescription>Failed Count</CardDescription>
+          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats.failedCount > 0 ? "text-red-600" : ""}`}>
+            {stats.failedCount}
           </CardTitle>
           <CardAction>
-            <Badge variant={stats.failedLast24h > 0 ? "destructive" : "outline"}>
+            <Badge variant={stats.failedCount > 0 ? "destructive" : "outline"}>
               <IconTrendingUp />
-              {stats.failedLast24h > 0 ? "Attention" : "No failures"}
+              {stats.failedCount > 0 ? "Attention" : "Clean"}
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">Failed runs last 24h</div>
-          <div className="text-muted-foreground">All occurrences</div>
+          <div className="line-clamp-1 flex gap-2 font-medium">Failed + needs retry + expired</div>
+          <div className="text-muted-foreground">Across all occurrences</div>
         </CardFooter>
       </Card>
     </div>

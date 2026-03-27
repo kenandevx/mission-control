@@ -51,12 +51,46 @@ type SidebarUser = {
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   initialUser: SidebarUser | null
+  showActivity?: boolean
 }
 
-export function AppSidebar({ initialUser, ...props }: AppSidebarProps) {
+export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSidebarProps) {
   const router = useRouter()
   const [user, setUser] = React.useState<SidebarUser | null>(initialUser)
+  const [instanceName, setInstanceName] = React.useState("Mission Control")
   const adapter = React.useMemo(() => getDataAdapter(), [])
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "getWorkerSettings" }),
+          cache: "reload",
+        })
+        const json = await res.json()
+        const next = String(json?.workerSettings?.instanceName || "Mission Control").trim() || "Mission Control"
+        if (!cancelled) setInstanceName(next)
+      } catch {
+        if (!cancelled) setInstanceName("Mission Control")
+      }
+    })()
+
+    const onNameChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ name?: string }>
+      const next = String(custom.detail?.name || "Mission Control").trim() || "Mission Control"
+      setInstanceName(next)
+    }
+
+    window.addEventListener("mc-instance-name-changed", onNameChanged as EventListener)
+    return () => {
+      cancelled = true
+      window.removeEventListener("mc-instance-name-changed", onNameChanged as EventListener)
+    }
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -82,7 +116,7 @@ export function AppSidebar({ initialUser, ...props }: AppSidebarProps) {
             >
               <a href="#">
                 <IconInnerShadowTop className="size-5!" />
-                <span className="text-base font-semibold">openclaw</span>
+                <span className="text-base font-semibold">{instanceName}</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -90,10 +124,33 @@ export function AppSidebar({ initialUser, ...props }: AppSidebarProps) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavActivity />
+        {showActivity ? <NavActivity /> : null}
       </SidebarContent>
       <SidebarFooter>
-        <div className="px-2 pb-2 text-xs text-muted-foreground">Version v{APP_VERSION}</div>
+        <button
+          type="button"
+          className="px-2 pb-2 text-xs text-muted-foreground text-left cursor-pointer hover:text-foreground/80"
+          onClick={() => {
+            const now = Date.now();
+            const w = window as Window & { __mcDevClickCount?: number; __mcDevClickAt?: number };
+            if (!w.__mcDevClickAt || now - w.__mcDevClickAt > 2000) {
+              w.__mcDevClickCount = 0;
+            }
+            w.__mcDevClickAt = now;
+            w.__mcDevClickCount = (w.__mcDevClickCount || 0) + 1;
+
+            if (w.__mcDevClickCount >= 5) {
+              w.__mcDevClickCount = 0;
+              const current = localStorage.getItem("mc-dev-mode") === "1";
+              const next = !current;
+              localStorage.setItem("mc-dev-mode", next ? "1" : "0");
+              window.dispatchEvent(new CustomEvent("mc-dev-mode-changed", { detail: { enabled: next } }));
+              toast.success(next ? "Now in development mode" : "Development mode disabled");
+            }
+          }}
+        >
+          Version v{APP_VERSION}
+        </button>
         {user ? <NavUser user={user} onLogout={handleLogout} /> : null}
       </SidebarFooter>
     </Sidebar>

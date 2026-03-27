@@ -73,12 +73,12 @@ function NowIndicator({ now, hourHeight, leftOffset = 0 }: { now: Date; hourHeig
       {/* Purple dot */}
       <div
         className="absolute -top-[6px] -left-[6px] size-[12px] rounded-full bg-primary shadow-md"
-        style={{ boxShadow: "0 0 8px hsl(265 80% 60% / 0.6)" }}
+        style={{ boxShadow: "0 0 8px var(--primary-glow)" }}
       />
-      {/* Purple line */}
+      {/* Accent line */}
       <div
         className="w-full h-[2.5px] bg-primary"
-        style={{ boxShadow: "0 0 6px hsl(265 80% 60% / 0.4)" }}
+        style={{ boxShadow: "0 0 6px hsl(var(--accent) / 0.4)" }}
       />
     </div>
   );
@@ -578,11 +578,13 @@ function WeekView({
   events,
   onEventClick,
   onEventDrop,
+  className,
 }: {
   weekDays: Date[];
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  className?: string;
 }) {
   const now = useNow();
   const todayIndex = weekDays.findIndex((d) => isToday(d));
@@ -601,7 +603,7 @@ function WeekView({
   }, []); // only on mount
 
   return (
-    <div ref={scrollContainerRef} className="overflow-x-auto overflow-y-auto max-h-[600px]">
+    <div ref={scrollContainerRef} className={`overflow-x-auto overflow-y-auto min-h-0 h-full ${className ?? ""}`}>
       <div className="min-w-[720px]">
         {/* Day header row */}
         <div className="grid grid-cols-8 border-b bg-muted/40 sticky top-0 z-10">
@@ -754,11 +756,13 @@ function DayView({
   events,
   onEventClick,
   onEventDrop,
+  className,
 }: {
   day: Date;
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  className?: string;
 }) {
   const now = useNow();
   const dayStr = format(day, "yyyy-MM-dd");
@@ -776,7 +780,7 @@ function DayView({
   }, []);
 
   return (
-    <div ref={dayScrollRef} className="overflow-x-auto overflow-y-auto max-h-[600px]">
+    <div ref={dayScrollRef} className={`overflow-x-auto overflow-y-auto min-h-0 h-full ${className ?? ""}`}>
       <div className="min-w-[520px]">
         {/* Day header */}
         <div className="flex flex-col items-center py-4 border-b bg-muted/40">
@@ -993,7 +997,7 @@ export function CustomMonthAgenda({
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
       {/* ── Header bar ─────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         {/* Left: badge + title */}
@@ -1084,9 +1088,9 @@ export function CustomMonthAgenda({
       </div>
 
       {/* ── Calendar card ───────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-        {/* Weekday header — month & week view */}
-        {viewMode !== "day" && (
+      <div className="rounded-xl border bg-card overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
+        {/* Weekday header — month view only */}
+        {viewMode === "month" && (
           <div className="grid grid-cols-7 border-b bg-muted/30">
             {WEEKDAYS.map((day) => (
               <div
@@ -1101,7 +1105,7 @@ export function CustomMonthAgenda({
 
         {/* Loading skeleton */}
         {loading && (
-          <div className="grid grid-cols-7">
+          <div className="grid grid-cols-7 flex-1 min-h-0 overflow-auto">
             {Array.from({ length: 35 }).map((_, i) => (
               <div
                 key={i}
@@ -1119,7 +1123,7 @@ export function CustomMonthAgenda({
 
         {/* Month view */}
         {!loading && viewMode === "month" && (
-          <div className="flex flex-col">
+          <div className="flex flex-col flex-1 min-h-0 overflow-auto">
             {weeks.map((week, wi) => (
               <div key={wi} className="grid grid-cols-7">
                 {week.map((day, di) => (
@@ -1141,8 +1145,9 @@ export function CustomMonthAgenda({
 
         {/* Week view */}
         {!loading && viewMode === "week" && (
-          <div className="p-3">
+          <div className="flex-1 min-h-0">
             <WeekView
+              className="h-full"
               weekDays={weekDays}
               events={calendarEvents}
               onEventClick={handleEventClick}
@@ -1153,8 +1158,9 @@ export function CustomMonthAgenda({
 
         {/* Day view */}
         {!loading && viewMode === "day" && (
-          <div className="p-3">
+          <div className="flex-1 min-h-0">
             <DayView
+              className="h-full"
               day={currentDate}
               events={calendarEvents}
               onEventClick={handleEventClick}

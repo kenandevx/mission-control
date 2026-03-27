@@ -22,7 +22,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -47,13 +46,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   ChevronLeftIcon,
-  Clock3Icon,
   CopyIcon,
   MoreHorizontalIcon,
   PlusIcon,
   SearchIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  LayoutGridIcon,
 } from "lucide-react";
 import { BoardActivityFeed, type LiveLog } from "@/components/tasks/boards/board-activity-feed";
 import { FailedTicketsBucket } from "@/components/tasks/boards/failed-tickets-bucket";
@@ -123,7 +122,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         const res = await fetch("/api/agents", { cache: "reload" });
         const json = await res.json();
         if (!cancelled && json.agents) {
-          setRuntimeAssignees(json.agents.map((a: any) => ({
+          setRuntimeAssignees(json.agents.map((a: { id: string; name?: string }) => ({
             id: a.id,
             name: a.name || a.id,
             initials: (a.name || a.id).split(/\s+/).filter(Boolean).slice(0, 2).map((p: string) => p[0]?.toUpperCase() || "").join("") || "AG",
@@ -611,12 +610,13 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
             </div>
 
             {visibleBoards.length === 0 ? (
-              <Empty className="min-h-56">
-                <EmptyHeader>
-                  <EmptyTitle>No boards found</EmptyTitle>
-                  <EmptyDescription>No boards found for this search.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
+              <div className="flex flex-col items-center justify-center py-20 text-center border rounded-xl bg-muted/20">
+                <LayoutGridIcon className="size-12 text-muted-foreground/40 mb-4" />
+                <p className="font-semibold text-foreground mb-1">No boards found</p>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  Create your first board to organize and track your tasks visually.
+                </p>
+              </div>
             ) : (
               <div className="overflow-hidden rounded-lg border">
                 <Table>

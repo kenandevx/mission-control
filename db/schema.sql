@@ -247,6 +247,7 @@ alter table worker_settings add column if not exists last_tick_at timestamptz;
 alter table worker_settings add column if not exists agenda_concurrency integer not null default 5;
 alter table worker_settings add column if not exists default_execution_window_minutes integer not null default 30;
 alter table worker_settings add column if not exists auto_retry_after_minutes integer not null default 0;
+alter table worker_settings add column if not exists instance_name text not null default 'Mission Control';
 
 -- ─── Phase 2: Processes ──────────────────────────────────────────────────────
 

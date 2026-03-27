@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { NotificationProvider } from "@/components/providers/notification-provider";
 
@@ -35,10 +36,13 @@ function StartupEventHook() {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const disableGlobalRealtime = pathname?.startsWith("/processes") ?? false;
+
   return (
     <ThemeProvider>
-      <StartupEventHook />
-      <NotificationProvider />
+      {!disableGlobalRealtime ? <StartupEventHook /> : null}
+      {!disableGlobalRealtime ? <NotificationProvider /> : null}
       {children}
     </ThemeProvider>
   );

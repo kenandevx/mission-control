@@ -44,6 +44,20 @@ function relativeTime(dateStr: string): string {
   return `${days}d ago`;
 }
 
+function formatActivityEvent(entry: ActivityEntry): string {
+  const raw = (entry.event || "").toLowerCase();
+  if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Executing";
+  if (raw.includes("queued") || raw.includes("scheduled")) return "Queued";
+  if (raw.includes("succeeded") || raw.includes("completed")) return "Completed";
+  if (raw.includes("failed") || raw.includes("needs_retry") || raw.includes("expired")) return "Failed";
+  return entry.event || "Activity";
+}
+
+function isBusy(entry: ActivityEntry): boolean {
+  const raw = (entry.event || "").toLowerCase();
+  return raw.includes("running") || raw.includes("picked up") || raw.includes("planning");
+}
+
 const LEVEL_CONFIG: Record<
   string,
   {
@@ -189,7 +203,7 @@ export function NavActivity(): React.ReactElement {
                           config.text
                         )}
                       >
-                        {entry.event}
+                        {isBusy(entry) ? "🟢 " : ""}{formatActivityEvent(entry)}
                       </span>
                       <span className="text-[8px] text-muted-foreground/50 shrink-0 tabular-nums">
                         {relativeTime(entry.timestamp)}
@@ -197,7 +211,7 @@ export function NavActivity(): React.ReactElement {
                     </div>
                     <p className="text-[9px] text-muted-foreground/70 truncate leading-tight">
                       {entry.type === "agenda" ? "📅 " : "🎫 "}
-                      {entry.title}
+                      {entry.title}{entry.agent ? ` · ${entry.agent}` : ""}
                     </p>
                   </div>
                 </div>

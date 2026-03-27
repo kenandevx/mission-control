@@ -15,7 +15,7 @@ export default function ProcessesPage() {
         } as React.CSSProperties
       }
     >
-      <AppSidebar variant="inset" initialUser={null} />
+      <AppSidebar variant="inset" initialUser={null} showActivity={false} />
       <SidebarInset>
         <PageHeader page="Processes" />
         <div className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">

@@ -19,6 +19,20 @@ export async function GET() {
     if (!wid) return ok({ processes: [] });
 
     const processes = await sql`
+      with step_counts as (
+        select pv.process_id, count(ps.id)::int as step_count
+        from process_versions pv
+        left join process_steps ps on ps.process_version_id = pv.id
+        group by pv.process_id
+      ),
+      latest_versions as (
+        select distinct on (pv.process_id)
+          pv.process_id,
+          pv.id,
+          pv.version_number
+        from process_versions pv
+        order by pv.process_id, pv.version_number desc
+      )
       select
         p.id,
         p.name,
@@ -27,22 +41,12 @@ export async function GET() {
         p.created_by,
         p.created_at,
         p.updated_at,
-        pv.id as latest_version_id,
-        pv.version_number,
-        (
-          select count(*)
-          from process_steps ps
-          join process_versions pv2 on pv2.id = ps.process_version_id
-          where pv2.process_id = p.id
-        ) as step_count
+        lv.id as latest_version_id,
+        lv.version_number,
+        coalesce(sc.step_count, 0) as step_count
       from processes p
-      left join process_versions pv
-        on pv.process_id = p.id
-        and pv.version_number = (
-          select max(pv3.version_number)
-          from process_versions pv3
-          where pv3.process_id = p.id
-        )
+      left join latest_versions lv on lv.process_id = p.id
+      left join step_counts sc on sc.process_id = p.id
       where p.workspace_id = ${wid}
       order by p.created_at desc
     `;

@@ -45,7 +45,7 @@
 .dark {
   --fc-today-bg:           hsl(265 80% 60% / 0.12);
   --fc-hover-bg:           hsl(265 80% 60% / 0.08);
-  --fc-header-bg:          hsl(var(--muted) / 0.4);
+  --fc-header-bg:          hsl(var(--accent) / 0.4);
   --fc-column-border:      hsl(1 0 0 / 8%);
   --fc-slot-border:        hsl(1 0 0 / 5%);
   --fc-card:              hsl(var(--card));

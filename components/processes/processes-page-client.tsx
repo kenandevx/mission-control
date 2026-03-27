@@ -133,8 +133,33 @@ export function ProcessesPageClient() {
 
       {/* Table */}
       {loading ? (
-        <div className="flex flex-col gap-3">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Card key={i} className="border-muted/60">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <Skeleton className="size-4 rounded" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Skeleton className="size-7 rounded" />
+                    <Skeleton className="size-7 rounded" />
+                    <Skeleton className="size-7 rounded" />
+                    <Skeleton className="size-7 rounded" />
+                  </div>
+                </div>
+                <div className="mt-1 pl-6 space-y-1.5">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 flex items-center justify-between">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-3 w-8" />
+              </CardContent>
+            </Card>
+          ))}
         </div>
       ) : processes.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center border rounded-xl bg-muted/20">

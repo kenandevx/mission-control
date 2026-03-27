@@ -73,27 +73,33 @@ export function useProcesses() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const loadOptions = useCallback(async () => {
+    try {
+      const [agentsJson, skillsJson] = await Promise.all([
+        apiGet("/api/agents"),
+        apiGet("/api/skills"),
+      ]);
+      if (agentsJson.agents) setAgents(agentsJson.agents);
+      if (skillsJson.skills) setSkills(skillsJson.skills);
+    } catch {
+      // keep UI usable even if options fail; they can reload later
+    }
+  }, []);
+
   const loadProcesses = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [procsJson, agentsJson, skillsJson] = await Promise.all([
-        apiGet("/api/processes"),
-        apiGet("/api/agents"),
-        apiGet("/api/skills"),
-      ]);
-
+      const procsJson = await apiGet("/api/processes");
       if (procsJson.ok) setProcesses(procsJson.processes ?? []);
       else setError(procsJson.error ?? "Failed to load processes");
-
-      if (agentsJson.agents) setAgents(agentsJson.agents);
-      if (skillsJson.skills) setSkills(skillsJson.skills);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setLoading(false);
+      void loadOptions();
     }
-  }, []);
+  }, [loadOptions]);
 
   const startedRef = useRef(false);
   useEffect(() => {

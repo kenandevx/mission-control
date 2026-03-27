@@ -56,16 +56,26 @@ export async function POST(request: Request) {
     if (action === "cleanReset") {
       try {
         const mcServices = resolve(PROJECT_ROOT, "scripts/mc-services.sh");
+
+        // Keep Next.js running (dev/start), only wipe DB contents and restart workers.
+        await execFileAsync(
+          "docker",
+          ["compose", "exec", "-T", "db", "psql", "-U", "openclaw", "-d", "mission_control", "-c", "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"],
+          { cwd: PROJECT_ROOT, timeout: 30000 },
+        );
+        await execFileAsync("docker", ["compose", "run", "--rm", "db-init"], {
+          cwd: PROJECT_ROOT,
+          timeout: 120000,
+        });
+
+        // Restart only persistent worker services (not nextjs), so dev/start UI stays alive.
         if (existsSync(mcServices)) {
-          await execFileAsync("bash", [mcServices, "stop"], { cwd: PROJECT_ROOT, timeout: 15000 }).catch(() => {});
+          for (const svc of ["task-worker", "bridge-logger", "agenda-scheduler", "agenda-worker"]) {
+            await execFileAsync("bash", [mcServices, "restart", svc], { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
+          }
         }
-        await execFileAsync("docker", ["compose", "down", "--volumes"], { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
-        await execFileAsync("docker", ["compose", "up", "-d", "db", "db-init"], { cwd: PROJECT_ROOT, timeout: 60000 });
-        await new Promise((r) => setTimeout(r, 5000));
-        if (existsSync(mcServices)) {
-          await execFileAsync("bash", [mcServices, "start"], { cwd: PROJECT_ROOT, timeout: 30000 });
-        }
-        return ok({ message: "Clean reset complete. Database wiped and services restarted." });
+
+        return ok({ message: "Clean reset complete. Database wiped and worker services restarted." });
       } catch (e) {
         return fail(e instanceof Error ? e.message : "Clean reset failed");
       }

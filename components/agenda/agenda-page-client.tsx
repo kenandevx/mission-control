@@ -280,8 +280,8 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
 
   return (
     <>
-      <Card className="border-2 shadow-lg rounded-2xl py-0">
-        <CardContent className="p-5">
+      <Card className="border-2 shadow-lg rounded-2xl py-0 h-full min-h-0 flex flex-col">
+        <CardContent className="p-5 flex-1 min-h-0 overflow-hidden">
           <CustomMonthAgenda
             events={eventsForCalendar}
             loading={loading}

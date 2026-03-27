@@ -17,6 +17,8 @@ import {
   IconCalendarCog,
   IconCloudDownload,
   IconShieldBolt,
+  IconCpu,
+  IconSettings,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,11 +32,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   loadNotificationSettings,
   saveNotificationSettings,
 } from "@/components/providers/notification-provider";
+import {
+  THEME_ACCENTS,
+  THEME_ACCENT_STORAGE_KEY,
+  applyThemeAccent,
+  getStoredThemeAccentId,
+} from "@/lib/theme-accent";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,10 +65,11 @@ const themeOptions: ThemeOption[] = [
   { value: "system", label: "System", icon: IconDeviceDesktop },
 ];
 
-type SectionKey = "appearance" | "notifications" | "agenda" | "updates" | "danger";
+type SectionKey = "appearance" | "general" | "notifications" | "agenda" | "developer" | "updates" | "danger";
 
-const NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const BASE_NAV_ITEMS: { key: Exclude<SectionKey, "developer">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "appearance", label: "Appearance", icon: IconPalette },
+  { key: "general", label: "General", icon: IconSettings },
   { key: "notifications", label: "Notifications", icon: IconBell },
   { key: "agenda", label: "Agenda", icon: IconCalendarCog },
   { key: "updates", label: "Updates", icon: IconCloudDownload },
@@ -101,6 +117,10 @@ export function SettingsPageClient(): React.ReactNode {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("appearance");
+  const [devModeEnabled, setDevModeEnabled] = useState(false);
+  const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
+  const [accentPickerOpen, setAccentPickerOpen] = useState(false);
+  const [accentId, setAccentId] = useState("purple");
 
   // Update check state
   const [checking, setChecking] = useState(false);
@@ -127,6 +147,7 @@ export function SettingsPageClient(): React.ReactNode {
   const [defaultFallbackModel, setDefaultFallbackModel] = useState("");
   const [maxRetries, setMaxRetries] = useState(1);
   const [sidebarActivityCount, setSidebarActivityCount] = useState(8);
+  const [instanceName, setInstanceName] = useState("Mission Control");
   const agendaMountedRef = useRef(false);
 
   useEffect(() => {
@@ -134,7 +155,28 @@ export function SettingsPageClient(): React.ReactNode {
     const s = loadNotificationSettings();
     setNotifEnabled(s.enabled);
     setNotifSound(s.sound);
-  }, []);
+
+    const devMode = localStorage.getItem("mc-dev-mode") === "1";
+    setDevModeEnabled(devMode);
+
+    const rawStep = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
+    const safeStep = Number.isFinite(rawStep) ? Math.max(0, Math.min(60, rawStep)) : 15;
+    setAgendaTimeStepMinutes(safeStep);
+
+    const savedAccent = getStoredThemeAccentId();
+    setAccentId(savedAccent);
+    applyThemeAccent(savedAccent, false);
+
+    const onDevModeChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ enabled?: boolean }>;
+      const next = custom.detail?.enabled ?? (localStorage.getItem("mc-dev-mode") === "1");
+      setDevModeEnabled(Boolean(next));
+      if (!next && activeSection === "developer") setActiveSection("agenda");
+    };
+
+    window.addEventListener("mc-dev-mode-changed", onDevModeChanged as EventListener);
+    return () => window.removeEventListener("mc-dev-mode-changed", onDevModeChanged as EventListener);
+  }, [activeSection]);
 
   // Load agenda settings
   useEffect(() => {
@@ -156,6 +198,7 @@ export function SettingsPageClient(): React.ReactNode {
           setDefaultFallbackModel(json.workerSettings.defaultFallbackModel ?? "");
           setMaxRetries(json.workerSettings.maxRetries ?? 1);
           setSidebarActivityCount(json.workerSettings.sidebarActivityCount ?? 8);
+          setInstanceName(json.workerSettings.instanceName ?? "Mission Control");
         }
       } catch {
         /* ignore */
@@ -265,10 +308,17 @@ export function SettingsPageClient(): React.ReactNode {
           defaultExecutionWindowMinutes: defaultExecWindow,
           maxRetries,
           sidebarActivityCount,
+          instanceName,
         }),
       });
       const json = await res.json();
-      if (json.ok) toast.success("Agenda settings saved");
+      if (json.ok) {
+        const nextName = String(json.workerSettings?.instanceName || instanceName || "Mission Control").trim() || "Mission Control";
+        setInstanceName(nextName);
+        window.dispatchEvent(new CustomEvent("mc-instance-name-changed", { detail: { name: nextName } }));
+        document.title = nextName;
+        toast.success("Agenda settings saved");
+      }
       else toast.error(json.error || "Failed to save");
     } catch {
       toast.error("Failed to save agenda settings");
@@ -278,6 +328,43 @@ export function SettingsPageClient(): React.ReactNode {
   };
 
   // ── Section renderers ─────────────────────────────────────────────────────
+
+  const renderGeneral = (): React.ReactNode => (
+    <section>
+      <SectionHeading title="General" description="Core workspace settings." />
+
+      <div className="rounded-xl border bg-card divide-y">
+        <SettingRow
+          label="Instance name"
+          description="Shown in the sidebar brand and browser tab. Helps identify multiple instances."
+        >
+          <Input
+            type="text"
+            maxLength={80}
+            value={instanceName}
+            onChange={(e) => setInstanceName(e.target.value)}
+            placeholder="Mission Control"
+            className="h-9 w-56 text-sm"
+          />
+        </SettingRow>
+      </div>
+
+      <div className="mt-5">
+        <Button
+          className="cursor-pointer gap-2 h-10 px-6"
+          onClick={() => {
+            const nextName = instanceName.trim() || "Mission Control";
+            setInstanceName(nextName);
+            window.dispatchEvent(new CustomEvent("mc-instance-name-changed", { detail: { name: nextName } }));
+            document.title = nextName;
+            toast.success("General settings saved");
+          }}
+        >
+          Save general settings
+        </Button>
+      </div>
+    </section>
+  );
 
   const renderAppearance = (): React.ReactNode => (
     <section>
@@ -295,7 +382,10 @@ export function SettingsPageClient(): React.ReactNode {
               <button
                 key={option.value}
                 type="button"
-                onClick={() => setTheme(option.value)}
+                onClick={() => {
+                  setTheme(option.value);
+                  if (option.value === "light") setAccentPickerOpen(true);
+                }}
                 className={[
                   "flex flex-col items-center gap-2.5 rounded-xl border-2 px-4 py-5 transition-all cursor-pointer",
                   isActive
@@ -320,6 +410,21 @@ export function SettingsPageClient(): React.ReactNode {
               </button>
             );
           })}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+          <div>
+            <p className="text-sm font-medium">Main color</p>
+            <p className="text-xs text-muted-foreground">Default is purple. Personalize your accent color.</p>
+          </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-md border px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+            onClick={() => setAccentPickerOpen(true)}
+          >
+            <span className="size-5 rounded" style={{ backgroundColor: THEME_ACCENTS.find((a) => a.id === accentId)?.swatch ?? "#8b5cf6" }} />
+            <span className="text-xs">Change</span>
+          </button>
         </div>
       </div>
     </section>
@@ -598,15 +703,59 @@ export function SettingsPageClient(): React.ReactNode {
 
   // ── Section map ────────────────────────────────────────────────────────────
 
+  const renderDeveloper = (): React.ReactNode => (
+    <section>
+      <SectionHeading title="Developer" description="Advanced controls for local development." />
+
+      <div className="rounded-xl border bg-card divide-y">
+        <SettingRow
+          label="Agenda time interval (minutes)"
+          description="0 = free time input (any HH:mm). 5/10/15/etc = dropdown snapping by that interval."
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={60}
+              value={agendaTimeStepMinutes}
+              onChange={(e) => setAgendaTimeStepMinutes(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
+              className="h-9 w-20 text-center text-sm"
+            />
+            <span className="text-sm text-muted-foreground">min</span>
+          </div>
+        </SettingRow>
+      </div>
+
+      <div className="mt-5">
+        <Button
+          className="cursor-pointer gap-2 h-10 px-6"
+          onClick={() => {
+            localStorage.setItem("mc-agenda-time-step-minutes", String(agendaTimeStepMinutes));
+            window.dispatchEvent(new CustomEvent("mc-agenda-time-step-changed", { detail: { value: agendaTimeStepMinutes } }));
+            toast.success("Developer settings saved");
+          }}
+        >
+          Save developer settings
+        </Button>
+      </div>
+    </section>
+  );
+
   const sections: Record<SectionKey, () => React.ReactNode> = {
     appearance: renderAppearance,
+    general: renderGeneral,
     notifications: renderNotifications,
     agenda: renderAgenda,
+    developer: renderDeveloper,
     updates: renderUpdates,
     danger: renderDanger,
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  const NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = devModeEnabled
+    ? [...BASE_NAV_ITEMS.slice(0, 3), { key: "developer", label: "Developer", icon: IconCpu }, ...BASE_NAV_ITEMS.slice(3)]
+    : [...BASE_NAV_ITEMS];
 
   return (
     <div className="flex flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
@@ -630,7 +779,7 @@ export function SettingsPageClient(): React.ReactNode {
                 "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0",
                 isActive
                   ? "bg-primary text-primary-foreground"
-                  : "bg-muted/50 text-muted-foreground hover:bg-muted",
+                  : "bg-accent/60 text-muted-foreground hover:bg-accent",
               ].join(" ")}
             >
               <Icon className="size-4" />
@@ -659,7 +808,7 @@ export function SettingsPageClient(): React.ReactNode {
                       ? "bg-primary/10 text-primary"
                       : item.key === "danger"
                         ? "text-muted-foreground hover:text-destructive hover:bg-destructive/5"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                   ].join(" ")}
                 >
                   <Icon className={[
@@ -678,6 +827,41 @@ export function SettingsPageClient(): React.ReactNode {
           {sections[activeSection]()}
         </div>
       </div>
+
+      <Dialog open={accentPickerOpen} onOpenChange={setAccentPickerOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Choose your pastel main color</DialogTitle>
+            <DialogDescription>
+              Click a color to preview and save instantly. Purple is the default.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-5 gap-3 pt-1">
+            {THEME_ACCENTS.map((accent) => {
+              const active = accentId === accent.id;
+              return (
+                <button
+                  key={accent.id}
+                  type="button"
+                  title={accent.label}
+                  onClick={() => {
+                    setAccentId(accent.id);
+                    localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent.id);
+                    applyThemeAccent(accent.id, false);
+                    window.dispatchEvent(new CustomEvent("mc-theme-accent-changed", { detail: { id: accent.id } }));
+                    toast.success(`Main color set to ${accent.label}`);
+                  }}
+                  className={[
+                    "size-8 rounded-md border-2 transition-transform hover:scale-105 cursor-pointer",
+                    active ? "border-foreground" : "border-transparent",
+                  ].join(" ")}
+                  style={{ backgroundColor: accent.swatch }}
+                />
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Clean Reset Dialog ────────────────────────────────────────── */}
       <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>

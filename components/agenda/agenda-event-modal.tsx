@@ -162,24 +162,24 @@ const WEEKDAYS = [
   { value: "0", label: "Sun" },
 ];
 
-/** Generate all 96 time options at 15-minute intervals (00:00 … 23:45) */
-const TIME_OPTIONS: { value: string; label: string }[] = (() => {
+function buildTimeOptions(stepMinutes: number): { value: string; label: string }[] {
+  const step = Math.max(1, Math.min(60, stepMinutes));
   const opts: { value: string; label: string }[] = [];
   for (let h = 0; h < 24; h++) {
-    for (let m = 0; m < 60; m += 15) {
+    for (let m = 0; m < 60; m += step) {
       const val = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
       opts.push({ value: val, label: val });
     }
   }
   return opts;
-})();
-
-/** Snap a minute value to the nearest 15-minute mark */
-function snapTo15(minutes: number): number {
-  return Math.round(minutes / 15) * 15;
 }
 
-function getCurrentTimeInTz(tz: string): string {
+function snapToStep(minutes: number, stepMinutes: number): number {
+  const step = Math.max(1, Math.min(60, stepMinutes));
+  return Math.round(minutes / step) * step;
+}
+
+function getCurrentTimeInTz(tz: string, stepMinutes = 15): string {
   try {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: tz,
@@ -189,7 +189,7 @@ function getCurrentTimeInTz(tz: string): string {
     }).formatToParts(new Date());
     const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "10", 10);
     const rawM = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-    const snapped = snapTo15(rawM);
+    const snapped = stepMinutes === 0 ? rawM : snapToStep(rawM, stepMinutes);
     // Handle overflow (e.g. 23:53 → snaps to 60 → next hour)
     const finalH = snapped >= 60 ? (h + 1) % 24 : h;
     const finalM = snapped >= 60 ? 0 : snapped;
@@ -356,6 +356,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   const [form, setForm] = useState<AgendaEventFormData>(initialData ? buildInitialForm(initialData) : defaultForm);
   const [error, setError] = useState("");
   const [step, setStep] = useState(0);
+  const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
 
   const initialDataRef = useRef(initialData);
   useEffect(() => {
@@ -365,18 +366,52 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   }, [open, initialData]);
 
   useEffect(() => {
+    const raw = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
+    const safe = Number.isFinite(raw) ? Math.max(0, Math.min(60, raw)) : 15;
+    setAgendaTimeStepMinutes(safe);
+
+    const onStepChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ value?: number }>;
+      const value = custom.detail?.value;
+      const nextRaw = typeof value === "number" ? value : Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
+      const next = Number.isFinite(nextRaw) ? Math.max(0, Math.min(60, nextRaw)) : 15;
+      setAgendaTimeStepMinutes(next);
+    };
+
+    window.addEventListener("mc-agenda-time-step-changed", onStepChanged as EventListener);
+    return () => window.removeEventListener("mc-agenda-time-step-changed", onStepChanged as EventListener);
+  }, []);
+
+  useEffect(() => {
     if (open) {
       const data = initialDataRef.current;
-      setForm(data ? buildInitialForm(data) : defaultForm);
+      setForm(
+        data
+          ? buildInitialForm(data)
+          : {
+              ...defaultForm,
+              startDate: getTodayInTz(defaultForm.timezone),
+              startTime: getCurrentTimeInTz(defaultForm.timezone, agendaTimeStepMinutes),
+            }
+      );
       setError("");
       // When editing, skip to details step since type is already set
       setStep(isEditing ? 1 : 0);
     }
-  }, [open]);
+  }, [open, isEditing, agendaTimeStepMinutes]);
 
   const updateField = <K extends keyof AgendaEventFormData>(key: K, value: AgendaEventFormData[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setError("");
+  };
+
+  const timeOptions = buildTimeOptions(agendaTimeStepMinutes === 0 ? 15 : agendaTimeStepMinutes);
+
+  const isValidTimeValue = (value: string): boolean => {
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(value)) return false;
+    if (agendaTimeStepMinutes === 0) return true;
+    const minute = Number(value.split(":")[1] ?? "0");
+    return minute % agendaTimeStepMinutes === 0;
   };
 
   const toggleWeekday = (day: string) => {
@@ -402,6 +437,11 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
     }
     if (s === 2) {
       if (form.taskType === "one_time" && !form.startDate) return "Date is required for one-time events";
+      if (!isValidTimeValue(form.startTime)) {
+        return agendaTimeStepMinutes === 0
+          ? "Time must be a valid HH:mm value"
+          : `Time must align to ${agendaTimeStepMinutes}-minute intervals`;
+      }
       if (form.taskType === "repeatable" && form.startDateMode === "specific" && !form.startDate) return "Start date is required";
       if (form.taskType === "repeatable" && form.endDateMode === "specific" && !form.endDate) return "End date is required";
     }
@@ -736,16 +776,26 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
               <Label className="text-xs font-semibold text-foreground/80">
                 Time
               </Label>
-              <Select value={form.startTime} onValueChange={(v) => updateField("startTime", v)}>
-                <SelectTrigger className="h-10 w-full cursor-pointer">
-                  <SelectValue placeholder="Select time" />
-                </SelectTrigger>
-                <SelectContent className="max-h-[280px]">
-                  {TIME_OPTIONS.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {agendaTimeStepMinutes === 0 ? (
+                <Input
+                  type="time"
+                  step={60}
+                  value={form.startTime}
+                  onChange={(e) => updateField("startTime", e.target.value)}
+                  className="h-10"
+                />
+              ) : (
+                <Select value={form.startTime} onValueChange={(v) => updateField("startTime", v)}>
+                  <SelectTrigger className="h-10 w-full cursor-pointer">
+                    <SelectValue placeholder="Select time" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[280px]">
+                    {timeOptions.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
         </>
@@ -777,16 +827,26 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
               <Label className="text-xs font-semibold text-foreground/80">
                 Time
               </Label>
-              <Select value={form.startTime} onValueChange={(v) => updateField("startTime", v)}>
-                <SelectTrigger className="h-10 w-full cursor-pointer">
-                  <SelectValue placeholder="Select time" />
-                </SelectTrigger>
-                <SelectContent className="max-h-[280px]">
-                  {TIME_OPTIONS.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {agendaTimeStepMinutes === 0 ? (
+                <Input
+                  type="time"
+                  step={60}
+                  value={form.startTime}
+                  onChange={(e) => updateField("startTime", e.target.value)}
+                  className="h-10"
+                />
+              ) : (
+                <Select value={form.startTime} onValueChange={(v) => updateField("startTime", v)}>
+                  <SelectTrigger className="h-10 w-full cursor-pointer">
+                    <SelectValue placeholder="Select time" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[280px]">
+                    {timeOptions.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
 
@@ -879,7 +939,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
         <Label htmlFor="ae-tz" className="text-xs font-semibold text-foreground/80">
           Timezone
         </Label>
-        <Select value={form.timezone} onValueChange={(v) => { updateField("timezone", v); updateField("startDate", getTodayInTz(v)); updateField("startTime", getCurrentTimeInTz(v)); }}>
+        <Select value={form.timezone} onValueChange={(v) => { updateField("timezone", v); updateField("startDate", getTodayInTz(v)); updateField("startTime", getCurrentTimeInTz(v, agendaTimeStepMinutes)); }}>
           <SelectTrigger id="ae-tz" className="h-10 w-full cursor-pointer">
             <SelectValue />
           </SelectTrigger>

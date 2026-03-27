@@ -130,55 +130,60 @@ export function AgendaClientWrapper() {
   };
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
 
-  // Load agents + processes ONCE when wrapper mounts (AbortController survives StrictMode remount)
+  // Load agents on mount (needed for details sheet labels). Processes are lazy-loaded on modal open.
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
       try {
-        const [agentsRes, procsRes] = await Promise.all([
-          fetch("/api/agents", { cache: "reload", signal: controller.signal }),
-          fetch("/api/processes", { cache: "reload", signal: controller.signal }),
-        ]);
+        const agentsRes = await fetch("/api/agents", { cache: "reload", signal: controller.signal });
         const agentsJson = await agentsRes.json();
-        const procsJson = await procsRes.json();
-        if (!controller.signal.aborted) {
-          if (agentsJson.agents) {
-            setAgents(
-              agentsJson.agents.map((a: { id: string; name: string }) => ({
-                id: a.id,
-                name: a.name,
-              }))
-            );
-          }
-          if (procsJson.processes) {
-            setProcesses(
-              procsJson.processes
-                .filter((p: { latest_version_id: string | null }) => p.latest_version_id)
-                .map((p: { id: string; name: string; version_number: number | null; latest_version_id: string }) => ({
-                  id: p.latest_version_id,
-                  name: p.name,
-                  version_number: p.version_number ?? 1,
-                }))
-            );
-          }
+        if (!controller.signal.aborted && agentsJson.agents) {
+          setAgents(
+            agentsJson.agents.map((a: { id: string; name: string }) => ({
+              id: a.id,
+              name: a.name,
+            }))
+          );
         }
       } catch (err) {
         if (err instanceof Error && err.name !== "AbortError") {
-          // only log real errors
-          console.error("[agenda] failed to load agents/processes", err);
+          console.error("[agenda] failed to load agents", err);
         }
       }
     })();
     return () => controller.abort();
   }, []);
 
+  const loadProcessOptions = useCallback(async () => {
+    if (processes.length > 0) return;
+    try {
+      const procsRes = await fetch("/api/processes", { cache: "reload" });
+      const procsJson = await procsRes.json();
+      if (procsJson.processes) {
+        setProcesses(
+          procsJson.processes
+            .filter((p: { latest_version_id: string | null }) => p.latest_version_id)
+            .map((p: { id: string; name: string; version_number: number | null; latest_version_id: string }) => ({
+              id: p.latest_version_id,
+              name: p.name,
+              version_number: p.version_number ?? 1,
+            }))
+        );
+      }
+    } catch {
+      // non-fatal; modal still opens
+    }
+  }, [processes.length]);
+
   const openNewEventModal = () => {
+    void loadProcessOptions();
     setEditingEvent(null);
     setEditingFormData({});
     setEventModalOpen(true);
   };
 
   const handleCopyEvent = useCallback((event: AgendaEventSummary) => {
+    void loadProcessOptions();
     // Open the create modal pre-filled with the copied event's data (no editingEvent = creates new)
     setEditingEvent(null);
     setEditingFormData({
@@ -186,14 +191,15 @@ export function AgendaClientWrapper() {
       title: `${event.title} (copy)`,
     });
     setEventModalOpen(true);
-  }, []);
+  }, [loadProcessOptions]);
 
   const handleDayClick = useCallback((date: Date) => {
+    void loadProcessOptions();
     const dateStr = date.toISOString().split("T")[0]; // yyyy-MM-dd
     setEditingEvent(null);
     setEditingFormData({ startDate: dateStr });
     setEventModalOpen(true);
-  }, []);
+  }, [loadProcessOptions]);
 
   const handleEventDrop = useCallback(async (eventId: string, newDate: string, newTime?: string) => {
     try {
@@ -246,10 +252,11 @@ export function AgendaClientWrapper() {
   }, []);
 
   const openEditEventModal = useCallback((event: AgendaEventSummary) => {
+    void loadProcessOptions();
     setEditingEvent(event);
     setEditingFormData(buildFormFromEvent(event));
     setEventModalOpen(true);
-  }, []);
+  }, [loadProcessOptions]);
 
   const handleModalSave = (data: AgendaEventFormData) => {
     const isRecurring = data.recurrence !== "none" && editingEvent && editingEvent.recurrence !== "none";
@@ -446,10 +453,12 @@ export function AgendaClientWrapper() {
 
   return (
     <>
-      <div className="@container/main flex flex-1 flex-col overflow-auto">
-        <div className="flex flex-col gap-4 pt-4 pb-6 md:gap-6">
-          <AgendaStatsCards />
-          <div className="px-4 lg:px-6">
+      <div className="@container/main flex flex-1 min-h-0 flex-col overflow-hidden">
+        <div className="flex flex-1 min-h-0 flex-col gap-4 pt-4 pb-4 md:gap-6">
+          <div className="shrink-0">
+            <AgendaStatsCards />
+          </div>
+          <div className="px-4 lg:px-6 flex-1 min-h-0">
             <AgendaPageClient
               onEditEvent={openEditEventModal}
               onCopyEvent={handleCopyEvent}

@@ -36,9 +36,15 @@ export async function GET(): Promise<Response> {
   try {
     const sql = getSql();
 
-    // Read configurable limit from settings
-    const [settingsRow] = await sql`SELECT sidebar_activity_count FROM worker_settings WHERE id = 1 LIMIT 1`;
-    const limit = Math.min(Math.max(Number(settingsRow?.sidebar_activity_count ?? 8), 1), 30);
+    // Read configurable limit from settings.
+    // Older schemas may not have sidebar_activity_count yet, so fall back to 8.
+    let limit = 8;
+    try {
+      const [settingsRow] = await sql`SELECT sidebar_activity_count FROM worker_settings WHERE id = 1 LIMIT 1`;
+      limit = Math.min(Math.max(Number(settingsRow?.sidebar_activity_count ?? 8), 1), 30);
+    } catch {
+      limit = 8;
+    }
 
     // Fetch recent ticket activity
     const ticketRows = await sql`
@@ -100,7 +106,7 @@ export async function GET(): Promise<Response> {
     entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     return NextResponse.json({ ok: true, entries: entries.slice(0, limit), limit });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { ok: false, error: "Failed to load recent activity" },
       { status: 500 },

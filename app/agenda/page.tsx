@@ -17,9 +17,11 @@ export default function AgendaPage() {
       }
     >
       <AppSidebar variant="inset" initialUser={null} />
-      <SidebarInset>
+      <SidebarInset className="h-svh md:h-[calc(100svh-1rem)] overflow-hidden min-h-0">
         <PageHeader page="Agenda" />
-        <AgendaClientWrapper />
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <AgendaClientWrapper />
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

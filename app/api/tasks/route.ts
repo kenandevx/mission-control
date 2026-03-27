@@ -63,12 +63,12 @@ async function logTaskAudit(
 
 async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
   const rows = await sql`
-    select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count
+    select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name
     from worker_settings
     where id = 1
     limit 1
   `;
-  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null, agenda_concurrency: 5, default_execution_window_minutes: 30, auto_retry_after_minutes: 0, max_retries: 1, default_fallback_model: "", sidebar_activity_count: 8 };
+  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null, agenda_concurrency: 5, default_execution_window_minutes: 30, auto_retry_after_minutes: 0, max_retries: 1, default_fallback_model: "", sidebar_activity_count: 8, instance_name: "Mission Control" };
   return {
     enabled: Boolean(row.enabled),
     pollIntervalSeconds: Number(row.poll_interval_seconds || 20),
@@ -80,6 +80,7 @@ async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
     maxRetries: Number(row.max_retries ?? 1),
     defaultFallbackModel: String(row.default_fallback_model || ""),
     sidebarActivityCount: Number(row.sidebar_activity_count ?? 8),
+    instanceName: String(row.instance_name || "Mission Control"),
   };
 }
 
@@ -643,6 +644,7 @@ export async function POST(request: Request) {
       const maxRetries = body.maxRetries === undefined ? null : Number(body.maxRetries);
       const defaultFallbackModel = body.defaultFallbackModel === undefined ? null : String(body.defaultFallbackModel || "");
       const sidebarActivityCount = body.sidebarActivityCount === undefined ? null : Number(body.sidebarActivityCount);
+      const instanceName = body.instanceName === undefined ? null : String(body.instanceName || "").trim();
 
       if (pollIntervalSeconds !== null && (!Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds < 5 || pollIntervalSeconds > 300)) {
         return fail("pollIntervalSeconds must be between 5 and 300");
@@ -665,10 +667,13 @@ export async function POST(request: Request) {
       if (sidebarActivityCount !== null && (!Number.isFinite(sidebarActivityCount) || sidebarActivityCount < 1 || sidebarActivityCount > 30)) {
         return fail("sidebarActivityCount must be between 1 and 30");
       }
+      if (instanceName !== null && instanceName.length > 80) {
+        return fail("instanceName must be 80 characters or less");
+      }
 
       await sql`
-        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count)
-        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(${sidebarActivityCount}, 8))
+        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name)
+        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(${sidebarActivityCount}, 8), coalesce(nullif(${instanceName}, ''), 'Mission Control'))
         on conflict (id) do update
           set enabled = coalesce(${enabled}, worker_settings.enabled),
               poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
@@ -679,6 +684,7 @@ export async function POST(request: Request) {
               max_retries = coalesce(${maxRetries}, worker_settings.max_retries),
               default_fallback_model = coalesce(${defaultFallbackModel}, worker_settings.default_fallback_model),
               sidebar_activity_count = coalesce(${sidebarActivityCount}, worker_settings.sidebar_activity_count),
+              instance_name = coalesce(nullif(${instanceName}, ''), worker_settings.instance_name),
               updated_at = now()
       `;
 
