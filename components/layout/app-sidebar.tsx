@@ -14,6 +14,7 @@ import {
 } from "@tabler/icons-react"
 
 import { NavMain } from "@/components/layout/nav-main"
+import { NavActivity } from "@/components/layout/nav-activity"
 import { NavUser } from "@/components/layout/nav-user"
 import {
   Sidebar,
@@ -89,6 +90,7 @@ export function AppSidebar({ initialUser, ...props }: AppSidebarProps) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
+        <NavActivity />
       </SidebarContent>
       <SidebarFooter>
         <div className="px-2 pb-2 text-xs text-muted-foreground">Version v{APP_VERSION}</div>

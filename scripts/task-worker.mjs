@@ -5,7 +5,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import { normalizeWorkerSettings, capacityLeft } from "../lib/tasks/worker-core.mjs";
 import { enqueueTicket } from "../lib/tasks/ticket-queue.mjs";
 
@@ -56,6 +56,292 @@ async function getOpenclawHome() {
     return path.dirname(configPath);
   } catch {
     return "/home/clawdbot/.openclaw";
+  }
+}
+
+// ── DB migration for cleanup columns ──────────────────────────────────────────
+async function ensureCleanupColumns() {
+  try {
+    await sql`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS cleanup_status text`;
+    await sql`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS cleanup_details jsonb`;
+    await sql`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS session_snapshots jsonb`;
+    console.log("[task-worker] Cleanup columns ensured");
+  } catch (err) {
+    console.warn("[task-worker] ensureCleanupColumns failed:", err.message);
+  }
+}
+
+// ── Cleanup system helpers (ported from agenda-worker) ────────────────────────
+
+const CLEANUP_ALLOWED_PREFIXES = ["/home/clawdbot/", "/storage/", "/tmp/"];
+const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.resolve(process.env.HOME || "/home/clawdbot", ".openclaw");
+
+/**
+ * Get session file path and current byte offset for an agent's main session.
+ */
+async function getAgentSessionSnapshot(agentId) {
+  const sessionsPath = path.resolve(OPENCLAW_HOME, `agents/${agentId}/sessions/sessions.json`);
+  try {
+    const raw = await fs.readFile(sessionsPath, "utf8");
+    const data = JSON.parse(raw);
+    const mainKey = `agent:${agentId}:main`;
+    const entry = data[mainKey];
+    if (!entry?.sessionId) {
+      console.warn(`[task-worker] No main session found for agent ${agentId} (key: ${mainKey})`);
+      return null;
+    }
+    const sessionFilePath = entry.sessionFile || path.resolve(OPENCLAW_HOME, `agents/${agentId}/sessions/${entry.sessionId}.jsonl`);
+    let byteOffset = 0;
+    try {
+      const s = await fs.stat(sessionFilePath);
+      byteOffset = s.size;
+    } catch {
+      // File doesn't exist yet — offset 0
+    }
+    return { agentId, sessionFilePath, byteOffset };
+  } catch (err) {
+    console.warn(`[task-worker] Failed to read sessions.json for agent ${agentId}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Parse session file bytes for memory_store IDs.
+ */
+function parseMemoryStoreIds(sessionBytes) {
+  const ids = [];
+  const text = sessionBytes.toString("utf8");
+  const lines = text.split("\n").filter(Boolean);
+  for (const line of lines) {
+    try {
+      if (!line.includes("memory_store")) continue;
+      const uuidRegex = /["']id["']\s*:\s*["']([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["']/gi;
+      let match;
+      while ((match = uuidRegex.exec(line)) !== null) {
+        ids.push(match[1]);
+      }
+    } catch { /* skip */ }
+  }
+  return [...new Set(ids)];
+}
+
+/**
+ * Delete memory entries from Qdrant via REST API.
+ */
+async function deleteQdrantMemories(memoryIds) {
+  if (memoryIds.length === 0) return { deleted: [], errors: [] };
+  const deleted = [];
+  const errors = [];
+  try {
+    const resp = await fetch("http://localhost:6333/collections/memories/points/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points: memoryIds }),
+    });
+    if (resp.ok) {
+      deleted.push(...memoryIds);
+      console.log(`[task-worker] Deleted ${memoryIds.length} memory entries from Qdrant`);
+    } else {
+      const body = await resp.text();
+      errors.push(`Qdrant delete failed (${resp.status}): ${body.slice(0, 200)}`);
+    }
+  } catch (err) {
+    errors.push(`Qdrant delete error: ${err.message}`);
+  }
+  return { deleted, errors };
+}
+
+/**
+ * Run full 3-phase cleanup for a failed ticket.
+ */
+async function runFailureCleanup(ticketId, snapshots, detectedFilePaths, attemptStartTime) {
+  const details = { memoryIds: [], filesDeleted: [], sessionsRestored: 0, errors: [] };
+
+  try {
+    await sql`UPDATE tickets SET cleanup_status = 'pending' WHERE id = ${ticketId}::uuid`;
+
+    // Phase 1: Qdrant memory cleanup
+    for (const snap of snapshots) {
+      try {
+        const { sessionFilePath, byteOffset } = snap;
+        const currentStat = await fs.stat(sessionFilePath).catch(() => null);
+        if (!currentStat || currentStat.size <= byteOffset) continue;
+
+        const fd = await fs.open(sessionFilePath, "r");
+        try {
+          const bytesToRead = currentStat.size - byteOffset;
+          const buf = Buffer.alloc(bytesToRead);
+          await fd.read(buf, 0, bytesToRead, byteOffset);
+          const memoryIds = parseMemoryStoreIds(buf);
+          if (memoryIds.length > 0) {
+            const result = await deleteQdrantMemories(memoryIds);
+            details.memoryIds.push(...result.deleted);
+            details.errors.push(...result.errors);
+          }
+        } finally {
+          await fd.close();
+        }
+      } catch (err) {
+        details.errors.push(`Memory cleanup for ${snap.agentId}: ${err.message}`);
+      }
+    }
+
+    // Phase 2: Session file truncation
+    for (const snap of snapshots) {
+      try {
+        const { sessionFilePath, byteOffset, agentId } = snap;
+        if (!sessionFilePath || typeof byteOffset !== "number" || byteOffset < 0) {
+          details.errors.push(`${agentId}: invalid snapshot data`);
+          continue;
+        }
+        if (!sessionFilePath.includes("/.openclaw/agents/") || !sessionFilePath.endsWith(".jsonl")) {
+          details.errors.push(`${agentId}: path rejected (safety check)`);
+          continue;
+        }
+        const currentStat = await fs.stat(sessionFilePath).catch(() => null);
+        if (!currentStat || !currentStat.isFile()) continue;
+        if (currentStat.size > byteOffset) {
+          await fs.truncate(sessionFilePath, byteOffset);
+          details.sessionsRestored++;
+          console.log(`[task-worker] Truncated session for agent ${agentId}: ${currentStat.size} → ${byteOffset} bytes`);
+        }
+      } catch (err) {
+        details.errors.push(`Session truncate for ${snap.agentId}: ${err.message}`);
+      }
+    }
+
+    // Phase 3: File deletion
+    const startTime = new Date(attemptStartTime).getTime();
+    for (const filePath of detectedFilePaths) {
+      try {
+        if (!CLEANUP_ALLOWED_PREFIXES.some((p) => filePath.startsWith(p))) continue;
+        const cleaned = filePath.replace(/[.,;:!?)}\]]+$/, "");
+        const fstat = await fs.stat(cleaned).catch(() => null);
+        if (!fstat || !fstat.isFile()) continue;
+        const ctime = fstat.ctimeMs || fstat.birthtimeMs;
+        if (ctime && ctime > startTime) {
+          await fs.unlink(cleaned);
+          details.filesDeleted.push(cleaned);
+          console.log(`[task-worker] Deleted file: ${cleaned}`);
+        }
+      } catch (err) {
+        details.errors.push(`File delete ${filePath}: ${err.message}`);
+      }
+    }
+
+    const status = details.errors.length > 0 ? "failed" : "completed";
+    await sql`
+      UPDATE tickets
+      SET cleanup_status = ${status}, cleanup_details = ${sql.json(details)}
+      WHERE id = ${ticketId}::uuid
+    `;
+    console.log(`[task-worker] Cleanup ${status} for ticket ${ticketId}: ${details.sessionsRestored} sessions restored, ${details.memoryIds.length} memories deleted, ${details.filesDeleted.length} files deleted`);
+  } catch (err) {
+    console.error(`[task-worker] Cleanup error for ticket ${ticketId}:`, err.message);
+    details.errors.push(`Cleanup error: ${err.message}`);
+    try {
+      await sql`
+        UPDATE tickets
+        SET cleanup_status = 'failed', cleanup_details = ${sql.json(details)}
+        WHERE id = ${ticketId}::uuid
+      `;
+    } catch { /* best effort */ }
+  }
+  return details;
+}
+
+/**
+ * Recover incomplete cleanups from previous crashes.
+ */
+async function recoverPendingCleanups() {
+  try {
+    const pending = await sql`
+      SELECT id, session_snapshots, cleanup_details
+      FROM tickets
+      WHERE cleanup_status = 'pending'
+    `;
+    if (pending.length === 0) return;
+    console.log(`[task-worker] Recovering ${pending.length} pending cleanup(s)...`);
+    for (const row of pending) {
+      const snapshots = row.session_snapshots || [];
+      await runFailureCleanup(row.id, snapshots, [], new Date(0));
+    }
+  } catch (err) {
+    console.warn(`[task-worker] Pending cleanup recovery failed:`, err.message);
+  }
+}
+
+// ── Per-agent execution locks ─────────────────────────────────────────────────
+
+async function acquireAgentLocks(agentIds, referenceId) {
+  const acquired = [];
+  const failed = [];
+  for (const agentId of agentIds) {
+    try {
+      const [row] = await sql`
+        INSERT INTO agent_execution_locks (agent_id, occurrence_id, locked_at)
+        VALUES (${agentId}, ${referenceId}, now())
+        ON CONFLICT DO NOTHING
+        RETURNING agent_id
+      `;
+      if (row) {
+        acquired.push(agentId);
+      } else {
+        failed.push(agentId);
+      }
+    } catch (err) {
+      console.warn(`[task-worker] Lock acquire error for agent ${agentId}:`, err.message);
+      failed.push(agentId);
+    }
+  }
+  return { acquired, failed };
+}
+
+async function releaseAgentLocks(agentIds) {
+  for (const agentId of agentIds) {
+    try {
+      await sql`DELETE FROM agent_execution_locks WHERE agent_id = ${agentId}`;
+    } catch (err) {
+      console.warn(`[task-worker] Lock release error for agent ${agentId}:`, err.message);
+    }
+  }
+}
+
+// ── Stale ticket recovery ─────────────────────────────────────────────────────
+
+async function recoverStaleTickets() {
+  try {
+    const stale = await sql`
+      UPDATE tickets
+      SET execution_state = 'needs_retry', updated_at = now()
+      WHERE execution_state = 'executing'
+        AND updated_at < now() - interval '15 minutes'
+      RETURNING id, title, assigned_agent_id, telegram_chat_id
+    `;
+    if (stale.length > 0) {
+      console.log(`[task-worker] Recovered ${stale.length} stale ticket(s) → needs_retry`);
+      for (const row of stale) {
+        await writeActivity(row.id, "Stale recovery", "Ticket stuck executing >15min — set to needs_retry", "warning");
+        const chatId = row.telegram_chat_id ?? await getRecentChatId(await workspaceId(), row.assigned_agent_id || "main");
+        await sendTelegramMessage(row, `⚠️ Stale ticket recovered: "${row.title}"\n\nStuck executing >15min. Status set to needs_retry.\nRetry manually in Mission Control.`, chatId);
+      }
+    }
+
+    // Also recover stale agent execution locks (>20 minutes old)
+    try {
+      const staleLocks = await sql`
+        DELETE FROM agent_execution_locks
+        WHERE locked_at < now() - interval '20 minutes'
+        RETURNING agent_id
+      `;
+      if (staleLocks.length > 0) {
+        console.log(`[task-worker] Recovered ${staleLocks.length} stale agent execution lock(s): ${staleLocks.map(r => r.agent_id).join(", ")}`);
+      }
+    } catch (err) {
+      console.warn("[task-worker] Stale agent lock recovery failed:", err.message);
+    }
+  } catch (err) {
+    console.warn("[task-worker] Stale ticket recovery failed:", err.message);
   }
 }
 
@@ -216,7 +502,13 @@ async function markNeedsRetry(ticketId, ticket) {
   const chatId = ticket.telegram_chat_id ?? await getRecentChatId(await workspaceId(), ticket.assigned_agent_id || 'main');
   await sendTelegramMessage(ticket, `⚠️ Ticket "${ticket.title}" needs manual retry (all retries exhausted)`, chatId);
 }
-async function executeTicket(ticket, boardId, wid) { const ticketId=ticket.id; let agentId=ticket.assigned_agent_id; const agentRows = await sql`select id from agents where workspace_id = ${wid} and openclaw_agent_id = ${agentId} limit 1`; if (agentRows.length===0) agentId='main'; const chatIdForDelivery = ticket.telegram_chat_id ?? await getRecentChatId(wid, agentId);
+async function executeTicket(ticket, boardId, wid) {
+  const ticketId = ticket.id;
+  let agentId = ticket.assigned_agent_id;
+  const agentRows = await sql`select id from agents where workspace_id = ${wid} and openclaw_agent_id = ${agentId} limit 1`;
+  if (agentRows.length === 0) agentId = 'main';
+  const chatIdForDelivery = ticket.telegram_chat_id ?? await getRecentChatId(wid, agentId);
+
   // Execution window check (use DB time to avoid clock skew)
   const scheduledFor = ticket.scheduled_for ? new Date(ticket.scheduled_for) : null;
   const windowMinutes = ticket.execution_window_minutes || 60;
@@ -230,81 +522,169 @@ async function executeTicket(ticket, boardId, wid) { const ticketId=ticket.id; l
       return;
     }
   }
+
+  // ── Per-agent execution lock ──────────────────────────────────────────
+  const uniqueAgentIds = [agentId];
+  const { acquired: lockedAgents, failed: lockFailed } = await acquireAgentLocks(uniqueAgentIds, ticketId);
+  if (lockFailed.length > 0) {
+    await releaseAgentLocks(lockedAgents);
+    console.log(`[task-worker] Agent lock contention for ticket ${ticketId} (agents: ${lockFailed.join(", ")}), re-queuing with 30s delay`);
+    const requeue = new Queue("tickets", { connection: redisConnection });
+    await requeue.add("ticket-" + ticketId, { ticketId }, { delay: 30000 });
+    await requeue.close();
+    return;
+  }
+
   // Postgres claim lock
   const [claimed] = await sql`UPDATE tickets SET execution_state = 'executing', updated_at = now() WHERE id = ${ticketId}::uuid AND execution_state IN ('queued', 'ready_to_execute', 'picked_up') RETURNING id`;
-  if (!claimed) { console.log(`[task-worker] Ticket ${ticketId} already claimed, skipping`); return; }
-  await writeActivity(ticketId, "Picked up", "Worker picked up ticket.", "info"); await sendTelegramMessage(ticket, `🚀 Starting execution of "${ticket.title}"`, chatIdForDelivery); const [subtaskRows, commentRows, processRows] = await Promise.all([
-    sql`select title, completed from ticket_subtasks where ticket_id = ${ticketId}::uuid order by position asc, created_at asc`,
-    sql`select content, author_name, created_at from ticket_comments where ticket_id = ${ticketId}::uuid order by created_at asc limit 20`,
-    ticket.process_version_ids?.length ? sql`
-      select p.name as process_name, p.description as process_description,
-             ps.step_order, ps.title as step_title, ps.instruction
-      from process_versions pv
-      join processes p on p.id = pv.process_id
-      join process_steps ps on ps.process_version_id = pv.id
-      where pv.id = ANY(${ticket.process_version_ids}::uuid[])
-      order by p.name, ps.step_order asc
-    ` : [],
-  ]);
-const grouped = [];
-for (const r of processRows) {
-  let g = grouped.find(g => g.process_name === r.process_name);
-  if (!g) { g = { process_name: r.process_name, process_description: r.process_description, steps: [] }; grouped.push(g); }
-  g.steps.push(r);
-}
-const prompt = buildTicketPrompt(ticket, subtaskRows, commentRows, grouped, 'Execute the above ticket. Report progress via activity tools and mark completion when done.'); const args = ["agent", "--agent", agentId, "--message", prompt, "--json"]; let result; try { const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env }); const parsed = JSON.parse(stdout); const inner = parsed?.result ?? parsed; const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : []; result = { success: true, result: parsed, _rawPayloads: rawPayloads }; } catch (error) { result = { success: false, error: error.message }; }
-  // ── Auto-retry (configurable, default 1) ──────────────────────────────
-  const [settingsRow] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
-  const maxRetries = Number(settingsRow?.max_retries ?? 1);
-  let retryCount = 0;
-  while (!result.success && retryCount < maxRetries) {
-    retryCount++;
-    console.log(`[task-worker] Auto-retry ${retryCount}/${maxRetries} for ${ticketId}...`);
-    await writeActivity(ticketId, "Retry", `Attempt ${retryCount + 1} — retrying immediately...`, "warning");
+  if (!claimed) {
+    await releaseAgentLocks(lockedAgents);
+    console.log(`[task-worker] Ticket ${ticketId} already claimed, skipping`);
+    return;
+  }
+
+  // ── Session snapshot (pre-execution) ──────────────────────────────────
+  const sessionSnapshots = [];
+  const snap = await getAgentSessionSnapshot(agentId);
+  if (snap) sessionSnapshots.push(snap);
+  // Save snapshots to ticket for crash recovery
+  await sql`UPDATE tickets SET session_snapshots = ${sql.json(sessionSnapshots)} WHERE id = ${ticketId}::uuid`;
+
+  const attemptStartTime = new Date();
+
+  // ── 5-minute long-running alert ───────────────────────────────────────
+  const alertTimer = setTimeout(async () => {
+    const msg = `⏱️ Long-running ticket alert\n\nTicket: "${ticket.title}"\nID: ${ticketId}\nAgent: ${agentId}\nRunning for: 5+ minutes\nStarted: ${attemptStartTime.toISOString()}\n\nCheck Mission Control for details.`;
+    await sendTelegramMessage(ticket, msg, chatIdForDelivery);
+    console.warn(`[task-worker] Long-running alert sent for ticket "${ticket.title}" (${ticketId})`);
+  }, 5 * 60 * 1000);
+
+  // Track all detected file paths for cleanup
+  const allDetectedFilePaths = [];
+
+  try {
+    await writeActivity(ticketId, "Picked up", "Worker picked up ticket.", "info");
+    await sendTelegramMessage(ticket, `🚀 Starting execution of "${ticket.title}"`, chatIdForDelivery);
+
+    const [subtaskRows, commentRows, processRows] = await Promise.all([
+      sql`select title, completed from ticket_subtasks where ticket_id = ${ticketId}::uuid order by position asc, created_at asc`,
+      sql`select content, author_name, created_at from ticket_comments where ticket_id = ${ticketId}::uuid order by created_at asc limit 20`,
+      ticket.process_version_ids?.length ? sql`
+        select p.name as process_name, p.description as process_description,
+               ps.step_order, ps.title as step_title, ps.instruction
+        from process_versions pv
+        join processes p on p.id = pv.process_id
+        join process_steps ps on ps.process_version_id = pv.id
+        where pv.id = ANY(${ticket.process_version_ids}::uuid[])
+        order by p.name, ps.step_order asc
+      ` : [],
+    ]);
+
+    const grouped = [];
+    for (const r of processRows) {
+      let g = grouped.find(g => g.process_name === r.process_name);
+      if (!g) { g = { process_name: r.process_name, process_description: r.process_description, steps: [] }; grouped.push(g); }
+      g.steps.push(r);
+    }
+
+    const prompt = buildTicketPrompt(ticket, subtaskRows, commentRows, grouped, 'Execute the above ticket. Report progress via activity tools and mark completion when done.');
+    const args = ["agent", "--agent", agentId, "--message", prompt, "--json"];
+
+    let result;
     try {
       const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env });
       const parsed = JSON.parse(stdout);
       const inner = parsed?.result ?? parsed;
       const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : [];
       result = { success: true, result: parsed, _rawPayloads: rawPayloads };
-    } catch (retryErr) {
-      result = { success: false, error: retryErr.message };
+    } catch (error) {
+      result = { success: false, error: error.message };
     }
-  }
 
-  // Fallback model retry if still failing and event has one set
-  if (!result.success && ticket.fallback_model) {
-    console.log(`[task-worker] All retries failed for ${ticketId}, trying fallback model: ${ticket.fallback_model}`);
-    await writeActivity(ticketId, "Fallback retry", `Retrying with fallback model: ${ticket.fallback_model}`, "warning");
-    const fallbackArgs = ["agent", "--agent", agentId, "--model", ticket.fallback_model, "--message", prompt, "--json"];
+    // ── Auto-retry (configurable, default 1) ────────────────────────────
+    const [settingsRow] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
+    const maxRetries = Number(settingsRow?.max_retries ?? 1);
+    let retryCount = 0;
+    while (!result.success && retryCount < maxRetries) {
+      retryCount++;
+      console.log(`[task-worker] Auto-retry ${retryCount}/${maxRetries} for ${ticketId}...`);
+      await writeActivity(ticketId, "Retry", `Attempt ${retryCount + 1} — retrying immediately...`, "warning");
+      try {
+        const { stdout } = await execFileAsync("openclaw", args, { timeout: 10 * 60 * 1000, env: process.env });
+        const parsed = JSON.parse(stdout);
+        const inner = parsed?.result ?? parsed;
+        const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : [];
+        result = { success: true, result: parsed, _rawPayloads: rawPayloads };
+      } catch (retryErr) {
+        result = { success: false, error: retryErr.message };
+      }
+    }
+
+    // Fallback model retry if still failing and event has one set
+    if (!result.success && ticket.fallback_model) {
+      console.log(`[task-worker] All retries failed for ${ticketId}, trying fallback model: ${ticket.fallback_model}`);
+      await writeActivity(ticketId, "Fallback retry", `Retrying with fallback model: ${ticket.fallback_model}`, "warning");
+      const fallbackArgs = ["agent", "--agent", agentId, "--model", ticket.fallback_model, "--message", prompt, "--json"];
+      try {
+        const { stdout } = await execFileAsync("openclaw", fallbackArgs, { timeout: 10 * 60 * 1000, env: process.env });
+        const parsed = JSON.parse(stdout);
+        const inner = parsed?.result ?? parsed;
+        const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : [];
+        result = { success: true, result: parsed, _rawPayloads: rawPayloads };
+        await writeActivity(ticketId, "Fallback model used", `Switched to ${ticket.fallback_model} after retry failures.`, "warning");
+      } catch (fbError) {
+        result = { success: false, error: fbError.message };
+      }
+    }
+
+    if (result.success) {
+      const payloads = result._rawPayloads;
+      const responseText = payloads.map(p => p.text ?? '').join('\n').trim();
+      if (responseText) await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${ticketId}::uuid, ${agentId}, 'Agent response', ${responseText}, 'info')`;
+
+      // Collect detected file paths
+      const attachedFiles = await extractAndAttachFiles(ticketId, responseText);
+      if (responseText) {
+        const pathMatches = [...responseText.matchAll(FILE_PATH_REGEX)];
+        for (const m of pathMatches) allDetectedFilePaths.push(m[1]);
+      }
+
+      if (chatIdForDelivery && responseText) await sendTelegramMessage(ticket, responseText, chatIdForDelivery);
+      const completedIds = await getColumnIdsByTitle(boardId, ["completed", "done"]);
+      const completedColumnId = completedIds[0] ?? null;
+      if (completedColumnId) await sql`update tickets set execution_state='done', column_id=${completedColumnId}::uuid, updated_at=now() where id=${ticketId}::uuid`;
+      else await sql`update tickets set execution_state='done', updated_at=now() where id=${ticketId}::uuid`;
+      await writeActivity(ticketId, "Completed", `Agent "${agentId}" completed successfully.`, "success");
+    } else {
+      await writeActivity(ticketId, "Failed", `Agent "${agentId}" failed: ${result.error}`, "error");
+
+      // Run 3-phase cleanup before marking as needs_retry
+      console.log(`[task-worker] Running failure cleanup for ticket ${ticketId}...`);
+      try {
+        await runFailureCleanup(ticketId, sessionSnapshots, [...new Set(allDetectedFilePaths)], attemptStartTime);
+      } catch (cleanupErr) {
+        console.error(`[task-worker] Cleanup failed for ticket ${ticketId}:`, cleanupErr.message);
+      }
+
+      await markNeedsRetry(ticketId, ticket);
+      if (chatIdForDelivery) await sendTelegramMessage(ticket, `⚠️ Ticket "${ticket.title}" needs manual retry (all retries exhausted)`, chatIdForDelivery);
+    }
+  } catch (fatalError) {
+    // Fatal error — run cleanup + mark needs_retry
+    console.error(`[task-worker] Fatal error executing ticket ${ticketId}:`, fatalError.message);
     try {
-      const { stdout } = await execFileAsync("openclaw", fallbackArgs, { timeout: 10 * 60 * 1000, env: process.env });
-      const parsed = JSON.parse(stdout);
-      const inner = parsed?.result ?? parsed;
-      const rawPayloads = Array.isArray(inner?.payloads) ? inner.payloads : [];
-      result = { success: true, result: parsed, _rawPayloads: rawPayloads };
-      await writeActivity(ticketId, "Fallback model used", `Switched to ${ticket.fallback_model} after retry failures.`, "warning");
-    } catch (fbError) {
-      result = { success: false, error: fbError.message };
+      await runFailureCleanup(ticketId, sessionSnapshots, [...new Set(allDetectedFilePaths)], attemptStartTime);
+    } catch (cleanupErr) {
+      console.error(`[task-worker] Cleanup failed for ticket ${ticketId}:`, cleanupErr.message);
     }
-  }
-
-  if (result.success) {
-    const payloads = result._rawPayloads;
-    const responseText = payloads.map(p => p.text ?? '').join('\n').trim();
-    if (responseText) await sql`insert into ticket_activity (ticket_id, source, event, details, level) values (${ticketId}::uuid, ${agentId}, 'Agent response', ${responseText}, 'info')`;
-    await extractAndAttachFiles(ticketId, responseText);
-    if (chatIdForDelivery && responseText) await sendTelegramMessage(ticket, responseText, chatIdForDelivery);
-    const completedIds = await getColumnIdsByTitle(boardId, ["completed", "done"]);
-    const completedColumnId = completedIds[0] ?? null;
-    if (completedColumnId) await sql`update tickets set execution_state='done', column_id=${completedColumnId}::uuid, updated_at=now() where id=${ticketId}::uuid`;
-    else await sql`update tickets set execution_state='done', updated_at=now() where id=${ticketId}::uuid`;
-    await writeActivity(ticketId, "Completed", `Agent "${agentId}" completed successfully.`, "success");
-  } else {
-    await writeActivity(ticketId, "Failed", `Agent "${agentId}" failed: ${result.error}`, "error");
+    await writeActivity(ticketId, "Fatal error", String(fatalError.message || fatalError), "error");
     await markNeedsRetry(ticketId, ticket);
-    if (chatIdForDelivery) await sendTelegramMessage(ticket, `⚠️ Ticket "${ticket.title}" needs manual retry (all retries exhausted)`, chatIdForDelivery);
-  } }
+  } finally {
+    // Always release locks and clear timers
+    clearTimeout(alertTimer);
+    await releaseAgentLocks(lockedAgents);
+  }
+}
 async function handleTicket(ticket, boardId, wid) { try { if (ticket.execution_mode === 'planned' && ticket.approval_state !== 'approved') { if (!ticket.plan_text) await generatePlan(ticket, wid); else await sql`update tickets set execution_state='awaiting_approval', updated_at=now() where id=${ticket.id}::uuid and execution_state != 'awaiting_approval'`; return; } await executeTicket(ticket, boardId, wid); } catch (error) { await writeActivity(ticket.id, "Worker error", String(error.message || error), "error"); await markNeedsRetry(ticket.id, ticket); } }
 async function promoteAutoApprove(wid, queueName) { const rows = await sql`select id, board_id from tickets where workspace_id = ${wid}::uuid and queue_name = ${queueName} and auto_approve = true and (execution_state = 'open' or execution_state = 'pending') and (scheduled_for is null or scheduled_for <= now()) limit 100`; for (const row of rows) { const inProgressIds = await getColumnIdsByTitle(row.board_id, ["in progress", "doing"]); const toColumnId = inProgressIds[0]; if (!toColumnId) continue; await sql`update tickets set column_id=${toColumnId}::uuid, execution_state='queued', approval_state='approved', approved_by='auto', approved_at=now(), updated_at=now() where id=${row.id}::uuid`; await writeActivity(row.id, "Auto approved", "Auto-approved and queued by worker.", "info"); await enqueueTicket(row.id, { source: "auto-approve" }); } }
 async function processJob(job) { const wid = await workspaceId(); if (!wid) return { skipped: true }; const settings = await getSettings(); if (!settings.enabled) return { skipped: true }; await promoteAutoApprove(wid, myQueue); const ticketId = String(job.data?.ticketId || job.id?.replace(/^ticket-/, "") || ""); if (!ticketId) return { skipped: true }; const rows = await sql`select t.*, b.id as board_id from tickets t join boards b on b.id = t.board_id where t.id=${ticketId}::uuid limit 1`; const ticket = rows[0]; if (!ticket) return { skipped: true }; if (["executing","done"].includes(ticket.execution_state)) return { skipped: true }; if (!['queued','ready_to_execute','picked_up','planning','awaiting_approval'].includes(ticket.execution_state)) return { skipped: true }; await handleTicket(ticket, ticket.board_id, wid); return { ok: true }; }
@@ -328,6 +708,22 @@ async function twWriteHeartbeat(status = "running", lastError = null) {
   }
 }
 let heartbeatTimer = null;
-async function main() { await getOpenclawConfig(); await setupWorker(); await setupNotifyBridge(); await handleTick(); promoteTimer = setInterval(async () => { void promoteAutoApprove(await workspaceId(), myQueue); }, 60000); settingsTimer = setInterval(() => { void getSettings(); }, 30000); await twWriteHeartbeat("running"); heartbeatTimer = setInterval(() => twWriteHeartbeat("running"), 30000); console.log("[task-worker] started (bullmq)"); await new Promise(() => {}); }
-async function shutdown() { if (shuttingDown) return; shuttingDown = true; if (promoteTimer) clearInterval(promoteTimer); if (settingsTimer) clearInterval(settingsTimer); if (heartbeatTimer) clearInterval(heartbeatTimer); await twWriteHeartbeat("stopped").catch(() => {}); if (ticketWorker) await ticketWorker.close(); await sql.end({ timeout: 5 }); process.exit(0); }
+let staleRecoveryTimer = null;
+async function main() {
+  await getOpenclawConfig();
+  await ensureCleanupColumns();
+  await recoverPendingCleanups();
+  await recoverStaleTickets();
+  await setupWorker();
+  await setupNotifyBridge();
+  await handleTick();
+  promoteTimer = setInterval(async () => { void promoteAutoApprove(await workspaceId(), myQueue); }, 60000);
+  settingsTimer = setInterval(() => { void getSettings(); }, 30000);
+  staleRecoveryTimer = setInterval(() => { void recoverStaleTickets(); }, 5 * 60 * 1000);
+  await twWriteHeartbeat("running");
+  heartbeatTimer = setInterval(() => twWriteHeartbeat("running"), 30000);
+  console.log("[task-worker] started (bullmq)");
+  await new Promise(() => {});
+}
+async function shutdown() { if (shuttingDown) return; shuttingDown = true; if (promoteTimer) clearInterval(promoteTimer); if (settingsTimer) clearInterval(settingsTimer); if (heartbeatTimer) clearInterval(heartbeatTimer); if (staleRecoveryTimer) clearInterval(staleRecoveryTimer); await twWriteHeartbeat("stopped").catch(() => {}); if (ticketWorker) await ticketWorker.close(); await sql.end({ timeout: 5 }); process.exit(0); }
 process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); await main();

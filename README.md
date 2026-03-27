@@ -195,28 +195,75 @@ Step 4: needs_retry + Telegram alert
 
 #### Retry Flow (Kanban Tickets)
 
-Same flow as agenda events:
+Same flow as agenda events, now with full cleanup/lock/recovery parity:
 ```
-Step 1: Execute ticket via assigned agent
+Step 1: Snapshot agent session + acquire per-agent lock
+   ↓ lock held? → re-queue with 30s delay (not failed)
+   ↓
+Step 2: Execute ticket via assigned agent
    ↓ succeeded? → done, move to Completed ✅
    ↓ failed?
-Step 2: Auto-retry (same model, instant, up to max_retries times)
+Step 3: Auto-retry (same model, instant, up to max_retries times)
    ↓ succeeded? → done ✅
    ↓ all retries failed?
-Step 3: Fallback model (if ticket has one set) → one more try
+Step 4: Fallback model (if ticket has one set) → one more try
    ↓ succeeded? → done ✅
    ↓ failed?
-Step 4: Set status to "needs_retry"
+Step 5: 3-phase cleanup (Qdrant → session → files)
+   ↓
+Step 6: Set status to "needs_retry"
         → Telegram notification sent
         → User decides: Edit / Retry Now / Delete
 ```
 
-Tickets also use:
+Tickets now use the full resilience stack:
 - **DB-time execution window check** (default 60 min) — missed window → `needs_retry` (not `expired`)
 - **Postgres claim lock** — same as agenda, prevents duplicate execution
+- **Per-agent execution locks** — prevents concurrent ticket+agenda execution on same agent
+- **Session snapshots + 3-phase cleanup** — identical to agenda: Qdrant memories → session truncation → file deletion
+- **5-minute long-running alert** — Telegram notification when ticket executes >5 min
+- **Stale ticket recovery** — every 5 min, tickets stuck in `executing` >15 min → `needs_retry` + Telegram alert
+- **Crash recovery** — pending cleanups re-run on worker startup
 - **max_retries from Settings** — shared with agenda events
 
 #### What Happens When...
+
+**Ticket execution fails and cleanup runs:**
+1. All retries exhausted (including fallback model if set)
+2. Worker runs 3-phase cleanup: Qdrant memories → session truncation → file deletion
+3. Agent's main session file truncated to pre-execution state (agent has no memory of the failed run)
+4. Memory entries created during the run are deleted from Qdrant
+5. Files created during the run (in allowed paths) are deleted
+6. Cleanup details saved to `tickets.cleanup_details` jsonb column
+7. Status set to `needs_retry` → Telegram alert → user decides
+
+**Ticket stuck as "executing" for >15 min (stale recovery):**
+1. Task worker runs `recoverStaleTickets()` every 5 minutes
+2. Finds tickets with `execution_state = 'executing'` and `updated_at` older than 15 min
+3. Sets them to `needs_retry` + writes activity log entry
+4. Sends Telegram alert for each: "Stuck executing >15min — retry manually"
+5. Also cleans up stale agent execution locks (>20 min old)
+
+**Two tickets for same agent queued simultaneously (per-agent lock):**
+1. First ticket acquires per-agent execution lock (`agent_execution_locks` table)
+2. Second ticket sees lock is held → re-queued via BullMQ with 30s delay (not failed)
+3. After first ticket completes → lock released in finally block → second ticket picks up
+4. No concurrent execution on the same agent, no context pollution
+
+**Cleanup crashes mid-way for a ticket:**
+1. `cleanup_status` was set to `'pending'` on the ticket before cleanup started
+2. On worker restart, `recoverPendingCleanups()` finds tickets with `cleanup_status = 'pending'`
+3. Re-runs cleanup (all operations are idempotent — safe to repeat)
+4. Session truncation: if already truncated, file size ≤ offset → no-op
+5. Qdrant delete: deleting non-existent points is a no-op
+6. File delete: missing files are silently skipped
+
+**Agent session snapshot/restore on ticket failure:**
+1. Before execution, worker snapshots the agent's session file byte offset
+2. Snapshot saved to `tickets.session_snapshots` jsonb column (survives worker crash)
+3. On failure: session file truncated back to snapshot offset → agent has zero memory of failed attempt
+4. JSONL session files are append-only, so truncation cleanly removes only appended messages
+5. Only affects the agent's main session — Telegram sessions are separate files, never touched
 
 **Event or ticket fails:**
 1. Worker auto-retries instantly (up to `max_retries` times, default 1)
@@ -417,6 +464,17 @@ Phase 3: File Deletion
 - **Correct attempt numbering**: always reads max(attempt_no) from DB before creating new attempt
 - **Cumulative context**: each process step receives previous outputs for coherent multi-step execution
 
+### Live Activity Sidebar
+- Unified real-time activity feed in the global sidebar
+- Shows the last 8 events from **both** the ticket system and agenda system
+- Powered by a unified SSE endpoint (`/api/notifications/stream`) that listens on `ticket_activity` and `agenda_change` pg_notify channels
+- Each entry shows: colored level dot, event name, item title, relative timestamp
+- "Live" indicator with green/amber connection status dot
+- Entries animate in with subtle fade+slide
+- Color-coded by level: emerald (success), red (error), amber (warning), blue (info)
+- Works in both expanded and collapsed sidebar states
+- **Singleton SSE connection**: EventSource lives at module level, survives React remounts — no reconnect flicker when switching pages, entries persist across navigation
+
 ### Service Health Monitoring
 - All workers report heartbeats to the `service_health` table every 30 seconds
 - **Services tab** in the Logs page with per-service status cards, PID monitoring, start/stop/restart controls, and log viewer
@@ -548,6 +606,7 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 | `/api/agents` | GET | Agent discovery (reads from DB + runtime) |
 | `/api/skills` | GET | Workspace skills list |
 | `/api/system` | POST | System management (update, reset, uninstall) |
+| `/api/notifications/stream` | GET | Unified SSE stream (ticket + agenda activity for sidebar) |
 | `/api/events` | GET | SSE stream (ticket activity, worker ticks) |
 | `/api/agent/logs/stream` | GET | SSE stream (agent logs) |
 
