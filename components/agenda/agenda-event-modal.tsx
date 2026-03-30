@@ -73,6 +73,7 @@ export type AgendaEventFormData = {
   frequency: Frequency;
   executionWindowMinutes: number;
   fallbackModel: string;
+  timeStepMinutes?: number;
 };
 
 export type AgentOption = { id: string; name: string };
@@ -454,6 +455,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
       recurrence: derivedRecurrence,
       startDate: form.startDateMode === "now" && form.taskType === "repeatable" ? new Date().toISOString().split("T")[0] : form.startDate,
       endDate: form.endDateMode === "forever" ? "" : form.endDate,
+      timeStepMinutes: agendaTimeStepMinutes,
     };
 
     onSave(saveData);

@@ -373,6 +373,7 @@ export function AgendaClientWrapper() {
         status: data.status,
         processVersionIds: data.processVersionIds,
         modelOverride: data.modelOverride || "",
+        timeStepMinutes: data.timeStepMinutes,
       };
 
       if (scope) {
@@ -423,6 +424,7 @@ export function AgendaClientWrapper() {
           status: data.status,
           processVersionIds: data.processVersionIds,
           modelOverride: data.modelOverride || "",
+          timeStepMinutes: data.timeStepMinutes,
         }),
       });
       const json = await res.json();
