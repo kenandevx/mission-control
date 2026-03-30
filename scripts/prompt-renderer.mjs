@@ -47,7 +47,7 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
     "- Do not invent missing facts.",
   ];
   if (ad) {
-    outputRules.push(`- If you create any output files, save them to: ${ad}`);
+    outputRules.push(`- If you create any output files, save them to: ${ad} (unless the request specifies a different path).`);
   }
   sections.push(`Output rules:\n${outputRules.join("\n")}`);
 
