@@ -50,7 +50,7 @@ import {
   IconUser,
   IconBrain,
   IconFileText,
-  IconProgressCheck,
+
   IconPencil,
   IconTrendingUp,
   IconDownload,
@@ -592,9 +592,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
           {/* ── Tabs ── */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
             <div className="px-6 pt-3">
-              <TabsList className="grid w-full grid-cols-3 h-9">
+              <TabsList className="grid w-full grid-cols-2 h-9">
                 <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
-                <TabsTrigger value="runs" className="text-xs">Runs</TabsTrigger>
                 <TabsTrigger value="output" className="text-xs">Output</TabsTrigger>
               </TabsList>
             </div>
@@ -793,73 +792,16 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
               </TabsContent>
 
               {/* ── Runs ── */}
-              <TabsContent value="runs" className="flex flex-col gap-3 mt-0">
+              {/* ── Output ── */}
+              <TabsContent value="output" className="flex flex-col gap-3 mt-0">
                 {loadingRuns ? (
                   <div className="flex flex-col gap-3">
                     {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
                   </div>
-                ) : attempts.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <IconProgressCheck className="size-10 text-muted-foreground/50 mb-3" />
-                    <p className="text-sm text-muted-foreground">No runs yet.</p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-muted-foreground/60 flex items-center gap-1.5">
-                      <IconFileText className="size-3" />
-                      Click a run to select it, then switch to the <strong>Output</strong> tab to see its full results.
-                    </p>
-                    {attempts.map((attempt) => {
-                      const isSelected = attempt.id === selectedAttemptId;
-                      return (
-                        <Card
-                          key={attempt.id}
-                          data-slot="card"
-                          className={`cursor-pointer transition-all group ${
-                            isSelected
-                              ? "border-primary ring-1 ring-primary/20 bg-gradient-to-t from-primary/12 to-card shadow-xs"
-                              : "hover:bg-muted/30 bg-gradient-to-t from-primary/12 to-card shadow-xs"
-                          }`}
-                          onClick={() => {
-                            setSelectedAttemptId(attempt.id);
-                            setActiveTab("output");
-                          }}
-                        >
-                          <CardHeader>
-                            <CardDescription>Attempt #{attempt.attempt_no}<AttemptDuration startedAt={attempt.started_at} finishedAt={attempt.finished_at} /></CardDescription>
-                            <CardTitle className="text-base font-semibold">
-                              <ResultBadge status={attempt.status} />
-                            </CardTitle>
-                            <CardAction>
-                              <span className="text-[10px] text-primary font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-                                View output →
-                              </span>
-                            </CardAction>
-                          </CardHeader>
-                          <CardFooter className="flex-col items-start gap-1 text-sm">
-                            <div className="text-muted-foreground text-xs">
-                              {formatTime(attempt.started_at, event.timezone)}
-                              {attempt.finished_at && ` → ${formatTime(attempt.finished_at, event.timezone)}`}
-                            </div>
-                            {(attempt.summary || attempt.error_message) && (
-                              <div className="text-xs text-muted-foreground truncate max-w-full">
-                                {attempt.summary || attempt.error_message}
-                              </div>
-                            )}
-                          </CardFooter>
-                        </Card>
-                      );
-                    })}
-                  </>
-                )}
-              </TabsContent>
-
-              {/* ── Output ── */}
-              <TabsContent value="output" className="flex flex-col gap-3 mt-0">
-                {!selectedAttempt ? (
+                ) : !selectedAttempt ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <IconFileText className="size-10 text-muted-foreground/50 mb-3" />
-                    <p className="text-sm text-muted-foreground">Select a run to view output.</p>
+                    <p className="text-sm text-muted-foreground">No output yet — event hasn&apos;t run.</p>
                   </div>
                 ) : attemptSteps.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
