@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     if (!latest) return ok({ steps: [], attempt: null });
 
     const steps = await sql`
-      select id, step_order, process_step_id, skill_key, agent_id, status, input_payload, output_payload, error_message
+      select id, step_order, process_step_id, skill_key, agent_id, status, input_payload, output_payload, artifact_payload, error_message
       from agenda_run_steps
       where run_attempt_id = ${latest.id}
       order by step_order asc
