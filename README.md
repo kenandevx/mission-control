@@ -19,6 +19,14 @@ Local-first dashboard for OpenClaw — boards, agent scheduling, real-time logs,
 ### Status guard: cannot revert active → draft
 - PATCH endpoint rejects `status: "draft"` if the event has any occurrences (running, succeeded, needs_retry, failed, or scheduled). Returns 409.
 
+### Removed Runs tab from event details
+- Event details sheet now has 2 tabs: **Overview** and **Output** (was 3 with Runs).
+- Output tab auto-shows the latest attempt's results directly — no need to select a run first.
+- Run history stays in the DB for debugging but isn't shown to the user.
+
+### Removed hardcoded context from execution template
+- The static "Context: Agenda event execution" line has been removed from the prompt template — it added no value.
+
 ### Skill context in prompt template (not CLI flag)
 - Removed non-existent `--skill` flag from agenda-worker.
 - Skill keys are now embedded in the rendered instruction template as `[Skill: <key>]` per step.
