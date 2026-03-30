@@ -6,8 +6,10 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Worker, Queue } from "bullmq";
-import { normalizeWorkerSettings, capacityLeft } from "../lib/tasks/worker-core.mjs";
+import { normalizeWorkerSettings } from "../lib/tasks/worker-core.mjs";
 import { enqueueTicket } from "../lib/tasks/ticket-queue.mjs";
+import { getRunArtifactDir, writeRunArtifacts, ensureArtifactDir } from "./runtime-artifacts.mjs";
+import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,7 +32,6 @@ let shuttingDown = false;
 let promoteTimer = null;
 let settingsTimer = null;
 let ticketWorker = null;
-let notifyListenerActive = false;
 const myQueue = process.env.WORKER_QUEUE || "default";
 // Retry logic: 1 instant retry + 1 fallback retry = max 3 attempts total
 let latestSettings = { enabled: true, pollIntervalSeconds: 20, maxConcurrency: 3 };
@@ -210,20 +211,26 @@ async function runFailureCleanup(ticketId, snapshots, detectedFilePaths, attempt
       }
     }
 
-    // Phase 3: File deletion
+    // Phase 3: File deletion (targeted, never folder-recursive)
     const startTime = new Date(attemptStartTime).getTime();
     for (const filePath of detectedFilePaths) {
       try {
-        if (!CLEANUP_ALLOWED_PREFIXES.some((p) => filePath.startsWith(p))) continue;
-        const cleaned = filePath.replace(/[.,;:!?)}\]]+$/, "");
-        const fstat = await fs.stat(cleaned).catch(() => null);
-        if (!fstat || !fstat.isFile()) continue;
-        const ctime = fstat.ctimeMs || fstat.birthtimeMs;
-        if (ctime && ctime > startTime) {
-          await fs.unlink(cleaned);
-          details.filesDeleted.push(cleaned);
-          console.log(`[task-worker] Deleted file: ${cleaned}`);
-        }
+        const cleaned = String(filePath || "").replace(/[.,;:!?)}\]]+$/, "").trim();
+        if (!cleaned) continue;
+        if (!CLEANUP_ALLOWED_PREFIXES.some((p) => cleaned.startsWith(p))) continue;
+
+        const fstat = await fs.lstat(cleaned).catch(() => null);
+        if (!fstat || !fstat.isFile()) continue; // never touch folders/symlinks
+
+        const ctime = Number(fstat.ctimeMs || 0);
+        const mtime = Number(fstat.mtimeMs || 0);
+        const birth = Number(fstat.birthtimeMs || 0);
+        const changedAfterAttempt = ctime > startTime || mtime > startTime || birth > startTime;
+        if (!changedAfterAttempt) continue; // don't touch pre-existing files
+
+        await fs.unlink(cleaned);
+        details.filesDeleted.push(cleaned);
+        console.log(`[task-worker] Deleted file: ${cleaned}`);
       } catch (err) {
         details.errors.push(`File delete ${filePath}: ${err.message}`);
       }
@@ -356,7 +363,7 @@ async function getRecentChatId(wid, agentId) {
     try {
       const raw = await fs.readFile(sessionsPath, "utf8");
       const data = JSON.parse(raw);
-      for (const [key, val] of Object.entries(data)) {
+      for (const [, val] of Object.entries(data)) {
         if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
           return String(val.deliveryContext.to).replace(/^telegram:/, "");
         }
@@ -366,42 +373,36 @@ async function getRecentChatId(wid, agentId) {
   return null;
 }
 function buildTicketPrompt(ticket, subtaskRows, commentRows, processRows, suffix) {
-  const processSection = processRows.length > 0
-    ? [`### Processes`, ``, ...processRows.map((p, pi) => [
-        `${pi + 1}. **${p.process_name}**${p.process_description ? `: ${p.process_description}` : ""}`,
-        ``,
-        ...(p.steps || []).map((s, si) => `  ${pi + 1}.${si + 1}. ${s.step_title}: ${s.instruction}`),
-        ``,
-      ])]
-    : [];
+  const contextParts = [];
+  if (ticket.description) contextParts.push(ticket.description);
+  if (ticket.priority) contextParts.push(`Priority: ${ticket.priority}`);
+  if (ticket.due_date) contextParts.push(`Due: ${new Date(ticket.due_date).toISOString().split("T")[0]}`);
+  if (Array.isArray(ticket.tags) && ticket.tags.length > 0) contextParts.push(`Tags: ${ticket.tags.join(", ")}`);
+  if (subtaskRows.length > 0) contextParts.push(`Subtasks: ${subtaskRows.filter(s => s.completed).length}/${subtaskRows.length}`);
+  if (commentRows.length > 0) {
+    contextParts.push("Notes:");
+    contextParts.push(commentRows.map(c => `- [${c.author_name}] ${new Date(c.created_at).toISOString().split("T")[0]}: ${c.content}`).join("\n"));
+  }
 
-  const parts = [
-    `## Ticket: ${ticket.title}`,
-    ``,
-    ticket.description && `### Description`,
-    ticket.description || null,
-    ``,
-    subtaskRows.length > 0 && `### Subtasks`,
-    subtaskRows.length > 0 ? subtaskRows.map((s, i) => `  ${i + 1}. [${s.completed ? 'x' : ' '}] ${s.title}`).join('\n') : null,
-    ``,
-    commentRows.length > 0 && `### Notes / Comments`,
-    commentRows.length > 0 ? commentRows.map(c => `[${c.author_name}] ${new Date(c.created_at).toISOString().split('T')[0]}: ${c.content}`).join('\n') : null,
-    ``,
-    ticket.plan_text && `### Plan`,
-    ticket.plan_text || null,
-    ``,
-    `### Metadata`,
-    ticket.priority && `Priority: ${ticket.priority}`,
-    ticket.due_date && `Due: ${new Date(ticket.due_date).toISOString().split('T')[0]}`,
-    Array.isArray(ticket.tags) && ticket.tags.length > 0 && `Tags: ${ticket.tags.join(', ')}`,
-    subtaskRows.length > 0 && `Subtask progress: ${subtaskRows.filter(s => s.completed).length}/${subtaskRows.length}`,
-    ticket.checklist_total > 0 && ticket.checklist_total !== subtaskRows.length && `Legacy checklist progress: ${ticket.checklist_done}/${ticket.checklist_total}`,
-    ``,
-    ...processSection,
-    ``,
-    suffix,
-  ];
-  return parts.filter(Boolean).join('\n');
+  const instructions = [];
+  processRows.forEach((p) => {
+    (p.steps || []).forEach((s) => {
+      instructions.push({
+        order: Number(s.step_order),
+        title: s.step_title || p.process_name,
+        instruction: s.instruction,
+      });
+    });
+  });
+
+  const request = [ticket.plan_text ? `Plan:\n${ticket.plan_text}` : null, suffix].filter(Boolean).join("\n\n");
+
+  return renderUnifiedTaskMessage({
+    title: ticket.title,
+    context: contextParts.join("\n"),
+    instructions,
+    request,
+  });
 }
 async function workspaceId() { const rows = await sql`select id from workspaces order by created_at asc limit 1`; return rows[0]?.id ?? null; }
 async function getSettings() { const rows = await sql`select enabled, poll_interval_seconds, max_concurrency from worker_settings where id=1 limit 1`; latestSettings = normalizeWorkerSettings({ enabled: rows[0]?.enabled ?? true, pollIntervalSeconds: rows[0]?.poll_interval_seconds ?? 20, maxConcurrency: rows[0]?.max_concurrency ?? 3 }); return latestSettings; }
@@ -588,6 +589,21 @@ async function executeTicket(ticket, boardId, wid) {
     }
 
     const prompt = buildTicketPrompt(ticket, subtaskRows, commentRows, grouped, 'Execute the above ticket. Report progress via activity tools and mark completion when done.');
+    const runId = `${ticketId}-${Date.now()}`;
+    const artifactDir = getRunArtifactDir({ kind: "ticket", entityId: ticketId, runId });
+    await writeRunArtifacts({
+      dir: artifactDir,
+      requestText: prompt,
+      meta: {
+        ticketId,
+        boardId,
+        agentId,
+        fallbackModel: ticket.fallback_model || null,
+        processVersionIds: ticket.process_version_ids || [],
+        createdAt: new Date().toISOString(),
+      },
+    });
+
     const args = ["agent", "--agent", agentId, "--message", prompt, "--json"];
 
     let result;
@@ -644,6 +660,30 @@ async function executeTicket(ticket, boardId, wid) {
 
       // Collect detected file paths
       const attachedFiles = await extractAndAttachFiles(ticketId, responseText);
+      await writeRunArtifacts({
+        dir: artifactDir,
+        responseText,
+        meta: {
+          ticketId,
+          success: true,
+          attachedFilesCount: attachedFiles.length,
+          finishedAt: new Date().toISOString(),
+        },
+      });
+
+      if (attachedFiles.length > 0) {
+        const filesDir = path.resolve(artifactDir, "files");
+        await ensureArtifactDir(filesDir);
+        for (const f of attachedFiles) {
+          try {
+            const sourcePath = String(f.path || "");
+            if (!sourcePath) continue;
+            const dest = path.resolve(filesDir, path.basename(sourcePath));
+            await fs.copyFile(sourcePath, dest);
+          } catch {}
+        }
+      }
+
       if (responseText) {
         const pathMatches = [...responseText.matchAll(FILE_PATH_REGEX)];
         for (const m of pathMatches) allDetectedFilePaths.push(m[1]);
@@ -656,6 +696,16 @@ async function executeTicket(ticket, boardId, wid) {
       else await sql`update tickets set execution_state='done', updated_at=now() where id=${ticketId}::uuid`;
       await writeActivity(ticketId, "Completed", `Agent "${agentId}" completed successfully.`, "success");
     } else {
+      await writeRunArtifacts({
+        dir: artifactDir,
+        responseText: `Error: ${result.error || "unknown"}`,
+        meta: {
+          ticketId,
+          success: false,
+          error: result.error || "unknown",
+          finishedAt: new Date().toISOString(),
+        },
+      });
       await writeActivity(ticketId, "Failed", `Agent "${agentId}" failed: ${result.error}`, "error");
 
       // Run 3-phase cleanup before marking as needs_retry
@@ -687,9 +737,42 @@ async function executeTicket(ticket, boardId, wid) {
 }
 async function handleTicket(ticket, boardId, wid) { try { if (ticket.execution_mode === 'planned' && ticket.approval_state !== 'approved') { if (!ticket.plan_text) await generatePlan(ticket, wid); else await sql`update tickets set execution_state='awaiting_approval', updated_at=now() where id=${ticket.id}::uuid and execution_state != 'awaiting_approval'`; return; } await executeTicket(ticket, boardId, wid); } catch (error) { await writeActivity(ticket.id, "Worker error", String(error.message || error), "error"); await markNeedsRetry(ticket.id, ticket); } }
 async function promoteAutoApprove(wid, queueName) { const rows = await sql`select id, board_id from tickets where workspace_id = ${wid}::uuid and queue_name = ${queueName} and auto_approve = true and (execution_state = 'open' or execution_state = 'pending') and (scheduled_for is null or scheduled_for <= now()) limit 100`; for (const row of rows) { const inProgressIds = await getColumnIdsByTitle(row.board_id, ["in progress", "doing"]); const toColumnId = inProgressIds[0]; if (!toColumnId) continue; await sql`update tickets set column_id=${toColumnId}::uuid, execution_state='queued', approval_state='approved', approved_by='auto', approved_at=now(), updated_at=now() where id=${row.id}::uuid`; await writeActivity(row.id, "Auto approved", "Auto-approved and queued by worker.", "info"); await enqueueTicket(row.id, { source: "auto-approve" }); } }
-async function processJob(job) { const wid = await workspaceId(); if (!wid) return { skipped: true }; const settings = await getSettings(); if (!settings.enabled) return { skipped: true }; await promoteAutoApprove(wid, myQueue); const ticketId = String(job.data?.ticketId || job.id?.replace(/^ticket-/, "") || ""); if (!ticketId) return { skipped: true }; const rows = await sql`select t.*, b.id as board_id from tickets t join boards b on b.id = t.board_id where t.id=${ticketId}::uuid limit 1`; const ticket = rows[0]; if (!ticket) return { skipped: true }; if (["executing","done"].includes(ticket.execution_state)) return { skipped: true }; if (!['queued','ready_to_execute','picked_up','planning','awaiting_approval'].includes(ticket.execution_state)) return { skipped: true }; await handleTicket(ticket, ticket.board_id, wid); return { ok: true }; }
+async function processJob(job) {
+  const wid = await workspaceId();
+  if (!wid) return { skipped: true };
+
+  const settings = await getSettings();
+  if (!settings.enabled) return { skipped: true };
+
+  await promoteAutoApprove(wid, myQueue);
+
+  const ticketId = String(job.data?.ticketId || job.id?.replace(/^ticket-/, "") || "");
+  if (!ticketId) return { skipped: true };
+
+  const rows = await sql`select t.*, b.id as board_id from tickets t join boards b on b.id = t.board_id where t.id=${ticketId}::uuid limit 1`;
+  const ticket = rows[0];
+  if (!ticket) return { skipped: true };
+
+  if (["executing", "done"].includes(ticket.execution_state)) return { skipped: true };
+  if (!["queued", "ready_to_execute", "picked_up", "planning", "awaiting_approval"].includes(ticket.execution_state)) return { skipped: true };
+
+  if (ticket.scheduled_for) {
+    const now = Date.now();
+    const scheduledAt = new Date(ticket.scheduled_for).getTime();
+    if (Number.isFinite(scheduledAt) && scheduledAt > now) {
+      const delay = Math.max(5000, scheduledAt - now);
+      const requeue = new Queue("tickets", { connection: redisConnection });
+      await requeue.add(`ticket-${ticketId}-scheduled`, { ticketId }, { delay, removeOnComplete: true, removeOnFail: true });
+      await requeue.close();
+      return { skipped: true, reason: "scheduled_future", delayMs: delay };
+    }
+  }
+
+  await handleTicket(ticket, ticket.board_id, wid);
+  return { ok: true };
+}
 async function setupWorker() { ticketWorker = new Worker("tickets", async (job) => { try { return await processJob(job); } catch (error) { console.error("[task-worker] job failed", error); throw error; } }, { connection: redisConnection, concurrency: Math.max(1, Number(process.env.TICKET_WORKER_CONCURRENCY || latestSettings.maxConcurrency || 3)), stalledInterval: 30000 }); ticketWorker.on("stalled", (jobId) => console.warn("[task-worker] stalled job", jobId)); ticketWorker.on("completed", (job) => console.log(`[task-worker] completed ${job.id}`)); ticketWorker.on("failed", (job, err) => console.error(`[task-worker] failed ${job?.id}`, err?.message || err)); }
-async function setupNotifyBridge() { await sql.listen('ticket_ready', async (payload) => { if (shuttingDown) return; const ticketId = String(payload || '').trim(); if (ticketId) await enqueueTicket(ticketId, { source: 'notify' }); }); notifyListenerActive = true; }
+async function setupNotifyBridge() { await sql.listen('ticket_ready', async (payload) => { if (shuttingDown) return; const ticketId = String(payload || '').trim(); if (ticketId) await enqueueTicket(ticketId, { source: 'notify' }); }); }
 async function handleTick() { try { const settings = await getSettings(); const out = { picked: 0, reason: "bullmq" }; await sql`update worker_settings set last_tick_at=now(), updated_at=now() where id=1`; await sql`select pg_notify('worker_tick', ${JSON.stringify({ picked: out.picked, reason: out.reason, interval: settings.pollIntervalSeconds, concurrency: settings.maxConcurrency, at: new Date().toISOString() })})`; } catch (error) { console.error("[task-worker] tick failed", error); } }
 async function twWriteHeartbeat(status = "running", lastError = null) {
   try {

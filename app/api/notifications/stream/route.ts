@@ -3,10 +3,6 @@ import { getSql } from "@/lib/local-db";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function sse(data: unknown, event = "activity"): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
 type ActivityEntry = {
   id: string;
   type: "ticket" | "agenda";
@@ -15,23 +11,8 @@ type ActivityEntry = {
   agent: string;
   level: string;
   timestamp: string;
+  targetUrl?: string;
 };
-
-function levelFromStatus(status: string): string {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-    case "needs_retry":
-      return "error";
-    case "running":
-    case "scheduled":
-    case "queued":
-      return "info";
-    default:
-      return "info";
-  }
-}
 
 function levelFromAction(action: string): string {
   switch (action) {
@@ -125,6 +106,7 @@ export async function GET(request: Request): Promise<Response> {
               agent: row.source || "Worker",
               level: row.level || "info",
               timestamp: row.occurred_at || new Date().toISOString(),
+              targetUrl: row.ticket_id ? `/boards?ticket=${encodeURIComponent(String(row.ticket_id))}` : "/boards",
             };
             send("activity", JSON.stringify(entry));
           } catch {

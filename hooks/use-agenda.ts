@@ -36,7 +36,7 @@ export type AgendaOccurrence = {
   id: string;
   agenda_event_id: string;
   scheduled_for: string;
-  status: "scheduled" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "needs_retry" | "expired";
+  status: "scheduled" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "needs_retry";
   latest_attempt_no: number;
   locked_at: string | null;
   created_at: string;

@@ -45,7 +45,7 @@ SERVICE_CMDS[gateway-sync]="node scripts/gateway-sync.mjs"
 SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
 SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
 SERVICE_CMDS[agenda-worker]="node scripts/agenda-worker.mjs"
-SERVICE_CMDS[nextjs]="cd \"$PROJECT_ROOT\" && npm start"
+SERVICE_CMDS[nextjs]="cd \"$PROJECT_ROOT\" && npm run dev"
 
 # ── Helpers ────────────────────────────────────────────────
 pid_running() {

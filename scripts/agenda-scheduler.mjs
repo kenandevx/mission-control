@@ -153,7 +153,7 @@ async function run() {
 
   const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
   const now = new Date();
-  const from = new Date(now.getTime() - 10 * 60 * 1000); // 10-min backfill
+  const from = new Date(now.getTime() - 35 * 60 * 1000); // 35-min backfill (covers previous 1-2 quarter-hour slots)
   const to = new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
   const rows = await sql`

@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ContainerLoader } from "@/components/ui/container-loader";
 import {
   Dialog,
   DialogContent,
@@ -93,10 +94,13 @@ export function ServiceManager(): React.ReactElement {
     mountedRef.current = true;
 
     void fetchServices();
-    const interval = setInterval(fetchServices, 15_000);
+
+    const es = new EventSource("/api/notifications/stream");
+    es.addEventListener("connected", () => { void fetchServices(); });
+    es.addEventListener("activity", () => { void fetchServices(); });
 
     return () => {
-      clearInterval(interval);
+      try { es.close(); } catch {}
       mountedRef.current = false;
     };
   }, [fetchServices]);
@@ -144,8 +148,8 @@ export function ServiceManager(): React.ReactElement {
 
   if (loading) {
     return (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-40 w-full rounded-xl" />)}
+      <div className="relative min-h-[280px]">
+        <ContainerLoader label="Loading services…" />
       </div>
     );
   }
@@ -153,8 +157,14 @@ export function ServiceManager(): React.ReactElement {
   return (
     <>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {services.map((svc) => (
-          <Card key={svc.name} className="shadow-sm">
+        {services.map((svc, idx) => (
+          <motion.div
+            key={svc.name}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, delay: Math.min(idx * 0.03, 0.18) }}
+          >
+          <Card className="shadow-sm">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-bold">{svc.name}</CardTitle>
@@ -213,6 +223,7 @@ export function ServiceManager(): React.ReactElement {
               </div>
             </CardContent>
           </Card>
+          </motion.div>
         ))}
 
         {services.length === 0 && (

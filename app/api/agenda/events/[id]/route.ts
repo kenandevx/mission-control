@@ -1,11 +1,46 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
+import { Queue } from "bullmq";
 
 type Json = Record<string, unknown>;
 
 const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
+
+const REDIS_HOST = process.env.REDIS_HOST || "127.0.0.1";
+const REDIS_PORT = parseInt(process.env.REDIS_PORT || "6379", 10);
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
+
+/** Remove all BullMQ jobs related to an event's occurrences. */
+async function removeQueuedJobs(sql: ReturnType<typeof getSql>, eventId: string) {
+  try {
+    const occurrences = await sql`
+      SELECT id FROM agenda_occurrences WHERE agenda_event_id = ${eventId}
+    `;
+    if (!occurrences.length) return;
+
+    const queue = new Queue("agenda", {
+      connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD },
+    });
+
+    // Get all jobs in waiting, delayed, and active states
+    const jobs = [
+      ...await queue.getJobs(["waiting", "delayed", "active", "failed"], 0, 500),
+    ];
+
+    const occIds = new Set(occurrences.map((o) => String(o.id)));
+    for (const job of jobs) {
+      if (job?.data?.occurrenceId && occIds.has(String(job.data.occurrenceId))) {
+        try { await job.remove(); } catch { /* already processing or removed */ }
+      }
+    }
+
+    await queue.close();
+  } catch (err) {
+    console.warn("[event-delete] Failed to clean BullMQ jobs:", err);
+  }
+}
 
 async function workspaceId(sql: ReturnType<typeof getSql>) {
   const rows = await sql`select id from workspaces order by created_at asc limit 1`;
@@ -218,6 +253,50 @@ export async function PATCH(
     const status = body.status !== undefined ? String(body.status) : existing.status;
     const modelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
 
+    // Guard: cannot revert to draft if event has any non-idle occurrences
+    if (status === "draft" && existing.status !== "draft") {
+      const [hasOcc] = await sql`
+        SELECT 1 FROM agenda_occurrences
+        WHERE agenda_event_id = ${id}
+          AND status IN ('running', 'succeeded', 'needs_retry', 'failed', 'scheduled')
+        LIMIT 1
+      `;
+      if (hasOcc) return fail("Cannot set event back to draft — it has existing occurrences.", 409);
+    }
+
+    if (!title) return fail("Title is required.");
+    if (!startsAt || isNaN(new Date(startsAt).getTime())) return fail("Valid start date is required.");
+    if (new Date(startsAt) < new Date()) return fail("Cannot schedule events in the past.");
+
+    // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
+    const timeStepMinutes = await (async () => {
+      if (body.timeStepMinutes !== undefined) return Math.max(0, Math.floor(Number(body.timeStepMinutes)));
+      const [ws] = await sql`SELECT scheduling_interval_minutes FROM worker_settings WHERE id = 1 LIMIT 1`;
+      return Number(ws?.scheduling_interval_minutes ?? 15);
+    })();
+
+    if (timeStepMinutes > 0) {
+      if (new Date(startsAt).getMinutes() % timeStepMinutes !== 0) {
+        return fail(`Events can only be scheduled at ${timeStepMinutes}-minute intervals.`);
+      }
+
+      const slotStart = new Date(startsAt);
+      slotStart.setSeconds(0, 0);
+      const slotEnd = new Date(slotStart.getTime() + timeStepMinutes * 60 * 1000);
+      const [conflict] = await sql`
+        SELECT id, title FROM agenda_events
+        WHERE workspace_id = ${wid}
+          AND id <> ${id}
+          AND status IN ('active', 'draft')
+          AND starts_at >= ${slotStart}
+          AND starts_at < ${slotEnd}
+        LIMIT 1
+      `;
+      if (conflict) {
+        return fail(`Time slot already taken by "${conflict.title}". Events must be at least ${timeStepMinutes} minutes apart.`);
+      }
+    }
+
     await sql`
       update agenda_events set
         title = ${title},
@@ -234,6 +313,19 @@ export async function PATCH(
       where id = ${id}
     `;
 
+    // If a one-time active event is edited into the past, mark it needs_retry immediately.
+    let autoNeedsRetry = false;
+    const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";
+    if (status === "active" && !recurrenceRule && new Date(startsAt) < new Date()) {
+      await sql`
+        insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
+        values (${id}, ${startsAt}, 'needs_retry')
+        on conflict (agenda_event_id, scheduled_for) do update
+          set status = 'needs_retry'
+      `;
+      autoNeedsRetry = true;
+    }
+
     // Update process attachments if provided
     if (body.processVersionIds !== undefined) {
       const pvids: string[] = (body.processVersionIds as string[]).map(String);
@@ -247,14 +339,18 @@ export async function PATCH(
     }
 
     await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "update" })})`;
-    return ok({ eventId: id });
+    return ok({
+      eventId: id,
+      autoNeedsRetry,
+      warning: autoNeedsRetry ? autoNeedsRetryReason : null,
+    });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Failed to update event", 500);
   }
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -267,6 +363,19 @@ export async function DELETE(
       select id, recurrence_rule from agenda_events where id = ${id} and workspace_id = ${wid} limit 1
     `;
     if (!existing) return fail("Event not found.", 404);
+
+    const hardDelete = new URL(request.url).searchParams.get("hard") === "1";
+    if (hardDelete) {
+      await removeQueuedJobs(sql, id);
+      // Release any agent execution locks held by this event's occurrences
+      await sql`
+        DELETE FROM agent_execution_locks
+        WHERE occurrence_id IN (SELECT ao.id FROM agenda_occurrences ao WHERE ao.agenda_event_id = ${id})
+      `;
+      await sql`delete from agenda_events where id = ${id}`;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "delete" })})`;
+      return ok({ hardDeleted: true });
+    }
 
     const isRecurring = existing.recurrence_rule && existing.recurrence_rule !== "null" && existing.recurrence_rule !== "none";
 
@@ -287,6 +396,11 @@ export async function DELETE(
       await sql`UPDATE agenda_events SET status = 'draft', recurrence_until = now(), updated_at = now() WHERE id = ${id}`;
     } else {
       // Non-recurring: delete entirely (cascades to occurrences, attempts, steps)
+      await removeQueuedJobs(sql, id);
+      await sql`
+        DELETE FROM agent_execution_locks
+        WHERE occurrence_id IN (SELECT ao.id FROM agenda_occurrences ao WHERE ao.agenda_event_id = ${id})
+      `;
       await sql`delete from agenda_events where id = ${id}`;
     }
 

@@ -11,6 +11,7 @@ type ActivityEntry = {
   agent: string;
   level: string;
   timestamp: string;
+  targetUrl?: string;
 };
 
 function agendaLevelFromStatus(status: string): string {
@@ -27,17 +28,10 @@ function agendaLevelFromStatus(status: string): string {
   }
 }
 
-/**
- * GET /api/notifications/recent
- * Returns the last 8 activity entries from both ticket_activity and agenda systems,
- * merged and sorted by timestamp descending.
- */
 export async function GET(): Promise<Response> {
   try {
     const sql = getSql();
 
-    // Read configurable limit from settings.
-    // Older schemas may not have sidebar_activity_count yet, so fall back to 8.
     let limit = 8;
     try {
       const [settingsRow] = await sql`SELECT sidebar_activity_count FROM worker_settings WHERE id = 1 LIMIT 1`;
@@ -46,10 +40,10 @@ export async function GET(): Promise<Response> {
       limit = 8;
     }
 
-    // Fetch recent ticket activity
     const ticketRows = await sql`
       SELECT
         ta.id::text,
+        ta.ticket_id::text,
         ta.source,
         ta.event,
         ta.level,
@@ -61,10 +55,11 @@ export async function GET(): Promise<Response> {
       LIMIT ${limit}
     `;
 
-    // Fetch recent agenda run attempts (actual execution events, not just occurrences)
     const agendaRows = await sql`
       SELECT
         ara.id::text,
+        ara.occurrence_id::text,
+        ao.agenda_event_id::text,
         ara.status,
         ara.started_at,
         ae.title,
@@ -87,6 +82,7 @@ export async function GET(): Promise<Response> {
         agent: row.source || "Worker",
         level: row.level || "info",
         timestamp: row.occurred_at || new Date().toISOString(),
+        targetUrl: row.ticket_id ? `/boards?ticket=${encodeURIComponent(String(row.ticket_id))}` : "/boards",
       });
     }
 
@@ -99,10 +95,10 @@ export async function GET(): Promise<Response> {
         agent: row.agent_id || "main",
         level: agendaLevelFromStatus(row.status || ""),
         timestamp: row.started_at || new Date().toISOString(),
+        targetUrl: row.agenda_event_id ? `/agenda?event=${encodeURIComponent(String(row.agenda_event_id))}` : "/agenda",
       });
     }
 
-    // Sort by timestamp descending, take top 8
     entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     return NextResponse.json({ ok: true, entries: entries.slice(0, limit), limit });

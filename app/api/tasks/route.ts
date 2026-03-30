@@ -7,6 +7,55 @@ type Json = Record<string, any>;
 const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) => NextResponse.json({ ok: false, error: message }, { status });
 
+function validateScheduledFor(raw: unknown, stepRaw: unknown): { iso: string | null; error: string | null } {
+  if (raw === undefined) return { iso: null, error: null };
+  if (raw === null || String(raw).trim() === "") return { iso: null, error: null };
+
+  const dt = new Date(String(raw));
+  if (Number.isNaN(dt.getTime())) return { iso: null, error: "Invalid scheduled date/time." };
+
+  const rawStep = stepRaw === undefined ? 15 : Number(stepRaw);
+  const step = Number.isFinite(rawStep) ? Math.max(1, Math.floor(rawStep)) : 15;
+  if (dt.getMinutes() % step !== 0) {
+    if (step === 15) {
+      return { iso: null, error: "Tickets can only be scheduled at 15-minute intervals (XX:00, XX:15, XX:30, XX:45)." };
+    }
+    return { iso: null, error: `Tickets can only be scheduled at ${step}-minute intervals.` };
+  }
+
+  return { iso: dt.toISOString(), error: null };
+}
+
+function normalizeExecutionState(params: {
+  executionMode: string;
+  requestedState: string;
+  assignedAgentId: string;
+  scheduledForIso: string | null;
+  planApproved: boolean;
+}): string {
+  const mode = params.executionMode || "direct";
+  const requested = params.requestedState || "open";
+  const hasAgent = Boolean((params.assignedAgentId || "").trim());
+
+  if (mode === "planned" && !params.planApproved) {
+    return requested === "queued" ? "awaiting_approval" : requested;
+  }
+
+  const runtimeStates = new Set(["queued", "ready_to_execute", "picked_up", "executing", "running"]);
+
+  if (!hasAgent) {
+    if (runtimeStates.has(requested)) return "open";
+    return requested;
+  }
+
+  // Assigned agent: default to immediate execution unless it is explicitly a terminal/manual state.
+  if (["done", "failed", "needs_retry", "expired", "cancelled", "awaiting_approval", "planning"].includes(requested)) {
+    return requested;
+  }
+
+  return "ready_to_execute";
+}
+
 async function workspaceId(sql: ReturnType<typeof getSql>) {
   const rows = await sql`select id from workspaces order by created_at asc limit 1`;
   return rows[0]?.id ?? null;
@@ -61,14 +110,49 @@ async function logTaskAudit(
   }
 }
 
-async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
+async function hasTableColumn(sql: ReturnType<typeof getSql>, tableName: string, columnName: string): Promise<boolean> {
   const rows = await sql`
-    select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name
-    from worker_settings
-    where id = 1
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = ${tableName}
+      and column_name = ${columnName}
     limit 1
   `;
-  const row = rows[0] || { enabled: true, poll_interval_seconds: 20, max_concurrency: 3, last_tick_at: null, agenda_concurrency: 5, default_execution_window_minutes: 30, auto_retry_after_minutes: 0, max_retries: 1, default_fallback_model: "", sidebar_activity_count: 8, instance_name: "Mission Control" };
+  return rows.length > 0;
+}
+
+async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
+  const hasSidebarActivityCount = await hasTableColumn(sql, "worker_settings", "sidebar_activity_count");
+
+  const rows = hasSidebarActivityCount
+    ? await sql`
+        select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name
+        from worker_settings
+        where id = 1
+        limit 1
+      `
+    : await sql`
+        select enabled, poll_interval_seconds, max_concurrency, last_tick_at, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, instance_name
+        from worker_settings
+        where id = 1
+        limit 1
+      `;
+
+  const row = rows[0] || {
+    enabled: true,
+    poll_interval_seconds: 20,
+    max_concurrency: 3,
+    last_tick_at: null,
+    agenda_concurrency: 5,
+    default_execution_window_minutes: 30,
+    auto_retry_after_minutes: 0,
+    max_retries: 1,
+    default_fallback_model: "",
+    sidebar_activity_count: 8,
+    instance_name: "Mission Control",
+  };
+
   return {
     enabled: Boolean(row.enabled),
     pollIntervalSeconds: Number(row.poll_interval_seconds || 20),
@@ -82,27 +166,6 @@ async function getWorkerSettings(sql: ReturnType<typeof getSql>) {
     sidebarActivityCount: Number(row.sidebar_activity_count ?? 8),
     instanceName: String(row.instance_name || "Mission Control"),
   };
-}
-
-function formatDateUTC(dateStr: string | null) {
-  if (!dateStr) return "—";
-  try {
-    const d = new Date(dateStr);
-    // Use UTC to avoid timezone/locale mismatches between server/client
-    return d.toLocaleDateString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
-  } catch {
-    return "—";
-  }
-}
-
-function formatDateTimeUTC(dateStr: string | null) {
-  if (!dateStr) return "No tasks yet";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
-  } catch {
-    return "—";
-  }
 }
 
 export async function GET() {
@@ -220,6 +283,19 @@ export async function POST(request: Request) {
       const assigneeIds = Array.isArray(body.assigneeIds) ? body.assigneeIds.map(String) : [];
       const processVersionIds = Array.isArray(body.processVersionIds) ? body.processVersionIds.map(String) : [];
 
+      const executionMode = String(body.executionMode || "direct");
+      const assignedAgentId = String(body.assignedAgentId || "").trim();
+      const planApproved = Boolean(body.planApproved);
+      const scheduled = validateScheduledFor(body.scheduledFor, body.timeStepMinutes);
+      if (scheduled.error) return fail(scheduled.error);
+      const executionState = normalizeExecutionState({
+        executionMode,
+        requestedState: String(body.executionState || "open"),
+        assignedAgentId,
+        scheduledForIso: scheduled.iso,
+        planApproved,
+      });
+
       const rows = await sql`
         insert into tickets (
           workspace_id, board_id, column_id, title, description, priority, due_date,
@@ -228,7 +304,7 @@ export async function POST(request: Request) {
           execution_window_minutes, fallback_model
         ) values (
           ${wid}, ${boardId}, ${columnId}, ${title}, ${String(body.description || "")}, ${String(body.priority || "low")}, ${body.dueDate || null},
-          ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${String(body.assignedAgentId || "")}, ${String(body.executionMode || "direct")}, ${String(body.planText || "")}, ${Boolean(body.planApproved)}, ${body.scheduledFor || null}, ${String(body.executionState || "open")},
+          ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${assignedAgentId}, ${executionMode}, ${String(body.planText || "")}, ${planApproved}, ${scheduled.iso}, ${executionState},
           ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}, ${sql.array(processVersionIds)}::uuid[],
           ${Number(body.executionWindowMinutes || 60)}, ${String(body.fallbackModel || "")}
         )
@@ -255,6 +331,7 @@ export async function POST(request: Request) {
 
       const beforeRows = await sql`select * from tickets where id=${ticketId} limit 1`;
       const before = beforeRows[0];
+      if (!before) return fail("Ticket not found.", 404);
 
       // Ticket locking during execution
       if (before && ['executing', 'running'].includes(before.execution_state)) {
@@ -266,6 +343,30 @@ export async function POST(request: Request) {
         }
       }
 
+      const nextExecutionMode = String(body.executionMode ?? before.execution_mode ?? "direct");
+      const nextAssignedAgentId = body.assignedAgentId === undefined
+        ? String(before.assigned_agent_id || "")
+        : String(body.assignedAgentId || "").trim();
+      const nextPlanApproved = body.planApproved === undefined
+        ? Boolean(before.plan_approved)
+        : Boolean(body.planApproved);
+
+      let scheduledIsoForUpdate: string | null = null;
+      if (body.scheduledFor !== undefined) {
+        const scheduled = validateScheduledFor(body.scheduledFor, body.timeStepMinutes);
+        if (scheduled.error) return fail(scheduled.error);
+        scheduledIsoForUpdate = scheduled.iso;
+      }
+
+      const nextRequestedState = String(body.executionState ?? before.execution_state ?? "open");
+      const normalizedExecutionState = normalizeExecutionState({
+        executionMode: nextExecutionMode,
+        requestedState: nextRequestedState,
+        assignedAgentId: nextAssignedAgentId,
+        scheduledForIso: body.scheduledFor === undefined ? (before.scheduled_for ? new Date(before.scheduled_for).toISOString() : null) : scheduledIsoForUpdate,
+        planApproved: nextPlanApproved,
+      });
+
       const rows = await sql`
         update tickets
         set
@@ -276,15 +377,15 @@ export async function POST(request: Request) {
           due_date = case when ${body.dueDate === undefined} then due_date else ${body.dueDate ?? null} end,
           tags = case when ${body.tags === undefined} then tags else ${sql.array(tags)} end,
           assignee_ids = case when ${body.assigneeIds === undefined} then assignee_ids else ${sql.array(assigneeIds)} end,
-          assigned_agent_id = coalesce(${body.assignedAgentId || null}, assigned_agent_id),
+          assigned_agent_id = case when ${body.assignedAgentId === undefined} then assigned_agent_id else ${nextAssignedAgentId} end,
           process_version_ids = case when ${body.processVersionIds === undefined} then process_version_ids else ${sql.array(processVersionIds)}::uuid[] end,
-          execution_mode = coalesce(${body.executionMode || null}, execution_mode),
+          execution_mode = ${nextExecutionMode},
           plan_text = case when ${body.planText === undefined} then plan_text else ${body.planText ?? null} end,
-          plan_approved = coalesce(${body.planApproved ?? null}, plan_approved),
+          plan_approved = ${nextPlanApproved},
           approved_by = case when ${body.planApproved === true} then 'operator' else approved_by end,
           approved_at = case when ${body.planApproved === true} then now() else approved_at end,
-          scheduled_for = case when ${body.scheduledFor === undefined} then scheduled_for else ${body.scheduledFor ?? null} end,
-          execution_state = coalesce(${body.executionState || null}, execution_state),
+          scheduled_for = case when ${body.scheduledFor === undefined} then scheduled_for else ${scheduledIsoForUpdate} end,
+          execution_state = ${normalizedExecutionState},
           checklist_done = coalesce(${body.checklistDone ?? null}, checklist_done),
           checklist_total = coalesce(${body.checklistTotal ?? null}, checklist_total),
           comments_count = coalesce(${body.commentsCount ?? null}, comments_count),
@@ -671,22 +772,42 @@ export async function POST(request: Request) {
         return fail("instanceName must be 80 characters or less");
       }
 
-      await sql`
-        insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name)
-        values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(${sidebarActivityCount}, 8), coalesce(nullif(${instanceName}, ''), 'Mission Control'))
-        on conflict (id) do update
-          set enabled = coalesce(${enabled}, worker_settings.enabled),
-              poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
-              max_concurrency = coalesce(${maxConcurrency}, worker_settings.max_concurrency),
-              agenda_concurrency = coalesce(${agendaConcurrency}, worker_settings.agenda_concurrency),
-              default_execution_window_minutes = coalesce(${defaultExecutionWindowMinutes}, worker_settings.default_execution_window_minutes),
-              auto_retry_after_minutes = coalesce(${autoRetryAfterMinutes}, worker_settings.auto_retry_after_minutes),
-              max_retries = coalesce(${maxRetries}, worker_settings.max_retries),
-              default_fallback_model = coalesce(${defaultFallbackModel}, worker_settings.default_fallback_model),
-              sidebar_activity_count = coalesce(${sidebarActivityCount}, worker_settings.sidebar_activity_count),
-              instance_name = coalesce(nullif(${instanceName}, ''), worker_settings.instance_name),
-              updated_at = now()
-      `;
+      const hasSidebarActivityCount = await hasTableColumn(sql, "worker_settings", "sidebar_activity_count");
+
+      if (hasSidebarActivityCount) {
+        await sql`
+          insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, sidebar_activity_count, instance_name)
+          values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(${sidebarActivityCount}, 8), coalesce(nullif(${instanceName}, ''), 'Mission Control'))
+          on conflict (id) do update
+            set enabled = coalesce(${enabled}, worker_settings.enabled),
+                poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
+                max_concurrency = coalesce(${maxConcurrency}, worker_settings.max_concurrency),
+                agenda_concurrency = coalesce(${agendaConcurrency}, worker_settings.agenda_concurrency),
+                default_execution_window_minutes = coalesce(${defaultExecutionWindowMinutes}, worker_settings.default_execution_window_minutes),
+                auto_retry_after_minutes = coalesce(${autoRetryAfterMinutes}, worker_settings.auto_retry_after_minutes),
+                max_retries = coalesce(${maxRetries}, worker_settings.max_retries),
+                default_fallback_model = coalesce(${defaultFallbackModel}, worker_settings.default_fallback_model),
+                sidebar_activity_count = coalesce(${sidebarActivityCount}, worker_settings.sidebar_activity_count),
+                instance_name = coalesce(nullif(${instanceName}, ''), worker_settings.instance_name),
+                updated_at = now()
+        `;
+      } else {
+        await sql`
+          insert into worker_settings (id, enabled, poll_interval_seconds, max_concurrency, agenda_concurrency, default_execution_window_minutes, auto_retry_after_minutes, max_retries, default_fallback_model, instance_name)
+          values (1, coalesce(${enabled}, true), coalesce(${pollIntervalSeconds}, 20), coalesce(${maxConcurrency}, 3), coalesce(${agendaConcurrency}, 5), coalesce(${defaultExecutionWindowMinutes}, 30), coalesce(${autoRetryAfterMinutes}, 0), coalesce(${maxRetries}, 1), coalesce(${defaultFallbackModel}, ''), coalesce(nullif(${instanceName}, ''), 'Mission Control'))
+          on conflict (id) do update
+            set enabled = coalesce(${enabled}, worker_settings.enabled),
+                poll_interval_seconds = coalesce(${pollIntervalSeconds}, worker_settings.poll_interval_seconds),
+                max_concurrency = coalesce(${maxConcurrency}, worker_settings.max_concurrency),
+                agenda_concurrency = coalesce(${agendaConcurrency}, worker_settings.agenda_concurrency),
+                default_execution_window_minutes = coalesce(${defaultExecutionWindowMinutes}, worker_settings.default_execution_window_minutes),
+                auto_retry_after_minutes = coalesce(${autoRetryAfterMinutes}, worker_settings.auto_retry_after_minutes),
+                max_retries = coalesce(${maxRetries}, worker_settings.max_retries),
+                default_fallback_model = coalesce(${defaultFallbackModel}, worker_settings.default_fallback_model),
+                instance_name = coalesce(nullif(${instanceName}, ''), worker_settings.instance_name),
+                updated_at = now()
+        `;
+      }
 
       const workerSettings = await getWorkerSettings(sql);
       await logTaskAudit(sql, wid, {

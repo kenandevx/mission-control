@@ -451,3 +451,6 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS fallback_model text NOT NULL DEFAUL
 alter table worker_settings add column if not exists max_retries integer not null default 1;
 alter table worker_settings add column if not exists default_fallback_model text not null default '';
 
+-- v1.5.1: Configurable scheduling interval (0 = free time, no slot enforcement)
+alter table worker_settings add column if not exists scheduling_interval_minutes integer not null default 15;
+

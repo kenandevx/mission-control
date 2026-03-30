@@ -31,7 +31,7 @@ export async function GET(): Promise<NextResponse> {
         ) AS last_error
       FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-      WHERE ao.status IN ('failed', 'needs_retry', 'expired')
+      WHERE ao.status IN ('failed', 'needs_retry')
       ORDER BY ao.scheduled_for DESC
       LIMIT 100
     `;

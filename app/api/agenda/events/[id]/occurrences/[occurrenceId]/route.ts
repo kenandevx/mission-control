@@ -23,10 +23,56 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const sql = getSql();
+    const body = (await request.json()) as Json;
+    const action = String(body.action || "");
+
     const { id: eventId, occurrenceId } = await params;
     const wid = await workspaceId(sql);
     if (!wid) return fail("Workspace not found", 500);
 
+    // ── Test-only: directly set an occurrence to needs_retry ─────────────────
+    // Used by automated tests to create a needs_retry occurrence without
+    // needing to trigger the full failure/cleanup cycle.
+    if (action === "testOnlySetNeedsRetry") {
+      const [occ] = await sql`
+        select ao.id from agenda_occurrences ao
+        join agenda_events ae on ae.id = ao.agenda_event_id
+        where ao.id = ${occurrenceId} and ae.workspace_id = ${wid}
+        limit 1
+      `;
+      if (!occ) return fail("Occurrence not found.", 404);
+
+      await sql`
+        update agenda_occurrences
+        set status = 'needs_retry', locked_at = null
+        where id = ${occurrenceId}
+      `;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "test_needs_retry", occurrenceId })})`;
+      return ok({ occurrenceId, status: "needs_retry" });
+    }
+
+    // ── Test-only: directly set an occurrence to running ─────────────────────
+    // Used by automated tests to simulate a running occurrence without needing
+    // the full scheduler + worker pipeline.
+    if (action === "testOnlySetRunning") {
+      const [occ] = await sql`
+        select ao.id from agenda_occurrences ao
+        join agenda_events ae on ae.id = ao.agenda_event_id
+        where ao.id = ${occurrenceId} and ae.workspace_id = ${wid}
+        limit 1
+      `;
+      if (!occ) return fail("Occurrence not found.", 404);
+
+      await sql`
+        update agenda_occurrences
+        set status = 'running', locked_at = now()
+        where id = ${occurrenceId}
+      `;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "test_running", occurrenceId })})`;
+      return ok({ occurrenceId, status: "running" });
+    }
+
+    // ── Standard retry ─────────────────────────────────────────────────────
     const [occurrence] = await sql`
       select ao.*, ae.workspace_id, ae.title, ae.free_prompt, ae.default_agent_id,
              ae.timezone, ae.execution_window_minutes, ae.fallback_model
@@ -37,8 +83,8 @@ export async function POST(
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
 
-    // Allow retry from needs_retry, expired, failed, or running (force retry)
-    const retryableStatuses = ["needs_retry", "expired", "failed", "running"];
+    // Allow retry from needs_retry, failed, or running (force retry)
+    const retryableStatuses = ["needs_retry", "failed", "running"];
     if (!retryableStatuses.includes(occurrence.status)) {
       return fail(`Cannot retry occurrence with status "${occurrence.status}"`, 400);
     }
@@ -59,12 +105,24 @@ export async function POST(
       where occurrence_id = ${occurrenceId}
     `;
 
-    // Reset status to scheduled, preserve the correct attempt count
-    await sql`
-      update agenda_occurrences
-      set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no}
-      where id = ${occurrenceId}
-    `;
+    // Reset status to scheduled, move scheduled_for to NOW so the retry runs fresh
+    // (preserveScheduledFor: true keeps original date — used by tests for execution window checks)
+    const preserveDate = body.preserveScheduledFor === true;
+    const retryNow = preserveDate ? new Date(occurrence.scheduled_for) : new Date();
+    if (!preserveDate) {
+      await sql`
+        update agenda_occurrences
+        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no},
+            scheduled_for = ${retryNow}
+        where id = ${occurrenceId}
+      `;
+    } else {
+      await sql`
+        update agenda_occurrences
+        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no}
+        where id = ${occurrenceId}
+      `;
+    }
 
     // Get attached processes
     const processes = await sql`
@@ -75,6 +133,9 @@ export async function POST(
     `;
 
     // Enqueue directly to BullMQ for immediate execution
+    // All retries get priority 0 (highest) since they run now
+    const priority = 0;
+
     try {
       const agendaQueue = new Queue("agenda", {
         connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD },
@@ -93,13 +154,16 @@ export async function POST(
             process_version_id: p.process_version_id,
             sort_order: p.sort_order,
           })),
-          scheduledFor: occurrence.scheduled_for,
-          executionWindowMinutes: 999, // Don't expire on manual retry
+          scheduledFor: retryNow.toISOString(),
+          executionWindowMinutes: body.executionWindowMinutes != null
+            ? Number(body.executionWindowMinutes)
+            : 999, // Default: don't expire on manual retry
           fallbackModel: occurrence.fallback_model || "",
         },
         {
           jobId: `agenda-retry-${occurrenceId}-${Date.now()}`,
           removeOnComplete: false,
+          priority,
         }
       );
 
@@ -111,8 +175,10 @@ export async function POST(
 
     await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "retry" })})`;
     return ok({ occurrenceId, status: "scheduled" });
-  } catch {
-    return fail("Failed to retry occurrence", 500);
+  } catch (err) {
+    console.error("[occurrence-retry] Error:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return fail(`Failed to retry occurrence: ${msg}`, 500);
   }
 }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { motion } from "framer-motion";
 
 type SetupState = {
   bridgeEmail: string;
@@ -82,12 +83,27 @@ export default function SetupPage() {
   };
 
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading setup…</div>;
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.16 }}
+        className="flex min-h-screen items-center justify-center text-sm text-muted-foreground"
+      >
+        Loading setup…
+      </motion.div>
+    );
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-4">
-      <form onSubmit={onSubmit} className="w-full max-w-lg space-y-4 rounded-lg border bg-card p-6 shadow-sm">
+      <motion.form
+        onSubmit={onSubmit}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full max-w-lg space-y-4 rounded-lg border bg-card p-6 shadow-sm"
+      >
         <div>
           <h1 className="text-xl font-semibold">Workspace setup required</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -116,7 +132,7 @@ export default function SetupPage() {
         <Button type="submit" className="w-full" disabled={saving}>
           {saving ? "Saving…" : "Complete setup"}
         </Button>
-      </form>
+      </motion.form>
     </main>
   );
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
+import { rm, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -68,6 +69,11 @@ export async function POST(request: Request) {
           timeout: 120000,
         });
 
+        // Purge all runtime-generated artifacts inside this workspace.
+        const artifactsRoot = resolve(PROJECT_ROOT, "runtime-artifacts");
+        await rm(artifactsRoot, { recursive: true, force: true });
+        await mkdir(artifactsRoot, { recursive: true });
+
         // Restart only persistent worker services (not nextjs), so dev/start UI stays alive.
         if (existsSync(mcServices)) {
           for (const svc of ["task-worker", "bridge-logger", "agenda-scheduler", "agenda-worker"]) {
@@ -75,7 +81,7 @@ export async function POST(request: Request) {
           }
         }
 
-        return ok({ message: "Clean reset complete. Database wiped and worker services restarted." });
+        return ok({ message: "Clean reset complete. Database and runtime artifacts wiped; worker services restarted." });
       } catch (e) {
         return fail(e instanceof Error ? e.message : "Clean reset failed");
       }

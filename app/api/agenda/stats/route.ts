@@ -19,7 +19,7 @@ export async function GET() {
       sql`
         select count(*) as c
         from agenda_occurrences
-        where status in ('failed', 'needs_retry', 'expired')
+        where status in ('failed', 'needs_retry')
       `.then(r => Number(r[0]?.c ?? 0)),
     ]);
 

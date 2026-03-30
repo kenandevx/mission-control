@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { RRule } from "rrule";
+// @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+import { DateTime } from "luxon";
 
 type Json = Record<string, unknown>;
 
@@ -8,42 +10,25 @@ const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
 
-// Timezone-aware helpers for DST-safe RRULE expansion
+// Luxon-based timezone helpers for DST-safe RRULE expansion
 function extractLocalTime(utcDate: Date, timezone: string) {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
-  const parts = fmt.formatToParts(utcDate);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
+  const dt = DateTime.fromJSDate(utcDate, { zone: timezone });
+  return {
+    date: dt.toISODate() ?? "",
+    time: `${String(dt.hour).padStart(2, "0")}:${String(dt.minute).padStart(2, "0")}`,
+  };
 }
 
-function localTimeToUTC(localDateStr: string, localTimeStr: string, timezone: string) {
-  // Try multiple UTC offsets to find the one that renders correctly in the target timezone
-  // This handles DST gaps (e.g. 02:08 CET doesn't exist on spring-forward day → use 02:08 CEST = 00:08 UTC)
-  const targetLocal = `${localDateStr}T${localTimeStr}`;
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
-  const get = (parts: Intl.DateTimeFormatPart[]) => {
-    const g = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-    return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}:${g("minute")}`;
-  };
-
-  // Try offsets from -12h to +14h in 1h steps to find a match
-  const base = new Date(`${localDateStr}T${localTimeStr}:00Z`);
-  for (let offsetH = -12; offsetH <= 14; offsetH++) {
-    const candidate = new Date(base.getTime() - offsetH * 3600000);
-    const rendered = get(fmt.formatToParts(candidate));
-    if (rendered === targetLocal) return candidate;
-  }
-  // Fallback: if DST gap makes the time impossible, shift forward 1 hour (spring-forward)
-  const fallback = new Date(base.getTime() - 3600000);
-  return fallback;
+function localTimeToUTC(localDateStr: string, localTimeStr: string, timezone: string): Date {
+  // Parse the local date+time in the given timezone, then convert to UTC
+  // Luxon handles DST transitions automatically (e.g. spring-forward gaps)
+  const [year, month, day] = localDateStr.split("-").map(Number);
+  const [hour, minute] = localTimeStr.split(":").map(Number);
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute, second: 0, millisecond: 0 },
+    { zone: timezone }
+  );
+  return dt.toUTC().toJSDate();
 }
 
 async function workspaceId(sql: ReturnType<typeof getSql>) {
@@ -265,7 +250,18 @@ export async function GET(request: Request) {
           agenda_event_id, status as latest_occurrence_status
         from agenda_occurrences
         where agenda_event_id = ANY(${eventIds as string[]})
-        order by agenda_event_id, scheduled_for desc
+          and status <> 'cancelled'
+        order by agenda_event_id,
+          case status
+            when 'running'     then 1
+            when 'needs_retry' then 2
+            when 'failed'      then 3
+            when 'succeeded'   then 4
+            when 'queued'      then 5
+            when 'scheduled'   then 6
+            else 7
+          end,
+          scheduled_for desc
       `;
       const statusMap = new Map<string, string>();
       for (const r of occRows) statusMap.set(r.agenda_event_id, r.latest_occurrence_status);
@@ -308,28 +304,38 @@ export async function POST(request: Request) {
 
       if (!title) return fail("Title is required.");
       if (!startsAt || isNaN(startsAt.getTime())) return fail("Valid start date is required.");
+      // All events (one-time and recurring) in the past are rejected.
+      if (startsAt < new Date()) return fail("Cannot create events in the past.");
 
-      // Enforce 15-minute scheduling intervals
-      if (startsAt.getMinutes() % 15 !== 0) {
-        return fail("Events can only be scheduled at 15-minute intervals (XX:00, XX:15, XX:30, XX:45)");
-      }
+      // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
+      const timeStepMinutes = await (async () => {
+        if (body.timeStepMinutes !== undefined) return Math.max(0, Math.floor(Number(body.timeStepMinutes)));
+        const [ws] = await sql`SELECT scheduling_interval_minutes FROM worker_settings WHERE id = 1 LIMIT 1`;
+        return Number(ws?.scheduling_interval_minutes ?? 15);
+      })();
 
-      // Enforce unique time slot — only one event per 15-min slot
-      // Check for active/draft events that start in the same 15-min window
-      const slotStart = new Date(startsAt);
-      slotStart.setSeconds(0, 0);
-      const slotEnd = new Date(slotStart.getTime() + 15 * 60 * 1000);
-      const [conflict] = await sql`
-        SELECT id, title FROM agenda_events
-        WHERE workspace_id = ${wid}
-          AND status IN ('active', 'draft')
-          AND starts_at >= ${slotStart}
-          AND starts_at < ${slotEnd}
-        LIMIT 1
-      `;
-      if (conflict) {
-        return fail(`Time slot already taken by "${conflict.title}". Events must be at least 15 minutes apart.`);
+      // When timeStepMinutes > 0, enforce alignment + unique slot
+      if (timeStepMinutes > 0) {
+        if (startsAt.getMinutes() % timeStepMinutes !== 0) {
+          return fail(`Events can only be scheduled at ${timeStepMinutes}-minute intervals.`);
+        }
+
+        const slotStart = new Date(startsAt);
+        slotStart.setSeconds(0, 0);
+        const slotEnd = new Date(slotStart.getTime() + timeStepMinutes * 60 * 1000);
+        const [conflict] = await sql`
+          SELECT id, title FROM agenda_events
+          WHERE workspace_id = ${wid}
+            AND status IN ('active', 'draft')
+            AND starts_at >= ${slotStart}
+            AND starts_at < ${slotEnd}
+          LIMIT 1
+        `;
+        if (conflict) {
+          return fail(`Time slot already taken by "${conflict.title}". Events must be at least ${timeStepMinutes} minutes apart.`);
+        }
       }
+      // When timeStepMinutes === 0: free time mode — no alignment or slot checks
 
       const [event] = await sql`
         insert into agenda_events (
@@ -353,10 +359,148 @@ export async function POST(request: Request) {
         `;
       }
 
+      // If a one-time active event is created in the past, mark it needs_retry immediately.
+      let autoNeedsRetry = false;
+      const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";
+      if (status === "active" && !recurrenceRule && startsAt < new Date()) {
+        await sql`
+          insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
+          values (${event.id}, ${startsAt}, 'needs_retry')
+          on conflict (agenda_event_id, scheduled_for) do update
+            set status = 'needs_retry'
+        `;
+        autoNeedsRetry = true;
+      }
+
       // Notify SSE clients
       await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "create", eventId: event.id })})`;
 
-      return ok({ event });
+      return ok({
+        event,
+        autoNeedsRetry,
+        warning: autoNeedsRetry ? autoNeedsRetryReason : null,
+      });
+    }
+
+    // ── Test-only: directly create a needs_retry occurrence ─────────────────
+    // Used by automated tests to create a needs_retry occurrence without needing
+    // the scheduler to run, or without triggering the full failure/cleanup cycle.
+    if (action === "testOnlyCreateNeedsRetryOccurrence") {
+      const eventId = String(body.eventId ?? "");
+      const scheduledFor = String(body.scheduledFor ?? "");
+      if (!eventId) return fail("eventId is required", 400);
+      if (!scheduledFor) return fail("scheduledFor is required", 400);
+
+      const [event] = await sql`
+        select id from agenda_events where id = ${eventId} limit 1
+      `;
+      if (!event) return fail("Event not found", 404);
+
+      // Create a needs_retry occurrence directly
+      const [occ] = await sql`
+        insert into agenda_occurrences
+          (agenda_event_id, scheduled_for, status, latest_attempt_no)
+        values
+          (${eventId}, ${new Date(scheduledFor)}, 'needs_retry', 1)
+        on conflict (agenda_event_id, scheduled_for) do update
+          set status = 'needs_retry', latest_attempt_no = 1
+        returning id, scheduled_for, status
+      `;
+
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "test_create", eventId })})`;
+      return ok({ occurrenceId: occ.id, status: occ.status, scheduledFor: occ.scheduled_for });
+    }
+
+    // ── Test-only: directly create a scheduled occurrence ─────────────────────
+    // Used by automated tests to have an occurrence ready without needing the scheduler.
+    if (action === "testOnlyCreateScheduledOccurrence") {
+      const eventId = String(body.eventId ?? "");
+      const scheduledFor = String(body.scheduledFor ?? new Date().toISOString());
+      if (!eventId) return fail("eventId is required", 400);
+
+      const [event] = await sql`
+        select id from agenda_events where id = ${eventId} limit 1
+      `;
+      if (!event) return fail("Event not found", 404);
+
+      const [occ] = await sql`
+        insert into agenda_occurrences
+          (agenda_event_id, scheduled_for, status, latest_attempt_no)
+        values
+          (${eventId}, ${new Date(scheduledFor)}, 'scheduled', 0)
+        on conflict (agenda_event_id, scheduled_for) do nothing
+        returning id, scheduled_for, status
+      `;
+
+      if (!occ) {
+        // Already exists — return existing
+        const [existing] = await sql`
+          select id, scheduled_for, status from agenda_occurrences
+          where agenda_event_id = ${eventId} and scheduled_for = ${new Date(scheduledFor)}
+        `;
+        if (existing) return ok({ occurrenceId: existing.id, status: existing.status, scheduledFor: existing.scheduled_for });
+        return fail("Failed to create occurrence (conflict)", 409);
+      }
+
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "test_create", eventId })})`;
+      return ok({ occurrenceId: occ.id, status: occ.status, scheduledFor: occ.scheduled_for });
+    }
+
+    // ── Test-only: inject a completed run with a PDF artifact ───────────────────
+    // Creates a succeeded run_attempt + run_step with a fake PDF artifact payload.
+    // Used to test that PDF attachments are visible in the event/occurrence details.
+    if (action === "testOnlyInjectRunWithPdf") {
+      const eventId = String(body.eventId ?? "");
+      const occurrenceId = String(body.occurrenceId ?? "");
+      if (!eventId || !occurrenceId) return fail("eventId and occurrenceId are required", 400);
+
+      const [occ] = await sql`
+        select id from agenda_occurrences where id = ${occurrenceId} and agenda_event_id = ${eventId} limit 1
+      `;
+      if (!occ) return fail("Occurrence not found", 404);
+
+      // Mark occurrence as succeeded
+      await sql`
+        update agenda_occurrences set status = 'succeeded' where id = ${occurrenceId}
+      `;
+
+      // Create a succeeded run attempt
+      const [attempt] = await sql`
+        insert into agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, summary)
+        values (${occurrenceId}, 1, 'succeeded', now() - interval '10 seconds', now(), 'Test run completed')
+        returning id
+      `;
+
+      // Create a run step with a fake PDF artifact
+      const artifactPayload = JSON.stringify({
+        files: [{
+          name: "test-report.pdf",
+          mimeType: "application/pdf",
+          path: "/tmp/test-report.pdf",
+          size: 4096,
+        }],
+      });
+
+      await sql`
+        insert into agenda_run_steps
+          (run_attempt_id, step_order, status, started_at, finished_at, artifact_payload)
+        values (${attempt.id}, 1, 'succeeded', now() - interval '8 seconds', now() - interval '1 second', ${artifactPayload}::jsonb)
+      `;
+
+      return ok({ runAttemptId: attempt.id, artifact: "test-report.pdf" });
+    }
+
+    // ── Test-only: check if a file exists at a given path ───────────────────
+    if (action === "testOnlyCheckFileExists") {
+      const filePath = String(body.path ?? "");
+      if (!filePath) return fail("path is required", 400);
+      try {
+        const { stat } = await import("node:fs/promises");
+        const s = await stat(filePath);
+        return ok({ exists: s.isFile(), size: s.size });
+      } catch {
+        return ok({ exists: false });
+      }
     }
 
     return fail(`Unsupported action: ${action}`);

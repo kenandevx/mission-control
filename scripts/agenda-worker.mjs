@@ -8,11 +8,12 @@
 import postgres from "postgres";
 import { Worker } from "bullmq";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile, readFile, stat, copyFile, truncate, unlink, open } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { resolve, basename, extname } from "node:path";
+import { mkdir, readFile, stat, truncate, unlink, open } from "node:fs/promises";
+import { resolve } from "node:path";
 import * as dns from "node:dns";
 import { promisify } from "node:util";
+import { getRunArtifactDir, ensureArtifactDir, scanArtifactDir, cleanupRunArtifacts } from "./runtime-artifacts.mjs";
+import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,21 +283,27 @@ async function runFailureCleanup(runAttemptId, snapshots, detectedFilePaths, att
       }
     }
 
-    // Phase 3: File deletion
+    // Phase 3: File deletion (targeted, never folder-recursive)
     const startTime = new Date(attemptStartTime).getTime();
     for (const filePath of detectedFilePaths) {
       try {
-        if (!CLEANUP_ALLOWED_PREFIXES.some((p) => filePath.startsWith(p))) continue;
-        const cleaned = filePath.replace(/[.,;:!?)}\]]+$/, "");
+        const cleaned = String(filePath || "").replace(/[.,;:!?)}\]]+$/, "").trim();
+        if (!cleaned) continue;
+        if (!CLEANUP_ALLOWED_PREFIXES.some((p) => cleaned.startsWith(p))) continue;
+
         const fstat = await stat(cleaned).catch(() => null);
         if (!fstat || !fstat.isFile()) continue;
-        // Only delete files created AFTER attempt start
-        const ctime = fstat.ctimeMs || fstat.birthtimeMs;
-        if (ctime && ctime > startTime) {
-          await unlink(cleaned);
-          details.filesDeleted.push(cleaned);
-          console.log(`[agenda-worker] Deleted file: ${cleaned}`);
-        }
+
+        // Delete only files changed/created after this attempt started.
+        const ctime = Number(fstat.ctimeMs || 0);
+        const mtime = Number(fstat.mtimeMs || 0);
+        const birth = Number(fstat.birthtimeMs || 0);
+        const changedAfterAttempt = ctime > startTime || mtime > startTime || birth > startTime;
+        if (!changedAfterAttempt) continue;
+
+        await unlink(cleaned);
+        details.filesDeleted.push(cleaned);
+        console.log(`[agenda-worker] Deleted file: ${cleaned}`);
       } catch (err) {
         details.errors.push(`File delete ${filePath}: ${err.message}`);
       }
@@ -378,13 +385,6 @@ const agendaWorker = new Worker(
     // Collect all unique agent IDs from this job (free prompt agent + process step agents)
     const allAgentIds = new Set();
     allAgentIds.add(agentId || "main");
-    if (processes) {
-      for (const proc of processes) {
-        // We'll also pick up step-level agent IDs during execution, but lock the
-        // event-level agent for now. Step agents are typically the same.
-        // Process step agents are loaded later, so we lock the default here.
-      }
-    }
     const uniqueAgentIds = [...allAgentIds];
 
     const { acquired: lockedAgents, failed: lockFailed } = await acquireAgentLocks(uniqueAgentIds, occurrenceId);
@@ -434,7 +434,7 @@ const agendaWorker = new Worker(
     let overallSuccess = true;
     const stepSummaries = [];
     // Track all file paths detected across all steps for cleanup
-    const allDetectedFilePaths = [];
+    // (File detection removed — agent writes directly to artifact dir)
 
     // ── Load settings ──────────────────────────────────────────────────────
     const [settingsRow] = await sql`SELECT auto_retry_after_minutes, max_retries, default_fallback_model FROM worker_settings WHERE id = 1 LIMIT 1`;
@@ -482,47 +482,78 @@ const agendaWorker = new Worker(
     // ── Helper: run all steps (free prompt + processes) ──────────────────────
     const sorted = [...(processes ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
+    // Compute artifact dir for this run and ensure it exists before execution
+    const runArtifactDir = getRunArtifactDir({
+      kind: "agenda",
+      entityId: eventId || "unknown",
+      occurrenceId: occurrenceId || "none",
+      runId: runAttemptId,
+    });
+    await ensureArtifactDir(runArtifactDir);
+
     async function runAllSteps(overrideModel = null) {
       const results = [];
-      let success = true;
-      let ctx = "";
 
-      // Free prompt
-      if (freePrompt) {
-        const r = await runAgentStep({
-          runAttemptId, processVersionId: null, processStepId: null, stepOrder: 0,
-          agentId: agentId || "main", skillKey: null, instruction: freePrompt,
-          timeoutSeconds: null, fallbackModel: overrideModel ? null : (effectiveFallbackModel || null),
-          overrideModel, sql,
-        });
-        results.push({ type: "free_prompt", success: r.success, summary: r.output.slice(0, 200) });
-        if (r.detectedPaths) allDetectedFilePaths.push(...r.detectedPaths);
-        if (!r.success) { success = false; return { success, results }; }
-        ctx = `Previous output (free prompt):\n${r.output.slice(0, 500)}\n\n`;
-      }
-
-      // Process steps
+      const composedSteps = [];
+      let seq = 1;
       for (const proc of sorted) {
         const pvId = proc.process_version_id;
         const stepRows = await sql`select ps.* from process_steps ps where ps.process_version_id = ${pvId} order by ps.step_order asc`;
         for (const stepRow of stepRows) {
-          const instruction = ctx
-            ? `Context from previous steps:\n${ctx}---\nCurrent step instruction:\n${stepRow.instruction}`
-            : stepRow.instruction;
-          const r = await runAgentStep({
-            runAttemptId, processVersionId: pvId, processStepId: stepRow.id, stepOrder: stepRow.step_order,
-            agentId: stepRow.agent_id || agentId || "main", skillKey: stepRow.skill_key,
-            instruction, timeoutSeconds: stepRow.timeout_seconds,
-            fallbackModel: overrideModel ? null : (stepRow.fallback_model || effectiveFallbackModel || null),
-            overrideModel, sql,
+          composedSteps.push({
+            order: seq++,
+            title: stepRow.title || `Step ${stepRow.step_order}`,
+            instruction: String(stepRow.instruction || ""),
+            skillKey: stepRow.skill_key || null,
+            agentId: stepRow.agent_id || null,
+            timeoutSeconds: stepRow.timeout_seconds ?? null,
+            fallbackModel: stepRow.fallback_model || null,
+            processVersionId: pvId,
+            processStepId: stepRow.id,
           });
-          results.push({ type: "process_step", processVersionId: pvId, stepId: stepRow.id, stepTitle: stepRow.title, success: r.success, summary: r.output.slice(0, 200), error: r.error });
-          if (r.detectedPaths) allDetectedFilePaths.push(...r.detectedPaths);
-          ctx += `Previous output (${stepRow.title || 'Step ' + stepRow.step_order}):\n${r.output.slice(0, 500)}\n\n`;
-          if (!r.success) { success = false; return { success, results }; }
         }
       }
-      return { success, results };
+
+      const context = "Agenda event execution";
+      const instruction = renderUnifiedTaskMessage({
+        title,
+        context,
+        instructions: composedSteps.map((s) => ({ order: s.order, title: s.title, instruction: s.instruction, skillKey: s.skillKey })),
+        request: freePrompt ? String(freePrompt) : "",
+        artifactDir: runArtifactDir,
+      });
+
+      const firstSkill = composedSteps.find((s) => s.skillKey)?.skillKey || null;
+      const firstAgent = composedSteps.find((s) => s.agentId)?.agentId || agentId || "main";
+      const firstTimeout = composedSteps.find((s) => Number.isFinite(Number(s.timeoutSeconds)))?.timeoutSeconds ?? null;
+      const firstFallback = composedSteps.find((s) => s.fallbackModel)?.fallbackModel || effectiveFallbackModel || null;
+
+      const r = await runAgentStep({
+        runAttemptId,
+        eventId,
+        occurrenceId,
+        eventTitle: title,
+        processVersionId: null,
+        processStepId: null,
+        stepOrder: 0,
+        agentId: firstAgent,
+        skillKey: firstSkill,
+        instruction,
+        timeoutSeconds: firstTimeout,
+        fallbackModel: overrideModel ? null : firstFallback,
+        overrideModel,
+        artifactDir: runArtifactDir,
+        sql,
+      });
+
+      results.push({
+        type: "composed_run",
+        success: r.success,
+        summary: r.output.slice(0, 200),
+        steps: composedSteps.length,
+      });
+      // Artifacts live in runArtifactDir — cleaned up on failure via cleanupRunArtifacts
+      return { success: r.success, results };
     }
 
     try {
@@ -556,9 +587,32 @@ const agendaWorker = new Worker(
         .map((s) => {
           const ok = s.success ? "✅" : "❌";
           if (s.type === "free_prompt") return `${ok} Free prompt`;
+          if (s.type === "composed_run") return `${ok} Composed run (${s.steps || 0} steps)`;
           return `${ok} ${s.stepTitle || "Step"}`;
         })
         .join(" | ");
+
+      const [occState] = await sql`
+        SELECT status FROM agenda_occurrences WHERE id = ${occurrenceId} LIMIT 1
+      `;
+
+      // Guard against race conditions: if another path already moved this occurrence
+      // out of "running" (e.g. auto-retry timeout/manual intervention), never overwrite it.
+      if (occState?.status !== "running") {
+        await sql`
+          update agenda_run_attempts
+          set status = 'failed',
+              finished_at = now(),
+              summary = ${summaryText},
+              error_message = coalesce(error_message, 'Execution preempted while run was still in progress')
+          where id = ${runAttemptId} and status = 'running'
+        `;
+        console.warn(`[agenda-worker] Skipping finalize for ${occurrenceId}: occurrence status is ${occState?.status ?? "unknown"}`);
+        clearTimeout(alertTimer);
+        if (autoRetryTimer) clearTimeout(autoRetryTimer);
+        await releaseAgentLocks(lockedAgents);
+        return { success: false, preempted: true, status: occState?.status ?? null };
+      }
 
       await sql`
         update agenda_run_attempts
@@ -572,7 +626,7 @@ const agendaWorker = new Worker(
         await sql`
           update agenda_occurrences
           set status = 'succeeded', latest_attempt_no = ${attemptNo}
-          where id = ${occurrenceId}
+          where id = ${occurrenceId} and status = 'running'
         `;
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId })})`;
         console.log(`[agenda-worker] Completed occurrence ${occurrenceId} — succeeded`);
@@ -580,7 +634,8 @@ const agendaWorker = new Worker(
         // All retries exhausted → run cleanup before setting needs_retry
         console.log(`[agenda-worker] Running failure cleanup for occurrence ${occurrenceId}...`);
         try {
-          await runFailureCleanup(runAttemptId, sessionSnapshots, [...new Set(allDetectedFilePaths)], attemptStartTime);
+          await runFailureCleanup(runAttemptId, sessionSnapshots, [], attemptStartTime);
+          await cleanupRunArtifacts(runArtifactDir);
         } catch (cleanupErr) {
           console.error(`[agenda-worker] Cleanup failed for ${occurrenceId}:`, cleanupErr.message);
         }
@@ -613,7 +668,8 @@ const agendaWorker = new Worker(
       // Run cleanup on fatal error too
       console.log(`[agenda-worker] Running failure cleanup for fatal error on ${occurrenceId}...`);
       try {
-        await runFailureCleanup(runAttemptId, sessionSnapshots, [...new Set(allDetectedFilePaths)], attemptStartTime);
+        await runFailureCleanup(runAttemptId, sessionSnapshots, [], attemptStartTime);
+        await cleanupRunArtifacts(runArtifactDir);
       } catch (cleanupErr) {
         console.error(`[agenda-worker] Cleanup failed for ${occurrenceId}:`, cleanupErr.message);
       }
@@ -651,13 +707,34 @@ agendaWorker.on("failed", (job, err) => {
 
 // ── Step execution helper ─────────────────────────────────────────────────────
 
-function isRateLimitError(errorMsg) {
+function isCapacityConstraintError(errorMsg) {
   const lower = (errorMsg || "").toLowerCase();
-  return lower.includes("429") || lower.includes("rate limit") || lower.includes("quota") || lower.includes("too many");
+
+  // HTTP-level signals
+  if (/(^|\D)(429|402)(\D|$)/.test(lower)) return true;
+
+  // Provider-level stable codes/phrases
+  if (
+    lower.includes("insufficient_quota") ||
+    lower.includes("quota_exceeded") ||
+    lower.includes("billing_hard_limit") ||
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("credit balance is too low") ||
+    lower.includes("insufficient credits") ||
+    (lower.includes("plans & billing") && lower.includes("upgrade"))
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 async function runAgentStep({
   runAttemptId,
+  eventId,
+  occurrenceId,
+  eventTitle,
   processVersionId,
   processStepId,
   stepOrder,
@@ -667,18 +744,20 @@ async function runAgentStep({
   timeoutSeconds,
   fallbackModel,
   overrideModel,
+  artifactDir,
   sql,
 }) {
   const effectiveAgentId = (agentId && agentId !== "null") ? agentId : "main";
   const effectiveTimeout = Math.max(timeoutSeconds ?? 300, 60);
-  const skillArg = skillKey ? ["--skill", skillKey] : [];
+
+  // Skill context is already embedded in the rendered instruction template
+  const effectiveInstruction = instruction;
 
   let output = "";
   let errorMsg = null;
   let success = true;
   let artifactData = null;
   let usedFallback = false;
-  let detectedPaths = [];
 
   async function executeAgent(modelOverride = null) {
     const effectiveModel = modelOverride || overrideModel || null;
@@ -686,9 +765,8 @@ async function runAgentStep({
     const args = [
       "agent",
       "--agent", effectiveAgentId,
-      "--message", instruction,
+      "--message", effectiveInstruction,
       "--json",
-      ...skillArg,
       ...modelArg,
     ];
 
@@ -706,104 +784,42 @@ async function runAgentStep({
       raw = result.stdout;
     } catch (primaryErr) {
       const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-      // Rate limit errors → fail immediately, let user decide (don't auto-retry with fallback here)
-      throw primaryErr;
+
+      // Capacity-constrained failures (rate-limit/quota/low credits) should auto-fallback
+      // when a fallback model is configured.
+      if (fallbackModel && isCapacityConstraintError(primaryMsg)) {
+        try {
+          const fallbackResult = await executeAgent(fallbackModel);
+          raw = fallbackResult.stdout;
+          usedFallback = true;
+        } catch (fallbackErr) {
+          const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          throw new Error(`Primary model capacity-constrained and fallback failed: ${fallbackMsg}`);
+        }
+      } else {
+        throw primaryErr;
+      }
     }
 
     const parsed = JSON.parse(raw);
     const payloads = parsed?.result?.payloads ?? parsed?.payloads ?? [];
 
-    // Separate text vs file payloads
+    // Collect text from all payloads
     const textParts = [];
-    const filePayloads = [];
-
     if (Array.isArray(payloads)) {
       for (const p of payloads) {
-        if (p.type === "file" && p.data) {
-          filePayloads.push({
-            name: p.name || p.filename || `file-${Date.now()}`,
-            mimeType: p.mimeType || p.contentType || "application/octet-stream",
-            data: p.data,
-          });
-        } else {
-          textParts.push(p.text ?? "");
-        }
+        if (p.text) textParts.push(p.text);
       }
     }
 
     output = textParts.join("\n").trim() || (parsed?.result ?? parsed?.text ?? JSON.stringify(parsed));
 
-    // Save file artifacts from structured payloads
-    if (filePayloads.length > 0) {
-      const artifactDir = resolve("/storage/mission-control/artifacts", runAttemptId);
-      await mkdir(artifactDir, { recursive: true });
-
-      const savedFiles = [];
-      for (const art of filePayloads) {
-        const filePath = resolve(artifactDir, art.name);
-        const buffer = Buffer.from(art.data, "base64");
-        await writeFile(filePath, buffer);
-        savedFiles.push({
-          name: art.name,
-          mimeType: art.mimeType,
-          size: buffer.length,
-          path: filePath,
-        });
-      }
-      artifactData = { files: savedFiles };
-    }
-
-    // ── Detect files mentioned in agent text output ───────────────────────
-    if (success && output) {
-      const pathRegex = /(\/(?:home|storage|tmp|var|opt|root)[^\s`"')\]>]+\.\w{1,10})/g;
-      detectedPaths = [...new Set((output.match(pathRegex) || []))];
-      const discoveredFiles = [];
-
-      for (const p of detectedPaths) {
-        try {
-          const cleaned = p.replace(/[.,;:!?)}\]]+$/, "");
-          if (!existsSync(cleaned)) continue;
-          const fstat = await stat(cleaned);
-          if (!fstat.isFile() || fstat.size > 50 * 1024 * 1024) continue;
-
-          const fname = basename(cleaned);
-          const ext = extname(fname).toLowerCase().slice(1);
-          const mimeMap = {
-            md: "text/markdown", txt: "text/plain", csv: "text/csv", json: "application/json",
-            pdf: "application/pdf", html: "text/html", xml: "text/xml", yaml: "text/yaml", yml: "text/yaml",
-            png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
-            svg: "image/svg+xml", ico: "image/x-icon",
-            zip: "application/zip", tar: "application/x-tar", gz: "application/gzip",
-            js: "text/javascript", ts: "text/typescript", py: "text/x-python", sh: "text/x-shellscript",
-            doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          };
-          const mimeType = mimeMap[ext] || "application/octet-stream";
-
-          discoveredFiles.push({ sourcePath: cleaned, name: fname, mimeType, size: fstat.size });
-        } catch { /* skip inaccessible paths */ }
-      }
-
-      if (discoveredFiles.length > 0) {
-        const artifactDir = resolve("/storage/mission-control/artifacts", runAttemptId);
-        await mkdir(artifactDir, { recursive: true });
-
-        const existingFiles = artifactData?.files ?? [];
-        const existingNames = new Set(existingFiles.map((f) => f.name));
-
-        for (const df of discoveredFiles) {
-          if (existingNames.has(df.name)) continue;
-          const destPath = resolve(artifactDir, df.name);
-          await copyFile(df.sourcePath, destPath);
-          existingFiles.push({
-            name: df.name,
-            mimeType: df.mimeType,
-            size: df.size,
-            path: destPath,
-          });
-        }
-
-        artifactData = { files: existingFiles };
+    // Scan artifact dir for files the agent created directly there
+    if (artifactDir) {
+      const scannedFiles = await scanArtifactDir(artifactDir);
+      if (scannedFiles.length > 0) {
+        artifactData = { files: scannedFiles };
+        console.log(`[agenda-worker] Found ${scannedFiles.length} artifact(s) in ${artifactDir}`);
       }
     }
   } catch (err) {
@@ -817,30 +833,38 @@ async function runAgentStep({
     output = "(Agent returned empty response)";
   }
 
-  // Persist step result
-  await sql`
-    insert into agenda_run_steps (
-      run_attempt_id, process_version_id, process_step_id, step_order,
-      agent_id, skill_key, input_payload, output_payload, artifact_payload, status,
-      started_at, finished_at, error_message
-    ) values (
-      ${runAttemptId},
-      ${processVersionId ?? null},
-      ${processStepId ?? null},
-      ${stepOrder},
-      ${effectiveAgentId},
-      ${skillKey ?? null},
-      ${sql.json({ instruction, skillKey, agentId, timeoutSeconds, usedFallback })},
-      ${sql.json({ output })},
-      ${artifactData ? sql.json(artifactData) : null},
-      ${success ? "succeeded" : "failed"},
-      now(),
-      now(),
-      ${errorMsg}
-    )
-  `;
+  // Persist step result (guard against cascade-deleted parent)
+  try {
+    await sql`
+      insert into agenda_run_steps (
+        run_attempt_id, process_version_id, process_step_id, step_order,
+        agent_id, skill_key, input_payload, output_payload, artifact_payload, status,
+        started_at, finished_at, error_message
+      ) values (
+        ${runAttemptId},
+        ${processVersionId ?? null},
+        ${processStepId ?? null},
+        ${stepOrder},
+        ${effectiveAgentId},
+        ${skillKey ?? null},
+        ${sql.json({ instruction, skillKey, agentId, timeoutSeconds, usedFallback })},
+        ${sql.json({ output })},
+        ${artifactData ? sql.json(artifactData) : null},
+        ${success ? "succeeded" : "failed"},
+        now(),
+        now(),
+        ${errorMsg}
+      )
+    `;
+  } catch (fkErr) {
+    if (String(fkErr?.code) === "23503") {
+      console.warn(`[agenda-worker] Run attempt ${runAttemptId} was deleted (event removed during execution) — skipping step persist`);
+    } else {
+      throw fkErr;
+    }
+  }
 
-  return { success, output, error: errorMsg, artifacts: artifactData, detectedPaths: detectedPaths ?? [] };
+  return { success, output, error: errorMsg, artifacts: artifactData };
 }
 
 // ── Stale lock recovery ───────────────────────────────────────────────────────

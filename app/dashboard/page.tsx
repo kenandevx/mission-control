@@ -4,6 +4,7 @@ import { SectionCards } from "@/components/dashboard/section-cards";
 import { SiteHeader } from "@/components/dashboard/site-header";
 import { getDashboardData, getDashboardStats } from "@/lib/db/server-data";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { PageReveal } from "@/components/ui/page-reveal";
 
 export const dynamic = "force-dynamic";
 
@@ -27,21 +28,21 @@ export default async function DashboardPage() {
         <SiteHeader />
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
-            <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+            <PageReveal label="Loading dashboard…" className="py-4 md:py-6">
+              <div className="flex flex-col gap-4 md:gap-6">
+                {/* Row 1: Total counts */}
+                <SectionCards
+                  boards={stats.boards}
+                  tickets={stats.tickets}
+                  agendaEvents={stats.agendaEvents}
+                  processes={stats.processes}
+                  logs={stats.logs}
+                />
 
-              {/* Row 1: Total counts */}
-              <SectionCards
-                boards={stats.boards}
-                tickets={stats.tickets}
-                agendaEvents={stats.agendaEvents}
-                processes={stats.processes}
-                logs={stats.logs}
-              />
-
-              {/* Row 2: Chart */}
-              <ChartAreaInteractive data={chartData} />
-
-            </div>
+                {/* Row 2: Chart */}
+                <ChartAreaInteractive data={chartData} />
+              </div>
+            </PageReveal>
           </div>
         </div>
       </SidebarInset>

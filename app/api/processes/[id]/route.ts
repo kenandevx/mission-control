@@ -12,6 +12,18 @@ async function workspaceId(sql: ReturnType<typeof getSql>) {
   return rows[0]?.id ?? null;
 }
 
+function validateProcessSteps(steps: Json[]): string | null {
+  if (!Array.isArray(steps) || steps.length === 0) return "At least one step is required.";
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const title = String(step.title || "").trim();
+    const instruction = String(step.instruction || "").trim();
+    if (!title) return `Step ${i + 1}: title is required.`;
+    if (!instruction) return `Step ${i + 1}: instruction is required.`;
+  }
+  return null;
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -107,6 +119,8 @@ export async function PATCH(
       `;
 
       const steps: Json[] = Array.isArray(body.steps) ? body.steps as Json[] : [];
+      const stepValidationError = validateProcessSteps(steps);
+      if (stepValidationError) return fail(stepValidationError);
       if (steps.length > 0) {
         for (let i = 0; i < steps.length; i++) {
           const step = steps[i];
@@ -158,9 +172,12 @@ export async function PATCH(
     }
 
     if (Array.isArray(body.steps) && latestPv) {
+      const steps = body.steps as Json[];
+      const stepValidationError = validateProcessSteps(steps);
+      if (stepValidationError) return fail(stepValidationError);
+
       // Replace steps on the current draft version
       await sql`delete from process_steps where process_version_id = ${latestPv.id}`;
-      const steps = body.steps as Json[];
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         await sql`
@@ -186,7 +203,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -200,34 +217,52 @@ export async function DELETE(
     `;
     if (!existing) return fail("Process not found.", 404);
 
-    // Cancel future occurrences of tied agenda events (keep past runs)
-    const tiedEventIds = await sql`
-      select distinct ae.id
+    const force = new URL(request.url).searchParams.get("force") === "1";
+
+    const tiedEvents = await sql`
+      select distinct ae.id, ae.title
       from agenda_events ae
       join agenda_event_processes aep on aep.agenda_event_id = ae.id
       join process_versions pv on pv.id = aep.process_version_id
       where pv.process_id = ${id}
+      order by ae.title asc
     `;
+
+    const tiedEventIds = tiedEvents.map((r) => (r as { id: string }).id);
+
+    // Hard safety: never allow delete while any tied occurrence is currently running.
     if (tiedEventIds.length > 0) {
-      const ids = tiedEventIds.map((r) => (r as { id: string }).id);
-      // Cancel future scheduled occurrences
-      await sql`
-        UPDATE agenda_occurrences SET status = 'cancelled'
-        WHERE agenda_event_id = ANY(${ids})
-        AND status IN ('scheduled', 'queued')
-        AND scheduled_for > now()
+      const runningRows = await sql`
+        select ao.id, ao.agenda_event_id
+        from agenda_occurrences ao
+        where ao.agenda_event_id = ANY(${tiedEventIds})
+          and ao.status = 'running'
+        limit 5
       `;
-      // Deactivate the events
-      await sql`
-        UPDATE agenda_events SET status = 'draft'
-        WHERE id = ANY(${ids})
-      `;
-      // Notify UI
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "process_deleted" })})`;
+      if (runningRows.length > 0) {
+        return fail("Cannot delete process while a tied agenda event is running. Wait for it to finish, then retry.", 409);
+      }
+    }
+
+    // If tied agenda events exist, require explicit force delete.
+    if (tiedEvents.length > 0 && !force) {
+      return NextResponse.json({
+        ok: false,
+        error: "This process is tied to active agenda events. Remove those links first or force delete.",
+        code: "PROCESS_IN_USE",
+        tiedEvents,
+      }, { status: 409 });
+    }
+
+    let deletedAgendaEvents = 0;
+    if (tiedEventIds.length > 0 && force) {
+      await sql`delete from agenda_events where id = ANY(${tiedEventIds})`;
+      deletedAgendaEvents = tiedEventIds.length;
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "force_delete_events" })})`;
     }
 
     await sql`delete from processes where id = ${id}`;
-    return ok({ cancelledEvents: tiedEventIds.length });
+    return ok({ deletedAgendaEvents, tiedEvents: tiedEvents.length, forced: force });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Failed to delete process", 500);
   }

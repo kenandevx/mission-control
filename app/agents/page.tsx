@@ -2,6 +2,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { PageHeader } from "@/components/layout/page-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AgentsClientGrid } from "./agents-client";
+import { PageReveal } from "@/components/ui/page-reveal";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +17,10 @@ export default function AgentsPage() {
       <AppSidebar variant="inset" initialUser={null} />
       <SidebarInset>
         <PageHeader page="Agents" />
-        <div className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">
+        <PageReveal label="Loading agents…" className="flex flex-1 flex-col gap-4 px-3 py-4 sm:px-4 lg:gap-6 lg:px-6">
           {/* Client renders skeleton until agents are fetched — SSR renders nothing */}
           <AgentsClientGrid showAgentDebug={showAgentDebug} />
-        </div>
+        </PageReveal>
       </SidebarInset>
     </SidebarProvider>
   );

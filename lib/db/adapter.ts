@@ -38,13 +38,13 @@ export type TicketExecutionState =
   | "executing"
   | "done"
   | "failed"
+  | "expired"
   | "pending"
   | "queued"
   | "picked_up"
   | "running"
   | "draft"
-  | "needs_retry"
-  | "expired";
+  | "needs_retry";
 
 export type TicketLifecycleState = TicketExecutionState;
 

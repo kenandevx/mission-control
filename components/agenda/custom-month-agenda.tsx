@@ -25,9 +25,15 @@ import {
 import {
   IconChevronLeft,
   IconChevronRight,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import type { AgendaEventSummary } from "@/components/agenda/agenda-details-sheet";
 import { useNow, formatDuration, LiveDuration } from "@/hooks/use-now";
+import {
+  EVENT_COLORS, DOT_COLORS, STATUS_GUIDE_ENTRIES,
+  resolveEventColorKey, resolveEventColor,
+} from "@/lib/status-colors";
+import type { EventColor } from "@/lib/status-colors";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,13 +45,14 @@ export type CalendarEvent = {
   color?: EventColor;
   isRecurring?: boolean;
   status?: "draft" | "active";
-  latestResult?: "scheduled" | "running" | "succeeded" | "failed" | "needs_retry" | "queued" | "expired" | null;
+  latestResult?: "scheduled" | "running" | "succeeded" | "failed" | "needs_retry" | "queued" | null;
   runStartedAt?: string | null;
   runFinishedAt?: string | null;
   timezone?: string;
 };
 
-export type EventColor = "blue" | "green" | "orange" | "pink" | "purple" | "teal" | "amber" | "indigo" | "rose" | "cyan" | "lime" | "gray" | "default";
+// EventColor re-exported from @/lib/status-colors
+export type { EventColor } from "@/lib/status-colors";
 
 export type ViewMode = "month" | "week" | "day";
 
@@ -103,68 +110,18 @@ const MAX_VISIBLE = 4;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const HOUR_HEIGHT = 72; // px per hour slot in week/day views
 
-// ── Color palette — matches JSONC AgendaEventItem spec ──────────────────────────
-
-const EVENT_COLORS: Record<EventColor, { bg: string; text: string; border: string }> = {
-  blue:    { bg: "#e8f1ff", text: "#3b82f6", border: "#bfdbfe" },
-  green:   { bg: "#eaf8ef", text: "#16a34a", border: "#bbf7d0" },
-  orange:  { bg: "#fff3e8", text: "#ea580c", border: "#fed7aa" },
-  pink:    { bg: "#fdecf3", text: "#ec4899", border: "#fbcfe8" },
-  purple:  { bg: "#f3e8ff", text: "#8b5cf6", border: "#ddd6fe" },
-  teal:    { bg: "#e6fcf5", text: "#0d9488", border: "#99f6e4" },
-  amber:   { bg: "#fffbeb", text: "#d97706", border: "#fde68a" },
-  indigo:  { bg: "#eef2ff", text: "#6366f1", border: "#c7d2fe" },
-  rose:    { bg: "#fff1f2", text: "#e11d48", border: "#fecdd3" },
-  cyan:    { bg: "#ecfeff", text: "#0891b2", border: "#a5f3fc" },
-  lime:    { bg: "#f7fee7", text: "#65a30d", border: "#d9f99d" },
-  gray:    { bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db" },
-  default: { bg: "hsl(var(--secondary))", text: "hsl(var(--secondary-foreground))", border: "hsl(var(--border))" },
-};
-
-const DOT_COLORS: Record<EventColor, string> = {
-  blue:    "#3b82f6",
-  green:   "#16a34a",
-  orange:  "#ea580c",
-  pink:    "#ec4899",
-  purple:  "#8b5cf6",
-  teal:    "#0d9488",
-  amber:   "#d97706",
-  indigo:  "#6366f1",
-  rose:    "#e11d48",
-  cyan:    "#0891b2",
-  lime:    "#65a30d",
-  gray:    "#9ca3af",
-  default: "hsl(var(--muted-foreground))",
-};
-
-// ── Auto-color from event ID ────────────────────────────────────────────────
-const ACTIVE_COLORS: EventColor[] = ["blue", "green", "orange", "pink", "purple", "teal", "amber", "indigo", "rose", "cyan", "lime"];
-function hashColor(id: string): EventColor {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
-  }
-  return ACTIVE_COLORS[Math.abs(hash) % ACTIVE_COLORS.length];
-}
-
-function resolveEventColor(event: CalendarEvent) {
-  if (event.status === "draft") return EVENT_COLORS.gray;
-  if (event.color && event.color !== "default" && EVENT_COLORS[event.color]) return EVENT_COLORS[event.color];
-  // Auto-assign a color based on event ID
-  const autoColor = hashColor(event.id);
-  return EVENT_COLORS[autoColor];
-}
+// Color palette, dot colors, status mapping, and resolve functions
+// imported from @/lib/status-colors
 
 // ── Occurrence status indicator ─────────────────────────────────────────────────
 
 const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
-  running:      { emoji: "", color: "bg-amber-500", pulse: true },
-  scheduled:    { emoji: "", color: "bg-blue-400" },
-  queued:       { emoji: "", color: "bg-blue-400" },
+  running:      { emoji: "", color: "bg-indigo-500", pulse: true },
+  scheduled:    { emoji: "", color: "bg-gray-400" },
+  queued:       { emoji: "", color: "bg-gray-400" },
   succeeded:    { emoji: "", color: "bg-emerald-500" },
-  failed:       { emoji: "", color: "bg-red-500" },
-  needs_retry:  { emoji: "", color: "bg-red-500" },
-  expired:      { emoji: "", color: "bg-gray-400" },
+  failed:       { emoji: "", color: "bg-rose-500" },
+  needs_retry:  { emoji: "", color: "bg-amber-500" },
 };
 
 function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["latestResult"]; size?: number }) {
@@ -173,11 +130,9 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
 
   if (result === 'running') {
     return (
-      <span className="relative flex shrink-0" style={{ width: size, height: size }}
-        title="Running"
-      >
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-        <span className="relative inline-flex rounded-full bg-blue-500" style={{ width: size, height: size }} />
+      <span className="relative flex shrink-0" style={{ width: size, height: size }} title="Running">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-500 opacity-75" />
+        <span className="relative inline-flex rounded-full bg-indigo-600" style={{ width: size, height: size }} />
       </span>
     );
   }
@@ -191,6 +146,15 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
         className={`relative inline-flex rounded-full ${cfg.color}`}
         style={{ width: size, height: size }}
       />
+    </span>
+  );
+}
+
+function RunningBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-wider leading-none text-blue-600 animate-pulse">
+      <span className="inline-block size-2 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+      Running
     </span>
   );
 }
@@ -222,7 +186,7 @@ function RecurringIcon({ size = 9 }: { size?: number }) {
 function EventPill({ event }: { event: CalendarEvent }) {
   const resolved = resolveEventColor(event);
   const { bg, text: color } = resolved;
-  const resolvedKey = event.status === "draft" ? "gray" : (event.color && event.color !== "default" ? event.color : hashColor(event.id));
+  const resolvedKey = resolveEventColorKey(event);
   const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
   const isDraft = event.status === "draft";
 
@@ -272,24 +236,28 @@ function EventPill({ event }: { event: CalendarEvent }) {
           </span>
         )}
         {event.latestResult && event.latestResult !== "scheduled" && event.latestResult !== "queued" && (
-          <span
-            className="text-[8px] font-bold uppercase tracking-wider leading-none"
-            style={{
-              color: event.latestResult === "succeeded" ? "#16a34a"
-                : event.latestResult === "running" ? "#d97706"
-                : (event.latestResult === "failed" || event.latestResult === "needs_retry") ? "#dc2626"
-                : event.latestResult === "expired" ? "#6b7280"
-                : undefined,
-              opacity: 0.85,
-            }}
-          >
-            {event.latestResult === "running" ? "● Running"
-              : event.latestResult === "succeeded" ? "✓ Done"
-              : event.latestResult === "needs_retry" ? "⚠ Retry"
-              : event.latestResult === "expired" ? "Expired"
-              : "✗ Failed"}
-            <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
-          </span>
+          event.latestResult === "running" ? (
+            <span className="inline-flex items-center gap-1.5">
+              <RunningBadge />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " />
+            </span>
+          ) : (
+            <span
+              className="text-[8px] font-bold uppercase tracking-wider leading-none"
+              style={{
+                color: event.latestResult === "succeeded" ? "#16a34a"
+                  : event.latestResult === "needs_retry" ? "#d97706"
+                  : event.latestResult === "failed" ? "#dc2626"
+                  : undefined,
+                opacity: 0.85,
+              }}
+            >
+              {event.latestResult === "succeeded" ? "✓ Done"
+                : event.latestResult === "needs_retry" ? "⚠ Retry"
+                : "✗ Failed"}
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
+            </span>
+          )
         )}
       </div>
     </div>
@@ -301,7 +269,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
 function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
   const resolved = resolveEventColor(event);
   const { bg, text: color } = resolved;
-  const resolvedKey = event.status === "draft" ? "gray" : (event.color && event.color !== "default" ? event.color : hashColor(event.id));
+  const resolvedKey = resolveEventColorKey(event);
   const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
   const isDraft = event.status === "draft";
 
@@ -347,24 +315,28 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         )}
         {event.isRecurring && <RecurringIcon size={10} />}
         {event.latestResult && event.latestResult !== "scheduled" && event.latestResult !== "queued" && (
-          <span
-            className="text-[9px] font-bold uppercase tracking-wider leading-none"
-            style={{
-              color: event.latestResult === "succeeded" ? "#16a34a"
-                : event.latestResult === "running" ? "#d97706"
-                : (event.latestResult === "failed" || event.latestResult === "needs_retry") ? "#dc2626"
-                : event.latestResult === "expired" ? "#6b7280"
-                : undefined,
-              opacity: 0.8,
-            }}
-          >
-            {event.latestResult === "running" ? "● Running"
-              : event.latestResult === "succeeded" ? "✓ Done"
-              : event.latestResult === "needs_retry" ? "⚠ Retry"
-              : event.latestResult === "expired" ? "Expired"
-              : "✗ Failed"}
-            <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
-          </span>
+          event.latestResult === "running" ? (
+            <span className="inline-flex items-center gap-1.5">
+              <RunningBadge />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " />
+            </span>
+          ) : (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wider leading-none"
+              style={{
+                color: event.latestResult === "succeeded" ? "#16a34a"
+                  : event.latestResult === "needs_retry" ? "#d97706"
+                  : event.latestResult === "failed" ? "#dc2626"
+                  : undefined,
+                opacity: 0.8,
+              }}
+            >
+              {event.latestResult === "succeeded" ? "✓ Done"
+                : event.latestResult === "needs_retry" ? "⚠ Retry"
+                : "✗ Failed"}
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
+            </span>
+          )
         )}
       </div>
     </div>
@@ -490,7 +462,7 @@ function DayCell({
             <div className="overflow-y-auto px-6 pb-5 flex flex-col gap-2 max-h-[60vh]">
               {dayEvents.map((evt) => {
                 const resolved = resolveEventColor(evt);
-                const resolvedKey = evt.status === "draft" ? "gray" : (evt.color && evt.color !== "default" ? evt.color : hashColor(evt.id));
+                const resolvedKey = resolveEventColorKey(evt);
                 const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
                 const timeStr = (() => {
                   if (!evt.time) return null;
@@ -530,28 +502,31 @@ function DayCell({
                             </span>
                           )}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
-                            <span
-                              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                              style={{
-                                color: evt.latestResult === "succeeded" ? "#16a34a"
-                                  : evt.latestResult === "running" ? "#d97706"
-                                  : (evt.latestResult === "failed" || evt.latestResult === "needs_retry") ? "#dc2626"
-                                  : evt.latestResult === "expired" ? "#6b7280"
-                                  : undefined,
-                                backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)"
-                                  : evt.latestResult === "running" ? "rgba(217,119,6,0.1)"
-                                  : (evt.latestResult === "failed" || evt.latestResult === "needs_retry") ? "rgba(220,38,38,0.1)"
-                                  : evt.latestResult === "expired" ? "rgba(107,114,128,0.1)"
-                                  : undefined,
-                              }}
-                            >
-                              {evt.latestResult === "running" ? "● Running"
-                                : evt.latestResult === "succeeded" ? "✓ Done"
-                                : evt.latestResult === "needs_retry" ? "⚠ Retry"
-                                : evt.latestResult === "expired" ? "Expired"
-                                : "✗ Failed"}
-                              <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix=" · " />
-                            </span>
+                            evt.latestResult === "running" ? (
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-amber-500/10">
+                                <RunningBadge />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " />
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                                style={{
+                                  color: evt.latestResult === "succeeded" ? "#16a34a"
+                                    : evt.latestResult === "needs_retry" ? "#d97706"
+                                    : evt.latestResult === "failed" ? "#dc2626"
+                                    : undefined,
+                                  backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)"
+                                    : evt.latestResult === "needs_retry" ? "rgba(217,119,6,0.1)"
+                                    : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)"
+                                    : undefined,
+                                }}
+                              >
+                                {evt.latestResult === "succeeded" ? "✓ Done"
+                                  : evt.latestResult === "needs_retry" ? "⚠ Retry"
+                                  : "✗ Failed"}
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix=" · " />
+                              </span>
+                            )
                           )}
                         </div>
                       </div>
@@ -894,6 +869,7 @@ export function CustomMonthAgenda({
   failedCount,
   onOpenFailed,
 }: Props) {
+  const [showStatusLegend, setShowStatusLegend] = useState(false);
   // ── Convert events ─────────────────────────────────────────────────────────
   const calendarEvents: CalendarEvent[] = useMemo(() => {
     return events.map((e) => {
@@ -975,21 +951,27 @@ export function CustomMonthAgenda({
     });
   }, [currentDate]);
 
-  // ── Display text ───────────────────────────────────────────────────────────
-  const badgeMonth = format(currentDate, "MMM").toUpperCase();
-  const badgeDay = format(currentDate, "d");
+  // ── Display text (client-only to avoid SSR hydration mismatch on TZ/midnight) ─
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const badgeMonth = mounted ? format(currentDate, "MMM").toUpperCase() : "";
+  const badgeDay = mounted ? format(currentDate, "d") : "";
 
-  const titleText = viewMode === "week"
-    ? `${format(weekDays[0], "MMM d")} – ${format(weekDays[6], "MMM d, yyyy")}`
-    : viewMode === "day"
-      ? format(currentDate, "EEEE, MMMM d, yyyy")
-      : format(currentDate, "MMMM yyyy");
+  const titleText = mounted
+    ? viewMode === "week"
+      ? `${format(weekDays[0], "MMM d")} – ${format(weekDays[6], "MMM d, yyyy")}`
+      : viewMode === "day"
+        ? format(currentDate, "EEEE, MMMM d, yyyy")
+        : format(currentDate, "MMMM yyyy")
+    : "";
 
-  const rangeText = viewMode === "week"
-    ? `${format(weekDays[0], "MMM d")} – ${format(weekDays[6], "MMM d, yyyy")}`
-    : viewMode === "day"
-      ? format(currentDate, "EEEE, MMMM d, yyyy")
-      : `${format(monthStart, "MMM d, yyyy")} — ${format(monthEnd, "MMM d, yyyy")}`;
+  const rangeText = mounted
+    ? viewMode === "week"
+      ? `${format(weekDays[0], "MMM d")} – ${format(weekDays[6], "MMM d, yyyy")}`
+      : viewMode === "day"
+        ? format(currentDate, "EEEE, MMMM d, yyyy")
+        : `${format(monthStart, "MMM d, yyyy")} — ${format(monthEnd, "MMM d, yyyy")}`
+    : "";
 
   const handleEventClick = useCallback(
     (evt: CalendarEvent) => onEventClick(evt.id, evt.date),
@@ -1077,6 +1059,16 @@ export function CustomMonthAgenda({
               </span>
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 rounded-lg cursor-pointer"
+            onClick={() => setShowStatusLegend(true)}
+            title="Event status legend"
+          >
+            <IconInfoCircle className="size-[18px]" />
+          </Button>
+
           <Button
             size="sm"
             className="h-9 px-4 rounded-lg text-[13px] font-semibold cursor-pointer"
@@ -1169,6 +1161,45 @@ export function CustomMonthAgenda({
           </div>
         )}
       </div>
+
+      <Dialog open={showStatusLegend} onOpenChange={setShowStatusLegend}>
+        <DialogContent className="sm:max-w-[400px] p-0 gap-0 overflow-hidden">
+          <div className="px-5 pt-5 pb-3">
+            <DialogHeader className="space-y-1">
+              <DialogTitle className="text-base font-semibold">Status Guide</DialogTitle>
+              <DialogDescription className="text-xs">
+                What each indicator means on the calendar.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="px-5 pb-5 flex flex-col gap-1.5">
+            {STATUS_GUIDE_ENTRIES.map((item) => {
+              const ec = EVENT_COLORS[item.colorKey];
+              return (
+                <div
+                  key={item.key}
+                  className={`flex items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset ${item.bg} ${item.ring} ${item.muted ? "opacity-60" : ""}`}
+                >
+                  {/* Mini pill preview */}
+                  <div
+                    className="shrink-0 rounded px-2 py-0.5 text-[10px] font-bold leading-tight"
+                    style={{
+                      backgroundColor: ec.bg,
+                      borderLeft: `2.5px solid ${ec.text}`,
+                      color: ec.text,
+                    }}
+                  >
+                    {item.label}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

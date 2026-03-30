@@ -32,6 +32,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { getProviderLabel } from "@/lib/models";
+import { useModels } from "@/lib/use-models";
 import { TICKET_PRIORITY_OPTIONS } from "@/types/tasks";
 import type {
   Assignee,
@@ -68,41 +70,6 @@ import {
   LockIcon,
   ShieldCheckIcon,
 } from "lucide-react";
-
-// ── Model constants ──────────────────────────────────────────────────────────
-
-const MODELS = [
-  { id: "anthropic/claude-opus-4-6", alias: "Claude Opus 4" },
-  { id: "openrouter/deepseek/deepseek-chat-v3", alias: "deepseek3chat" },
-  { id: "openrouter/auto", alias: "OpenRouter" },
-  { id: "openrouter/deepseek/deepseek-v3.2", alias: "deepseek3.2" },
-  { id: "openrouter/minimax/minimax-m2.5", alias: "Minimax2.5" },
-  { id: "openrouter/minimax/minimax-m2.7", alias: "Minimax2.7" },
-  { id: "openrouter/openai/gpt-5.4", alias: "gpt5.4" },
-  { id: "openrouter/openai/gpt-oss-120b", alias: "gptoss120b" },
-  { id: "openrouter/openai/gpt-oss-20b:nitro", alias: "gptoss20bnitro" },
-  { id: "openrouter/google/gemini-3-flash-preview", alias: "gemini3flash" },
-  { id: "openrouter/google/gemini-3.1-pro-preview", alias: "gemini3pro" },
-  { id: "openrouter/openai/gpt-5.4-nano", alias: "gpt5.4-nano" },
-  { id: "openrouter/openai/gpt-5.4-mini", alias: "gpt5.4-mini" },
-  { id: "openrouter/stepfun/step-3.5-flash:free", alias: "Step Flash Free" },
-  { id: "openrouter/mistralai/devstral-2512:free", alias: "Devstral Free" },
-  { id: "openrouter/qwen/qwen3-coder:free", alias: "Qwen3 Coder" },
-  { id: "openrouter/deepseek/deepseek-chat-v3:free", alias: "Deepseek Chat V3 Free" },
-];
-
-function getProviderLabel(modelId: string): string {
-  if (modelId.startsWith('anthropic/')) return 'Anthropic';
-  if (modelId.startsWith('openrouter/openai/')) return 'OpenAI';
-  if (modelId.startsWith('openrouter/google/')) return 'Google';
-  if (modelId.startsWith('openrouter/deepseek/')) return 'DeepSeek';
-  if (modelId.startsWith('openrouter/minimax/')) return 'MiniMax';
-  if (modelId.startsWith('openrouter/mistralai/')) return 'Mistral';
-  if (modelId.startsWith('openrouter/qwen/')) return 'Qwen';
-  if (modelId.startsWith('openrouter/stepfun/')) return 'StepFun';
-  if (modelId === 'openrouter/auto') return 'OpenRouter';
-  return 'Other';
-}
 
 function getTimezoneAbbr(timezone: string, date?: Date): string {
   try {
@@ -258,6 +225,7 @@ export function TicketDetailsModal({
   // Auto-open activity when there are agent responses
   const hasAgentOutput = activity.some((e) => e.event === "Agent response" || e.event === "Plan generated");
   const [showActivity, setShowActivity] = useState(hasAgentOutput);
+  const models = useModels();
   const attachRef = useRef<HTMLInputElement | null>(null);
 
   const hasAgent = Boolean(form.assignedAgentId);
@@ -673,7 +641,7 @@ export function TicketDetailsModal({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">None</SelectItem>
-                    {MODELS.map((m) => (
+                    {models.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         <span className="font-medium">{m.alias}</span>
                         <span className="text-muted-foreground text-[10px] ml-1">({getProviderLabel(m.id)})</span>

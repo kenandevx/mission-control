@@ -23,9 +23,92 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-// Tiny bootstrap that runs synchronously before first paint — sets all accent CSS vars
-// on <html> with !important so the stylesheet cannot override them on first render.
-const themeAccentBootstrap = `(function(){var d=document.documentElement,n=localStorage.getItem('mc-theme-accent')||'purple';var M={purple:{p:'oklch(0.541 0.281 293.009)',pf:'oklch(0.98 0.01 293)',r:'oklch(0.702 0.183 293.541)',s:'oklch(0.955 0.02 290)',sf:'oklch(0.25 0.03 285)',a:'oklch(0.94 0.03 290)',af:'oklch(0.25 0.03 285)',m:'oklch(0.955 0.018 292)',mf:'oklch(0.5 0.03 285)',sp:'oklch(0.541 0.281 293.009)',spf:'oklch(0.98 0.01 293)',sa:'oklch(0.94 0.03 290)',saf:'oklch(0.25 0.03 285)',sb:'oklch(0.975 0.012 292)',sfg:'oklch(0.18 0.02 285)',sb2:'oklch(0.91 0.015 290)',sr:'oklch(0.702 0.183 293.541)',fg:'oklch(0.18 0.02 285)',c:'oklch(0.995 0.004 293)',cf:'oklch(0.18 0.02 285)',pp:'oklch(0.995 0.004 293)',ppf:'oklch(0.18 0.02 285)',b:'oklch(0.91 0.015 290)',i:'oklch(0.91 0.015 290)',c1:'oklch(0.82 0.12 293)',c2:'oklch(0.72 0.18 200)',c3:'oklch(0.62 0.22 152)',c4:'oklch(0.78 0.12 55)',c5:'oklch(0.65 0.18 330)'},green:{p:'oklch(0.67 0.19 152)',pf:'oklch(0.98 0.01 152)',r:'oklch(0.73 0.16 152)',s:'oklch(0.958 0.015 152)',sf:'oklch(0.22 0.02 152)',a:'oklch(0.95 0.025 152)',af:'oklch(0.22 0.02 152)',m:'oklch(0.958 0.012 152)',mf:'oklch(0.50 0.015 152)',sp:'oklch(0.67 0.19 152)',spf:'oklch(0.98 0.01 152)',sa:'oklch(0.95 0.025 152)',saf:'oklch(0.22 0.02 152)',sb:'oklch(0.978 0.008 152)',sfg:'oklch(0.18 0.015 152)',sb2:'oklch(0.90 0.01 152)',sr:'oklch(0.73 0.16 152)',fg:'oklch(0.18 0.015 152)',c:'oklch(0.992 0.004 152)',cf:'oklch(0.18 0.015 152)',pp:'oklch(0.992 0.004 152)',ppf:'oklch(0.18 0.015 152)',b:'oklch(0.90 0.01 152)',i:'oklch(0.90 0.01 152)',c1:'oklch(0.70 0.18 152)',c2:'oklch(0.65 0.2 252)',c3:'oklch(0.60 0.18 293)',c4:'oklch(0.75 0.14 55)',c5:'oklch(0.68 0.16 330)'},yellow:{p:'oklch(0.76 0.15 95)',pf:'oklch(0.18 0.01 95)',r:'oklch(0.80 0.13 95)',s:'oklch(0.968 0.012 95)',sf:'oklch(0.28 0.012 95)',a:'oklch(0.96 0.018 95)',af:'oklch(0.28 0.012 95)',m:'oklch(0.968 0.01 95)',mf:'oklch(0.50 0.012 95)',sp:'oklch(0.76 0.15 95)',spf:'oklch(0.18 0.01 95)',sa:'oklch(0.96 0.018 95)',saf:'oklch(0.28 0.012 95)',sb:'oklch(0.985 0.008 95)',sfg:'oklch(0.20 0.01 95)',sb2:'oklch(0.90 0.008 95)',sr:'oklch(0.80 0.13 95)',fg:'oklch(0.20 0.015 95)',c:'oklch(0.992 0.003 95)',cf:'oklch(0.20 0.015 95)',pp:'oklch(0.992 0.003 95)',ppf:'oklch(0.20 0.015 95)',b:'oklch(0.90 0.008 95)',i:'oklch(0.90 0.008 95)',c1:'oklch(0.78 0.14 95)',c2:'oklch(0.65 0.18 152)',c3:'oklch(0.60 0.16 252)',c4:'oklch(0.72 0.15 18)',c5:'oklch(0.68 0.14 290)'},blue:{p:'oklch(0.64 0.2 252)',pf:'oklch(0.98 0.01 252)',r:'oklch(0.70 0.16 252)',s:'oklch(0.955 0.016 252)',sf:'oklch(0.22 0.018 252)',a:'oklch(0.95 0.02 252)',af:'oklch(0.22 0.018 252)',m:'oklch(0.955 0.014 252)',mf:'oklch(0.50 0.016 252)',sp:'oklch(0.64 0.2 252)',spf:'oklch(0.98 0.01 252)',sa:'oklch(0.95 0.02 252)',saf:'oklch(0.22 0.018 252)',sb:'oklch(0.978 0.008 252)',sfg:'oklch(0.18 0.015 252)',sb2:'oklch(0.90 0.01 252)',sr:'oklch(0.70 0.16 252)',fg:'oklch(0.18 0.015 252)',c:'oklch(0.992 0.004 252)',cf:'oklch(0.18 0.015 252)',pp:'oklch(0.992 0.004 252)',ppf:'oklch(0.18 0.015 252)',b:'oklch(0.90 0.01 252)',i:'oklch(0.90 0.01 252)',c1:'oklch(0.65 0.18 252)',c2:'oklch(0.68 0.14 196)',c3:'oklch(0.62 0.16 152)',c4:'oklch(0.75 0.13 55)',c5:'oklch(0.66 0.16 330)'},teal:{p:'oklch(0.68 0.14 196)',pf:'oklch(0.98 0.01 196)',r:'oklch(0.74 0.12 196)',s:'oklch(0.956 0.014 196)',sf:'oklch(0.22 0.014 196)',a:'oklch(0.95 0.018 196)',af:'oklch(0.22 0.014 196)',m:'oklch(0.956 0.012 196)',mf:'oklch(0.50 0.014 196)',sp:'oklch(0.68 0.14 196)',spf:'oklch(0.98 0.01 196)',sa:'oklch(0.95 0.018 196)',saf:'oklch(0.22 0.014 196)',sb:'oklch(0.978 0.008 196)',sfg:'oklch(0.18 0.015 196)',sb2:'oklch(0.90 0.01 196)',sr:'oklch(0.74 0.12 196)',fg:'oklch(0.18 0.015 196)',c:'oklch(0.992 0.004 196)',cf:'oklch(0.18 0.015 196)',pp:'oklch(0.992 0.004 196)',ppf:'oklch(0.18 0.015 196)',b:'oklch(0.90 0.01 196)',i:'oklch(0.90 0.01 196)',c1:'oklch(0.70 0.14 196)',c2:'oklch(0.66 0.16 152)',c3:'oklch(0.62 0.18 252)',c4:'oklch(0.74 0.12 55)',c5:'oklch(0.67 0.15 330)'},pink:{p:'oklch(0.66 0.22 350)',pf:'oklch(0.98 0.01 350)',r:'oklch(0.72 0.18 350)',s:'oklch(0.955 0.02 350)',sf:'oklch(0.22 0.022 350)',a:'oklch(0.95 0.025 350)',af:'oklch(0.22 0.022 350)',m:'oklch(0.955 0.018 350)',mf:'oklch(0.50 0.022 350)',sp:'oklch(0.66 0.22 350)',spf:'oklch(0.98 0.01 350)',sa:'oklch(0.95 0.025 350)',saf:'oklch(0.22 0.022 350)',sb:'oklch(0.978 0.01 350)',sfg:'oklch(0.18 0.02 350)',sb2:'oklch(0.90 0.012 350)',sr:'oklch(0.72 0.18 350)',fg:'oklch(0.18 0.02 350)',c:'oklch(0.992 0.004 350)',cf:'oklch(0.18 0.02 350)',pp:'oklch(0.992 0.004 350)',ppf:'oklch(0.18 0.02 350)',b:'oklch(0.90 0.012 350)',i:'oklch(0.90 0.012 350)',c1:'oklch(0.68 0.20 350)',c2:'oklch(0.65 0.18 252)',c3:'oklch(0.60 0.16 152)',c4:'oklch(0.74 0.14 55)',c5:'oklch(0.67 0.17 196)'},orange:{p:'oklch(0.72 0.18 50)',pf:'oklch(0.98 0.01 50)',r:'oklch(0.78 0.14 50)',s:'oklch(0.960 0.018 50)',sf:'oklch(0.25 0.018 50)',a:'oklch(0.96 0.025 50)',af:'oklch(0.25 0.018 50)',m:'oklch(0.960 0.015 50)',mf:'oklch(0.50 0.018 50)',sp:'oklch(0.72 0.18 50)',spf:'oklch(0.98 0.01 50)',sa:'oklch(0.96 0.025 50)',saf:'oklch(0.25 0.018 50)',sb:'oklch(0.982 0.01 50)',sfg:'oklch(0.20 0.015 50)',sb2:'oklch(0.90 0.012 50)',sr:'oklch(0.78 0.14 50)',fg:'oklch(0.20 0.015 50)',c:'oklch(0.992 0.004 50)',cf:'oklch(0.20 0.015 50)',pp:'oklch(0.992 0.004 50)',ppf:'oklch(0.20 0.015 50)',b:'oklch(0.90 0.012 50)',i:'oklch(0.90 0.012 50)',c1:'oklch(0.74 0.16 50)',c2:'oklch(0.66 0.18 152)',c3:'oklch(0.62 0.16 252)',c4:'oklch(0.73 0.13 18)',c5:'oklch(0.68 0.15 290)'},rose:{p:'oklch(0.64 0.24 18)',pf:'oklch(0.98 0.01 18)',r:'oklch(0.70 0.20 18)',s:'oklch(0.955 0.02 18)',sf:'oklch(0.22 0.022 18)',a:'oklch(0.95 0.025 18)',af:'oklch(0.22 0.022 18)',m:'oklch(0.955 0.018 18)',mf:'oklch(0.50 0.022 18)',sp:'oklch(0.64 0.24 18)',spf:'oklch(0.98 0.01 18)',sa:'oklch(0.95 0.025 18)',saf:'oklch(0.22 0.022 18)',sb:'oklch(0.978 0.01 18)',sfg:'oklch(0.18 0.02 18)',sb2:'oklch(0.90 0.012 18)',sr:'oklch(0.70 0.20 18)',fg:'oklch(0.18 0.02 18)',c:'oklch(0.992 0.004 18)',cf:'oklch(0.18 0.02 18)',pp:'oklch(0.992 0.004 18)',ppf:'oklch(0.18 0.02 18)',b:'oklch(0.90 0.012 18)',i:'oklch(0.90 0.012 18)',c1:'oklch(0.66 0.22 18)',c2:'oklch(0.65 0.18 350)',c3:'oklch(0.60 0.16 152)',c4:'oklch(0.74 0.13 55)',c5:'oklch(0.68 0.15 196)'},indigo:{p:'oklch(0.61 0.2 282)',pf:'oklch(0.98 0.01 282)',r:'oklch(0.68 0.16 282)',s:'oklch(0.954 0.016 282)',sf:'oklch(0.22 0.018 282)',a:'oklch(0.95 0.02 282)',af:'oklch(0.22 0.018 282)',m:'oklch(0.954 0.014 282)',mf:'oklch(0.50 0.016 282)',sp:'oklch(0.61 0.2 282)',spf:'oklch(0.98 0.01 282)',sa:'oklch(0.95 0.02 282)',saf:'oklch(0.22 0.018 282)',sb:'oklch(0.976 0.01 282)',sfg:'oklch(0.18 0.018 282)',sb2:'oklch(0.90 0.01 282)',sr:'oklch(0.68 0.16 282)',fg:'oklch(0.18 0.018 282)',c:'oklch(0.992 0.004 282)',cf:'oklch(0.18 0.018 282)',pp:'oklch(0.992 0.004 282)',ppf:'oklch(0.18 0.018 282)',b:'oklch(0.90 0.01 282)',i:'oklch(0.90 0.01 282)',c1:'oklch(0.63 0.18 282)',c2:'oklch(0.66 0.16 196)',c3:'oklch(0.60 0.16 152)',c4:'oklch(0.74 0.13 55)',c5:'oklch(0.67 0.15 350)'},slate:{p:'oklch(0.58 0.04 255)',pf:'oklch(0.98 0.005 255)',r:'oklch(0.64 0.04 255)',s:'oklch(0.952 0.005 255)',sf:'oklch(0.28 0.006 255)',a:'oklch(0.95 0.006 255)',af:'oklch(0.28 0.006 255)',m:'oklch(0.952 0.004 255)',mf:'oklch(0.52 0.006 255)',sp:'oklch(0.58 0.04 255)',spf:'oklch(0.98 0.005 255)',sa:'oklch(0.95 0.006 255)',saf:'oklch(0.28 0.006 255)',sb:'oklch(0.975 0.003 255)',sfg:'oklch(0.20 0.008 255)',sb2:'oklch(0.90 0.003 255)',sr:'oklch(0.64 0.04 255)',fg:'oklch(0.20 0.008 255)',c:'oklch(0.990 0.003 255)',cf:'oklch(0.20 0.008 255)',pp:'oklch(0.990 0.003 255)',ppf:'oklch(0.20 0.008 255)',b:'oklch(0.90 0.003 255)',i:'oklch(0.90 0.003 255)',c1:'oklch(0.60 0.04 255)',c2:'oklch(0.65 0.12 252)',c3:'oklch(0.62 0.14 196)',c4:'oklch(0.72 0.10 55)',c5:'oklch(0.66 0.12 350)'}};var x=M[n]||M.purple;var S=d.style.bind(d);S.setProperty('--primary',x.p,'important');S.setProperty('--primary-foreground',x.pf,'important');S.setProperty('--ring',x.r,'important');S.setProperty('--secondary',x.s,'important');S.setProperty('--secondary-foreground',x.sf,'important');S.setProperty('--accent',x.a,'important');S.setProperty('--accent-foreground',x.af,'important');S.setProperty('--muted',x.a,'important');S.setProperty('--primary-glow',x.g,'important');S.setProperty('--muted-foreground',x.mf,'important');S.setProperty('--sidebar',x.sb,'important');S.setProperty('--sidebar-foreground',x.sfg,'important');S.setProperty('--sidebar-primary',x.sp,'important');S.setProperty('--sidebar-primary-foreground',x.spf,'important');S.setProperty('--sidebar-accent',x.sa,'important');S.setProperty('--sidebar-accent-foreground',x.saf,'important');S.setProperty('--sidebar-border',x.sb2,'important');S.setProperty('--sidebar-ring',x.sr,'important');S.setProperty('--foreground',x.fg,'important');S.setProperty('--card',x.c,'important');S.setProperty('--card-foreground',x.cf,'important');S.setProperty('--popover',x.pp,'important');S.setProperty('--popover-foreground',x.ppf,'important');S.setProperty('--border',x.b,'important');S.setProperty('--input',x.i,'important');S.setProperty('--chart-1',x.c1,'important');S.setProperty('--chart-2',x.c2,'important');S.setProperty('--chart-3',x.c3,'important');S.setProperty('--chart-4',x.c4,'important');S.setProperty('--chart-5',x.c5,'important');S.setProperty('--tw-gradient-stops','var(--tw-gradient-from), var(--tw-gradient-to)','important');S.setProperty('--tw-gradient-from',x.p+'20','important');S.setProperty('--tw-gradient-to',x.p+'10','important');})();`;
+const themeAccentBootstrap = `(function(){
+  var d=document.documentElement;
+  var theme=localStorage.getItem('mc-theme')||'system';
+  var accent=localStorage.getItem('mc-theme-accent')||'purple';
+  var dark=theme==='dark'||(theme==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if(dark){d.classList.add('dark')}else{d.classList.remove('dark')}
+
+  var H={purple:293,green:152,yellow:95,blue:252,teal:196,pink:350,orange:50,rose:18,indigo:282,slate:255};
+  var h=H[accent]||293;
+  var wrap=function(v){v=v%360;return v<0?v+360:v};
+  var h2=wrap(h-90),h3=wrap(h+130),h4=wrap(h-40),h5=wrap(h+40);
+  var S=d.style;
+  var set=function(k,v){S.setProperty(k,v,'important')};
+
+  if(!dark){
+    set('--background','oklch(0.988 0.006 293)');
+    set('--foreground','oklch(0.18 0.02 '+h+')');
+    set('--card','oklch(0.995 0.004 '+h+')');
+    set('--card-foreground','oklch(0.18 0.02 '+h+')');
+    set('--popover','oklch(0.995 0.004 '+h+')');
+    set('--popover-foreground','oklch(0.18 0.02 '+h+')');
+    set('--primary','oklch(0.541 0.281 '+h+')');
+    set('--primary-foreground','oklch(0.98 0.01 '+h+')');
+    set('--secondary','oklch(0.935 0.045 '+h+')');
+    set('--secondary-foreground','oklch(0.22 0.04 '+h+')');
+    set('--muted','oklch(0.945 0.03 '+h+')');
+    set('--muted-foreground','oklch(0.45 0.045 '+h+')');
+    set('--accent','oklch(0.94 0.03 '+h+')');
+    set('--accent-foreground','oklch(0.25 0.03 '+h+')');
+    set('--border','oklch(0.91 0.015 '+h+')');
+    set('--input','oklch(0.91 0.015 '+h+')');
+    set('--ring','oklch(0.702 0.183 '+h+')');
+    set('--sidebar','oklch(0.975 0.012 '+h+')');
+    set('--sidebar-foreground','oklch(0.18 0.02 '+h+')');
+    set('--sidebar-primary','oklch(0.541 0.281 '+h+')');
+    set('--sidebar-primary-foreground','oklch(0.98 0.01 '+h+')');
+    set('--sidebar-accent','oklch(0.94 0.03 '+h+')');
+    set('--sidebar-accent-foreground','oklch(0.25 0.03 '+h+')');
+    set('--sidebar-border','oklch(0.91 0.015 '+h+')');
+    set('--sidebar-ring','oklch(0.702 0.183 '+h+')');
+    set('--chart-1','oklch(0.82 0.12 '+h+')');
+    set('--chart-2','oklch(0.72 0.18 '+h2+')');
+    set('--chart-3','oklch(0.62 0.22 '+h3+')');
+    set('--chart-4','oklch(0.78 0.12 '+h4+')');
+    set('--chart-5','oklch(0.65 0.18 '+h5+')');
+    set('--primary-glow','oklch(0.541 0.281 '+h+' / 0.5)');
+  } else {
+    set('--background','oklch(0.13 0.012 '+h+')');
+    set('--foreground','oklch(0.96 0.005 '+h+')');
+    set('--card','oklch(0.185 0.014 '+h+')');
+    set('--card-foreground','oklch(0.96 0.005 '+h+')');
+    set('--popover','oklch(0.185 0.014 '+h+')');
+    set('--popover-foreground','oklch(0.96 0.005 '+h+')');
+    set('--primary','oklch(0.65 0.24 '+h+')');
+    set('--primary-foreground','oklch(0.97 0.01 '+h+')');
+    set('--secondary','oklch(0.28 0.035 '+h+')');
+    set('--secondary-foreground','oklch(0.93 0.02 '+h+')');
+    set('--muted','oklch(0.25 0.025 '+h+')');
+    set('--muted-foreground','oklch(0.76 0.03 '+h+')');
+    set('--accent','oklch(0.26 0.025 '+h+')');
+    set('--accent-foreground','oklch(0.95 0.01 '+h+')');
+    set('--border','oklch(0.32 0.015 '+h+')');
+    set('--input','oklch(0.28 0.015 '+h+')');
+    set('--ring','oklch(0.55 0.22 '+h+')');
+    set('--sidebar','oklch(0.16 0.014 '+h+')');
+    set('--sidebar-foreground','oklch(0.95 0.005 '+h+')');
+    set('--sidebar-primary','oklch(0.65 0.24 '+h+')');
+    set('--sidebar-primary-foreground','oklch(0.97 0.01 '+h+')');
+    set('--sidebar-accent','oklch(0.24 0.02 '+h+')');
+    set('--sidebar-accent-foreground','oklch(0.95 0.01 '+h+')');
+    set('--sidebar-border','oklch(0.30 0.015 '+h+')');
+    set('--sidebar-ring','oklch(0.55 0.22 '+h+')');
+    set('--chart-1','oklch(0.78 0.16 '+h+')');
+    set('--chart-2','oklch(0.72 0.15 '+h2+')');
+    set('--chart-3','oklch(0.70 0.17 '+h3+')');
+    set('--chart-4','oklch(0.75 0.14 '+h4+')');
+    set('--chart-5','oklch(0.70 0.18 '+h5+')');
+    set('--primary-glow','oklch(0.65 0.24 '+h+' / 0.5)');
+  }
+
+  set('--destructive',dark?'oklch(0.68 0.2 25)':'oklch(0.577 0.245 27.325)');
+  set('--destructive-foreground',dark?'oklch(0.98 0 0)':'oklch(0.985 0 0)');
+  set('--tw-gradient-stops','var(--tw-gradient-from), var(--tw-gradient-to)');
+  set('--tw-gradient-from',(dark?'oklch(0.65 0.24 '+h+')':'oklch(0.541 0.281 '+h+')')+'20');
+  set('--tw-gradient-to',(dark?'oklch(0.65 0.24 '+h+')':'oklch(0.541 0.281 '+h+')')+'10');
+})();`;
 
 export default function RootLayout({
   children,
@@ -35,7 +118,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {/* Synchronous — runs before first paint so no accent flash on refresh */}
         <script dangerouslySetInnerHTML={{ __html: themeAccentBootstrap }} />
         <Providers>
           {children}

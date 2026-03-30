@@ -292,21 +292,27 @@ export function QueueManager(): React.ReactElement {
                               </TableCell>
                               <TableCell className="text-right">
                                 <div className="flex items-center justify-end gap-1">
-                                  {job.state === "failed" && (
+                                  {(job.state === "failed" || job.state === "delayed") && (
                                     <Button
                                       variant="ghost"
-                                      size="icon-sm"
-                                      className="cursor-pointer"
-                                      title="Retry"
-                                      onClick={() => void doAction("retryJob", q.name, job.id)}
+                                      size="sm"
+                                      className="cursor-pointer gap-1 h-7 px-2 text-[11px]"
+                                      title={job.state === "failed" ? "Retry this job" : "Run now (promote from delayed)"}
+                                      disabled={actionInFlight === `retryJob-${q.name}-${job.id}`}
+                                      onClick={() => void doAction(job.state === "failed" ? "retryJob" : "promoteJob", q.name, job.id)}
                                     >
-                                      <RefreshCwIcon className="size-3" />
+                                      {actionInFlight === `retryJob-${q.name}-${job.id}` || actionInFlight === `promoteJob-${q.name}-${job.id}` ? (
+                                        <Loader2Icon className="size-3 animate-spin" />
+                                      ) : (
+                                        <RefreshCwIcon className="size-3" />
+                                      )}
+                                      {job.state === "failed" ? "Retry" : "Run now"}
                                     </Button>
                                   )}
                                   <Button
                                     variant="ghost"
-                                    size="icon-sm"
-                                    className="cursor-pointer text-destructive hover:text-destructive"
+                                    size="sm"
+                                    className="cursor-pointer gap-1 h-7 px-2 text-[11px] text-destructive hover:text-destructive"
                                     title="Remove job"
                                     disabled={isBusy}
                                     onClick={() => setConfirmAction({
@@ -316,7 +322,8 @@ export function QueueManager(): React.ReactElement {
                                       label: `Remove job "${jobLabel(job)}"`,
                                     })}
                                   >
-                                    {isBusy ? <Loader2Icon className="size-3 animate-spin" /> : <XIcon className="size-3" />}
+                                    {isBusy ? <Loader2Icon className="size-3 animate-spin" /> : <Trash2Icon className="size-3" />}
+                                    Remove
                                   </Button>
                                 </div>
                               </TableCell>

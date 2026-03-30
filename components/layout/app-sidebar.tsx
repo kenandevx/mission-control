@@ -57,7 +57,7 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSidebarProps) {
   const router = useRouter()
   const [user, setUser] = React.useState<SidebarUser | null>(initialUser)
-  const [instanceName, setInstanceName] = React.useState("Mission Control")
+  const [instanceName, setInstanceName] = React.useState("")
   const adapter = React.useMemo(() => getDataAdapter(), [])
 
   React.useEffect(() => {
@@ -73,7 +73,7 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
         })
         const json = await res.json()
         const next = String(json?.workerSettings?.instanceName || "Mission Control").trim() || "Mission Control"
-        if (!cancelled) setInstanceName(next)
+        if (!cancelled) { setInstanceName(next); document.title = next; }
       } catch {
         if (!cancelled) setInstanceName("Mission Control")
       }
@@ -116,7 +116,7 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
             >
               <a href="#">
                 <IconInnerShadowTop className="size-5!" />
-                <span className="text-base font-semibold">{instanceName}</span>
+                <span className="text-base font-semibold">{instanceName || "\u00A0"}</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>

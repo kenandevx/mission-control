@@ -1,6 +1,6 @@
 {
   "name": "dashboard",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "scripts": {
     "dev": "docker compose up -d db db-init && bash scripts/mc-services.sh start --dev && next dev",
@@ -9,6 +9,8 @@
     "dev:services": "bash scripts/mc-services.sh start",
     "build": "next build",
     "start": "next start",
+    "prod": "docker compose up -d db db-init && next build && bash scripts/mc-services.sh start",
+    "prod:stop": "bash scripts/mc-services.sh stop && docker compose stop db",
     "lint": "eslint",
     "db:migrate": "node scripts/db-setup.mjs migrate",
     "db:seed": "node scripts/db-setup.mjs seed",
@@ -40,6 +42,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "framer-motion": "^11.18.2",
     "ioredis": "^5.10.1",
     "lucide-react": "^0.576.0",
     "next": "^16.1.6",

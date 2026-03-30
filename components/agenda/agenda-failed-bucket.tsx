@@ -26,7 +26,7 @@ type FailedOccurrence = {
   id: string;
   agenda_event_id: string;
   scheduled_for: string;
-  status: "failed" | "needs_retry" | "expired";
+  status: "failed" | "needs_retry";
   latest_attempt_no: number;
   event_title: string;
   default_agent_id: string | null;
@@ -37,7 +37,6 @@ function StatusBadge({ status }: { status: string }): React.ReactElement {
   const map: Record<string, { label: string; className: string }> = {
     failed: { label: "Failed", className: "bg-red-500/10 text-red-600 border-red-500/20" },
     needs_retry: { label: "Needs Retry", className: "bg-amber-500/10 text-amber-600 border-amber-500/20" },
-    expired: { label: "Expired", className: "bg-gray-500/10 text-gray-500 border-gray-500/20" },
   };
   const cfg = map[status] ?? { label: status, className: "" };
   return <Badge variant="outline" className={cfg.className}>{cfg.label}</Badge>;
@@ -177,63 +176,62 @@ export function AgendaFailedDialog({ open, onOpenChange }: Props): React.ReactEl
             </div>
           ) : (
             <div className="flex flex-col gap-3 p-1">
-              {items.map((occ) => (
+              {[...items].sort((a, b) => new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime()).map((occ) => (
                 <div
                   key={occ.id}
                   className="rounded-xl border bg-card shadow-sm overflow-hidden"
                 >
-                  {/* Main row */}
-                  <div className="flex items-center gap-3 p-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-sm font-bold truncate">{occ.event_title}</span>
-                        <StatusBadge status={occ.status} />
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <IconClock className="size-3" />
-                          {formatScheduledFor(occ.scheduled_for)}
-                        </span>
-                        {occ.default_agent_id && (
-                          <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">
-                            {occ.default_agent_id}
-                          </span>
-                        )}
-                        <span className="text-[10px]">
-                          Attempt #{occ.latest_attempt_no}
-                        </span>
-                      </div>
+                  {/* Header: title + badge + meta */}
+                  <div className="flex flex-col gap-2 p-4 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold truncate">{occ.event_title}</span>
+                      <StatusBadge status={occ.status} />
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Button
-                        size="sm"
-                        className="gap-1.5 h-8 text-xs font-semibold cursor-pointer"
-                        disabled={retrying.has(occ.id)}
-                        onClick={() => handleRetry(occ)}
-                      >
-                        <IconRefresh className="size-3" />
-                        Retry Now
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1 h-8 text-xs cursor-pointer"
-                        onClick={() => setExpandedLog(expandedLog === occ.id ? null : occ.id)}
-                      >
-                        <IconFileText className="size-3" />
-                        Logs
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive cursor-pointer"
-                        disabled={deleting.has(occ.id)}
-                        onClick={() => handleDelete(occ)}
-                        title="Dismiss"
-                      >
-                        <IconTrash className="size-3.5" />
-                      </Button>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <IconClock className="size-3" />
+                        {formatScheduledFor(occ.scheduled_for)}
+                      </span>
+                      {occ.default_agent_id && (
+                        <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">
+                          {occ.default_agent_id}
+                        </span>
+                      )}
+                      <span className="text-[10px]">
+                        Attempt #{occ.latest_attempt_no}
+                      </span>
                     </div>
+                  </div>
+                  {/* Actions row */}
+                  <div className="flex items-center gap-1.5 px-4 pb-3">
+                    <Button
+                      size="sm"
+                      className="gap-1.5 h-8 text-xs font-semibold cursor-pointer"
+                      disabled={retrying.has(occ.id)}
+                      onClick={() => handleRetry(occ)}
+                    >
+                      <IconRefresh className="size-3" />
+                      Retry Now
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 h-8 text-xs cursor-pointer"
+                      onClick={() => setExpandedLog(expandedLog === occ.id ? null : occ.id)}
+                    >
+                      <IconFileText className="size-3" />
+                      Logs
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive cursor-pointer"
+                      disabled={deleting.has(occ.id)}
+                      onClick={() => handleDelete(occ)}
+                      title="Dismiss"
+                    >
+                      <IconTrash className="size-3.5" />
+                    </Button>
                   </div>
 
                   {/* Expanded log section */}

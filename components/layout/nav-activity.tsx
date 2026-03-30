@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
@@ -24,6 +25,7 @@ type ActivityEntry = {
   agent: string;
   level: string;
   timestamp: string;
+  targetUrl?: string;
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,11 +53,6 @@ function formatActivityEvent(entry: ActivityEntry): string {
   if (raw.includes("succeeded") || raw.includes("completed")) return "Completed";
   if (raw.includes("failed") || raw.includes("needs_retry") || raw.includes("expired")) return "Failed";
   return entry.event || "Activity";
-}
-
-function isBusy(entry: ActivityEntry): boolean {
-  const raw = (entry.event || "").toLowerCase();
-  return raw.includes("running") || raw.includes("picked up") || raw.includes("planning");
 }
 
 const LEVEL_CONFIG: Record<
@@ -187,34 +184,29 @@ export function NavActivity(): React.ReactElement {
           ) : (
             entries.map((entry) => {
               const config = LEVEL_CONFIG[entry.level] || LEVEL_CONFIG.info;
+              const href = entry.targetUrl || (entry.type === "agenda" ? "/agenda" : "/boards");
               return (
-                <div
+                <Link
                   key={entry.id}
-                  className="flex items-start gap-1.5 py-1"
+                  href={href}
+                  className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40"
+                  title={`Open ${entry.type} details`}
                 >
-                  <span
-                    className={cn("mt-1 size-1.5 shrink-0 rounded-full", config.dot)}
-                  />
+                  <span className={cn("mt-1 size-1.5 shrink-0 rounded-full", config.dot)} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <span
-                        className={cn(
-                          "text-[10px] font-medium truncate",
-                          config.text
-                        )}
-                      >
-                        {isBusy(entry) ? "🟢 " : ""}{formatActivityEvent(entry)}
+                      <span className={cn("text-[10px] font-medium truncate", config.text)}>
+                        {formatActivityEvent(entry)}
                       </span>
                       <span className="text-[8px] text-muted-foreground/50 shrink-0 tabular-nums">
                         {relativeTime(entry.timestamp)}
                       </span>
                     </div>
-                    <p className="text-[9px] text-muted-foreground/70 truncate leading-tight">
-                      {entry.type === "agenda" ? "📅 " : "🎫 "}
+                    <p className="text-[9px] text-muted-foreground/80 truncate leading-tight">
                       {entry.title}{entry.agent ? ` · ${entry.agent}` : ""}
                     </p>
                   </div>
-                </div>
+                </Link>
               );
             })
           )}

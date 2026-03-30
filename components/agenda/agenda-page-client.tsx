@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   format,
   startOfMonth, endOfMonth,
@@ -21,16 +22,20 @@ type Props = {
   onDayClick?: (date: Date) => void;
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   agentsForDetails?: { id: string; name: string }[];
+  headerActions?: React.ReactNode;
+  onInitialReady?: () => void;
 };
 
-export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAddEvent, onDayClick, onEventDrop, agentsForDetails }: Props) {
+export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAddEvent, onDayClick, onEventDrop, agentsForDetails, headerActions, onInitialReady }: Props) {
   const { calendarEvents, loading, loadEvents } = useAgenda();
+  const searchParams = useSearchParams();
   const [detailsSheetOpen, setDetailsSheetOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<AgendaEventSummary | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [failedCount, setFailedCount] = useState(0);
   const [failedDialogOpen, setFailedDialogOpen] = useState(false);
+  const initialReadySentRef = useRef(false);
 
   // Compute the visible date range based on view mode
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -91,6 +96,7 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
       const { rangeStart: rs, rangeEnd: re } = rangeRef.current;
       void loadEvents(rs, re);
       void checkFailed();
+      document.dispatchEvent(new Event("agenda-stats-refresh"));
     };
     document.addEventListener("agenda-refresh", handler);
     return () => document.removeEventListener("agenda-refresh", handler);
@@ -123,6 +129,7 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
         } catch { /* ignore */ } finally {
           isFetchingRef.current = false;
           void checkFailed();
+          document.dispatchEvent(new Event("agenda-stats-refresh"));
         }
       });
 
@@ -144,6 +151,13 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
       if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
     };
   }, [loadEvents, checkFailed]);
+
+  useEffect(() => {
+    if (initialReadySentRef.current) return;
+    if (loading) return;
+    initialReadySentRef.current = true;
+    onInitialReady?.();
+  }, [loading, onInitialReady]);
 
   // Convert FullCalendar EventInput[] → AgendaCalendarEvent[]
   const eventsForCalendar: AgendaCalendarEvent[] = calendarEvents.map((e) => {
@@ -258,6 +272,16 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
     []
   );
 
+  const openedFromQueryRef = useRef(false);
+  useEffect(() => {
+    if (openedFromQueryRef.current) return;
+    const eventId = searchParams.get("event");
+    if (!eventId) return;
+    if (loading) return;
+    openedFromQueryRef.current = true;
+    void handleEventClick(eventId);
+  }, [searchParams, loading, handleEventClick]);
+
   const handleRetry = useCallback(
     async (occurrenceId: string) => {
       if (!selectedEvent) return;
@@ -281,7 +305,11 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
   return (
     <>
       <Card className="border-2 shadow-lg rounded-2xl py-0 h-full min-h-0 flex flex-col">
-        <CardContent className="p-5 flex-1 min-h-0 overflow-hidden">
+        <div className="flex items-center justify-between px-5 pt-4 pb-2 shrink-0">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Calendar</span>
+          {headerActions && <div className="flex items-center gap-2">{headerActions}</div>}
+        </div>
+        <CardContent className="px-5 pb-5 pt-2 flex-1 min-h-0 overflow-hidden">
           <CustomMonthAgenda
             events={eventsForCalendar}
             loading={loading}

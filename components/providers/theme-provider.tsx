@@ -10,15 +10,24 @@ type ThemeProviderProps = {
 
 function ThemeAccentBootstrap(): ReactNode {
   useEffect(() => {
-    applyThemeAccent(getStoredThemeAccentId(), false);
+    const applyCurrent = (id?: string) => applyThemeAccent(id || getStoredThemeAccentId(), false);
+    applyCurrent();
 
     const onAccentChanged = (event: Event) => {
       const custom = event as CustomEvent<{ id?: string }>;
-      applyThemeAccent(custom.detail?.id || getStoredThemeAccentId(), false);
+      applyCurrent(custom.detail?.id);
     };
 
+    const observer = new MutationObserver(() => {
+      applyCurrent();
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
     window.addEventListener("mc-theme-accent-changed", onAccentChanged as EventListener);
-    return () => window.removeEventListener("mc-theme-accent-changed", onAccentChanged as EventListener);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("mc-theme-accent-changed", onAccentChanged as EventListener);
+    };
   }, []);
 
   return null;

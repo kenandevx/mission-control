@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { IconTrendingUp } from "@tabler/icons-react";
+import { ContainerLoader } from "@/components/ui/container-loader";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -50,46 +52,35 @@ export function AgendaStatsCards() {
 
     void load();
 
-    const interval = setInterval(() => void load(), 30_000);
-
     const handler = () => void load();
     document.addEventListener("agenda-refresh", handler);
+    document.addEventListener("agenda-stats-refresh", handler);
 
     return () => {
       cancelled = true;
       mountedRef.current = false;
-      clearInterval(interval);
       document.removeEventListener("agenda-refresh", handler);
+      document.removeEventListener("agenda-stats-refresh", handler);
     };
   }, []);
 
   if (error) return null;
 
-  if (!stats) {
-    return (
-      <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-3">
-        {[1, 2, 3].map((i) => (
-          <Card key={i} data-slot="card">
-            <CardHeader>
-              <CardDescription className="h-4 w-24 animate-pulse bg-muted rounded" />
-              <CardTitle className="h-8 w-16 animate-pulse bg-muted rounded mt-1" />
-            </CardHeader>
-            <CardFooter className="flex-col items-start gap-1.5 text-sm">
-              <div className="h-4 w-32 animate-pulse bg-muted rounded" />
-            </CardFooter>
-          </Card>
-        ))}
-      </div>
-    );
-  }
-
   return (
-    <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-3">
-      <Card data-slot="card">
+    <div className="relative min-h-[170px]">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: stats ? 1 : 0.35 }}
+        transition={{ duration: 0.16 }}
+        className="*:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-3"
+      >
+      <Card data-slot="card" className="min-h-[150px]">
         <CardHeader>
           <CardDescription>Total Events</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {stats.totalEvents}
+            {stats ? (
+              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.totalEvents}</motion.span>
+            ) : "—"}
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
@@ -104,11 +95,13 @@ export function AgendaStatsCards() {
         </CardFooter>
       </Card>
 
-      <Card data-slot="card">
+      <Card data-slot="card" className="min-h-[150px]">
         <CardHeader>
           <CardDescription>Not Ran Yet</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {stats.notRanYetCount}
+            {stats ? (
+              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.notRanYetCount}</motion.span>
+            ) : "—"}
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
@@ -123,24 +116,29 @@ export function AgendaStatsCards() {
         </CardFooter>
       </Card>
 
-      <Card data-slot="card" className={stats.failedCount > 0 ? "border-red-200 dark:border-red-900" : ""}>
+      <Card data-slot="card" className={`min-h-[150px] ${stats && stats.failedCount > 0 ? "border-red-200 dark:border-red-900" : ""}`}>
         <CardHeader>
           <CardDescription>Failed Count</CardDescription>
-          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats.failedCount > 0 ? "text-red-600" : ""}`}>
-            {stats.failedCount}
+          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats && stats.failedCount > 0 ? "text-red-600" : ""}`}>
+            {stats ? (
+              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.failedCount}</motion.span>
+            ) : "—"}
           </CardTitle>
           <CardAction>
-            <Badge variant={stats.failedCount > 0 ? "destructive" : "outline"}>
+            <Badge variant={stats && stats.failedCount > 0 ? "destructive" : "outline"}>
               <IconTrendingUp />
-              {stats.failedCount > 0 ? "Attention" : "Clean"}
+              {stats && stats.failedCount > 0 ? "Attention" : "Clean"}
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">Failed + needs retry + expired</div>
+          <div className="line-clamp-1 flex gap-2 font-medium">Failed + needs retry</div>
           <div className="text-muted-foreground">Across all occurrences</div>
         </CardFooter>
       </Card>
+      </motion.div>
+
+      {!stats ? <ContainerLoader label="Loading stats…" /> : null}
     </div>
   );
 }

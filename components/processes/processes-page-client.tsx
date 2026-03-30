@@ -36,6 +36,7 @@ export function ProcessesPageClient() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState("");
   const [tiedEvents, setTiedEvents] = useState<{ id: string; title: string }[]>([]);
+  const [needsForceDelete, setNeedsForceDelete] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [simulateProcessId, setSimulateProcessId] = useState<string | null>(null);
   const [simulateProcessName, setSimulateProcessName] = useState("");
@@ -86,6 +87,7 @@ export function ProcessesPageClient() {
     setDeletingId(id);
     setDeletingName(name);
     setTiedEvents([]);
+    setNeedsForceDelete(false);
     // Check for tied agenda events
     try {
       const res = await fetch(`/api/processes/${id}`, { cache: "reload" });
@@ -97,12 +99,43 @@ export function ProcessesPageClient() {
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = async () => {
-    if (deletingId) await deleteProcess(deletingId);
+  const resetDeleteState = () => {
     setDeleteDialogOpen(false);
     setDeletingId(null);
     setDeletingName("");
     setTiedEvents([]);
+    setNeedsForceDelete(false);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingId) return;
+
+    if (needsForceDelete) {
+      await deleteProcess(deletingId, { force: true });
+      resetDeleteState();
+      return;
+    }
+
+    const result = await deleteProcess(deletingId);
+    if (result?.ok) {
+      resetDeleteState();
+      return;
+    }
+
+    if (result?.code === "PROCESS_IN_USE") {
+      setNeedsForceDelete(true);
+      if (Array.isArray(result.tiedEvents)) {
+        setTiedEvents(result.tiedEvents as { id: string; title: string }[]);
+      }
+      return;
+    }
+
+    if (result?.error && String(result.error).toLowerCase().includes("running")) {
+      resetDeleteState();
+      return;
+    }
+
+    resetDeleteState();
   };
 
   const handleDuplicate = async (id: string) => {
@@ -259,12 +292,14 @@ export function ProcessesPageClient() {
         onClose={() => { setSimulateOpen(false); setSimulateProcessId(null); setSimulateProcessName(""); }}
       />
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <AlertDialog open={deleteDialogOpen} onOpenChange={(open) => { if (!open) resetDeleteState(); else setDeleteDialogOpen(true); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete process?</AlertDialogTitle>
+            <AlertDialogTitle>{needsForceDelete ? "Force delete process and tied agenda events?" : "Delete process?"}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete &ldquo;{deletingName}&rdquo; and all its versions. This cannot be undone.
+              {needsForceDelete
+                ? `"${deletingName}" is currently tied to agenda events. Force delete will remove the process and those tied agenda events.`
+                : `This will permanently delete "${deletingName}" and all its versions. This cannot be undone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {tiedEvents.length > 0 && (
@@ -278,17 +313,19 @@ export function ProcessesPageClient() {
                 ))}
               </ul>
               <p className="text-xs text-muted-foreground mt-2">
-                All future occurrences of these events will be cancelled. Past runs are kept.
+                {needsForceDelete
+                  ? "Force delete will remove these agenda events as well."
+                  : "Delete is blocked until you either remove these process links from agenda events, or choose Force delete."}
               </p>
             </div>
           )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{needsForceDelete ? "Back" : "Cancel"}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {tiedEvents.length > 0 ? "Delete process & cancel events" : "Delete"}
+              {needsForceDelete ? "Force delete process + tied events" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

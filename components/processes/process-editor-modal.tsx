@@ -37,6 +37,8 @@ import {
   IconListDetails,
   IconPlayerPlay,
 } from "@tabler/icons-react";
+import { getProviderLabel } from "@/lib/models";
+import { useModels } from "@/lib/use-models";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,26 +74,6 @@ type Props = {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MODELS = [
-  { id: "anthropic/claude-opus-4-6", alias: "Claude Opus 4" },
-  { id: "openrouter/deepseek/deepseek-chat-v3", alias: "deepseek3chat" },
-  { id: "openrouter/auto", alias: "OpenRouter" },
-  { id: "openrouter/deepseek/deepseek-v3.2", alias: "deepseek3.2" },
-  { id: "openrouter/minimax/minimax-m2.5", alias: "Minimax2.5" },
-  { id: "openrouter/minimax/minimax-m2.7", alias: "Minimax2.7" },
-  { id: "openrouter/openai/gpt-5.4", alias: "gpt5.4" },
-  { id: "openrouter/openai/gpt-oss-120b", alias: "gptoss120b" },
-  { id: "openrouter/openai/gpt-oss-20b:nitro", alias: "gptoss20bnitro" },
-  { id: "openrouter/google/gemini-3-flash-preview", alias: "gemini3flash" },
-  { id: "openrouter/google/gemini-3.1-pro-preview", alias: "gemini3pro" },
-  { id: "openrouter/openai/gpt-5.4-nano", alias: "gpt5.4-nano" },
-  { id: "openrouter/openai/gpt-5.4-mini", alias: "gpt5.4-mini" },
-  { id: "openrouter/stepfun/step-3.5-flash:free", alias: "Step Flash Free" },
-  { id: "openrouter/mistralai/devstral-2512:free", alias: "Devstral Free" },
-  { id: "openrouter/qwen/qwen3-coder:free", alias: "Qwen3 Coder" },
-  { id: "openrouter/deepseek/deepseek-chat-v3:free", alias: "Deepseek Chat V3 Free" },
-];
-
 const WIZARD_STEPS = [
   { key: "info", label: "Info", icon: IconFileText },
   { key: "steps", label: "Steps", icon: IconListDetails },
@@ -125,7 +107,6 @@ function StepIndicator({ currentStep, canAdvanceTo, onStepClick }: { currentStep
   return (
     <div className="flex gap-1.5 w-full">
       {WIZARD_STEPS.map((step, i) => {
-        const Icon = step.icon;
         const isActive = i === currentStep;
         const isDone = i < currentStep;
         const isLocked = i > canAdvanceTo;
@@ -186,6 +167,7 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(0);
+  const models = useModels();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [simulateOpen, setSimulateOpen] = useState(false);
@@ -222,6 +204,11 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
     }
     if (s === 1) {
       if (form.steps.length === 0) return "At least one step is required";
+      for (let i = 0; i < form.steps.length; i++) {
+        const stepItem = form.steps[i];
+        if (!stepItem.title.trim()) return `Step ${i + 1}: title is required`;
+        if (!stepItem.instruction.trim()) return `Step ${i + 1}: instruction is required`;
+      }
     }
     return null;
   };
@@ -361,7 +348,7 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
           placeholder="e.g. v1.2 - added retry logic"
           value={form.versionLabel}
           onChange={(e) => setForm((prev) => ({ ...prev, versionLabel: e.target.value }))}
-          className="h-10"
+          className="h-10 placeholder:opacity-60"
         />
       </div>
     </div>
@@ -371,19 +358,18 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
 
   const renderStepsStep = () => (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3 rounded-xl border bg-gradient-to-r from-primary/5 via-primary/0 to-primary/5 px-4 py-3">
         <div>
           <h3 className="text-base font-bold text-foreground">Build your steps</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Drag to reorder. Each step runs in sequence.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Clear order, clear intent. Drag cards to reorder; each step runs top → bottom.</p>
         </div>
         <Button
           size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 text-xs cursor-pointer"
+          className="gap-1.5 h-8 text-xs cursor-pointer shrink-0"
           onClick={addStep}
         >
           <IconPlus className="size-3" />
-          Add Step
+          Add step
         </Button>
       </div>
 
@@ -397,51 +383,73 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
             onDrop={() => handleDrop(index)}
             onDragEnd={handleDragEnd}
             className={[
-              "group rounded-xl border bg-card transition-all duration-150",
-              dragIndex === index ? "opacity-40 scale-[0.98]" : "",
-              dragOverIndex === index && dragIndex !== index ? "ring-2 ring-primary/40 border-primary/40" : "",
+              "group rounded-2xl border bg-card/95 shadow-sm transition-all duration-150",
+              dragIndex === index ? "opacity-70 scale-[0.99] shadow-none" : "hover:shadow-md hover:border-primary/30",
+              dragOverIndex === index && dragIndex !== index ? "ring-2 ring-primary/40 border-primary/50 bg-primary/5" : "",
             ].join(" ")}
           >
-            {/* Step header */}
-            <div className="flex items-center gap-2 px-3 py-2.5 border-b bg-muted/20 rounded-t-xl">
-              <div className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors">
-                <IconGripVertical className="size-4" />
+            {/* Step header — step number + title */}
+            <div className="flex items-start gap-3 px-4 py-3.5 border-b bg-muted/20 rounded-t-2xl">
+              {/* Step number — large visual anchor */}
+              <div className="flex flex-col items-center gap-1 shrink-0 pt-0.5">
+                <div className={[
+                  "flex items-center justify-center size-9 rounded-xl font-extrabold text-sm shrink-0 border",
+                  s.title.trim()
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground border-border",
+                ].join(" ")}>
+                  {index + 1}
+                </div>
+                <div className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground transition-colors">
+                  <IconGripVertical className="size-3.5" />
+                </div>
               </div>
-              <Badge variant="outline" className="size-6 p-0 flex items-center justify-center text-[10px] font-bold tabular-nums shrink-0">
-                {index + 1}
-              </Badge>
-              <Input
-                placeholder="Step title"
-                value={s.title}
-                onChange={(e) => updateStep2(index, { title: e.target.value })}
-                className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 px-1 text-sm font-medium"
-              />
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7 shrink-0 text-muted-foreground/40 hover:text-destructive cursor-pointer"
-                onClick={() => deleteStep(index)}
-                disabled={form.steps.length === 1}
-              >
-                <IconTrash className="size-3.5" />
-              </Button>
+
+              {/* Title + delete */}
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <Input
+                  placeholder="Step title — e.g. 'Fetch page content'"
+                  value={s.title}
+                  onChange={(e) => updateStep2(index, { title: e.target.value })}
+                  className="h-9 border-border bg-background shadow-none focus-visible:ring-2 focus-visible:ring-primary/30 px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground placeholder:opacity-60"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+                  onClick={() => deleteStep(index)}
+                  disabled={form.steps.length === 1}
+                >
+                  <IconTrash className="size-3.5" />
+                </Button>
+              </div>
             </div>
 
-            {/* Step body */}
-            <div className="px-3 py-3 flex flex-col gap-3">
-              {/* Instruction — full width */}
-              <Textarea
-                placeholder="Instruction for this step..."
-                value={s.instruction}
-                onChange={(e) => updateStep2(index, { instruction: e.target.value })}
-                rows={2}
-                className="resize-none text-sm"
-              />
+            {/* Instruction field */}
+            <div className="px-4 pt-3 pb-3">
+              <div className="rounded-xl border bg-background px-3 py-3 flex flex-col gap-2">
+                <Label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  Instruction
+                </Label>
+                <Textarea
+                  placeholder="Describe exactly what this step should do — inputs, expected output, constraints, and stop conditions."
+                  value={s.instruction}
+                  onChange={(e) => updateStep2(index, { instruction: e.target.value })}
+                  rows={4}
+                  className="resize-none text-sm border-0 bg-transparent shadow-none p-0 focus-visible:ring-0 placeholder:text-muted-foreground placeholder:opacity-60 min-h-0"
+                />
+              </div>
+            </div>
 
-              {/* Skill / Agent / Model — 33% each */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="flex flex-col gap-1 min-w-0">
-                  <Label className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+            {/* Settings row */}
+            <div className="px-4 pb-4">
+              <div className="rounded-xl border bg-muted/10 px-3 py-3">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Optional overrides
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="flex flex-col gap-1 min-w-0">
+                  <Label className="text-[10px] text-muted-foreground/70 font-medium flex items-center gap-1">
                     <IconCode className="size-2.5" />
                     Skill
                   </Label>
@@ -462,7 +470,7 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
                 </div>
 
                 <div className="flex flex-col gap-1 min-w-0">
-                  <Label className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+                  <Label className="text-[10px] text-muted-foreground/70 font-medium flex items-center gap-1">
                     <IconRobot className="size-2.5" />
                     Agent
                   </Label>
@@ -483,7 +491,7 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
                 </div>
 
                 <div className="flex flex-col gap-1 min-w-0">
-                  <Label className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+                  <Label className="text-[10px] text-muted-foreground/70 font-medium flex items-center gap-1">
                     <IconCpu className="size-2.5" />
                     Model
                   </Label>
@@ -492,18 +500,31 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
                     onValueChange={(v) => updateStep2(index, { modelOverride: v === "__default__" ? "" : v })}
                   >
                     <SelectTrigger className="h-8 w-full text-xs">
-                      <SelectValue placeholder="Default" />
+                      <SelectValue placeholder="Default">
+                        {s.modelOverride
+                          ? <span className="flex gap-1 items-center truncate">
+                              <span className="font-medium truncate">{models.find((m) => m.id === s.modelOverride)?.alias ?? s.modelOverride}</span>
+                              <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(s.modelOverride)})</span>
+                            </span>
+                          : "Default"}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__default__">Default</SelectItem>
-                      {MODELS.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>{m.alias}</SelectItem>
+                      {models.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          <span className="flex gap-1.5 items-center">
+                            <span className="font-medium">{m.alias}</span>
+                            <span className="text-muted-foreground text-xs">({getProviderLabel(m.id)})</span>
+                          </span>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
             </div>
+          </div>
           </div>
         ))}
       </div>
@@ -563,7 +584,7 @@ export function ProcessEditorModal({ open, initialData, agents = EMPTY_AGENTS, s
         {form.steps.map((s, i) => {
           const agentName = s.agentId ? (agents.find((a) => a.id === s.agentId)?.name || s.agentId) : "Default";
           const skillName = s.skillKey ? (skills.find((sk) => sk.key === s.skillKey)?.name || s.skillKey) : "—";
-          const modelName = s.modelOverride ? (MODELS.find((m) => m.id === s.modelOverride)?.alias || s.modelOverride) : "Default";
+          const modelName = s.modelOverride ? (models.find((m) => m.id === s.modelOverride)?.alias || s.modelOverride) : "Default";
           return (
             <div key={s.id} className="rounded-lg border bg-card px-4 py-3">
               <div className="flex items-center gap-2 mb-1">

@@ -43,6 +43,7 @@ next-env.d.ts
 
 # runtime state
 .runtime/
+runtime-artifacts/
 
 # legacy removed stack
 supabase/

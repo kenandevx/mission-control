@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useModels } from "@/lib/use-models";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,7 @@ import {
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgendaSimulateModal } from "@/components/agenda/agenda-simulate-modal";
+import { getProviderLabel } from "@/lib/models";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,41 +92,6 @@ type Props = {
 
 const EMPTY_AGENTS: AgentOption[] = [];
 const EMPTY_PROCESSES: ProcessOption[] = [];
-
-const MODELS = [
-  { id: "anthropic/claude-opus-4-6", alias: "Claude Opus 4" },
-  { id: "openrouter/deepseek/deepseek-chat-v3", alias: "deepseek3chat" },
-  { id: "openrouter/auto", alias: "OpenRouter" },
-  { id: "openrouter/deepseek/deepseek-v3.2", alias: "deepseek3.2" },
-  { id: "openrouter/minimax/minimax-m2.5", alias: "Minimax2.5" },
-  { id: "openrouter/minimax/minimax-m2.7", alias: "Minimax2.7" },
-  { id: "openrouter/openai/gpt-5.4", alias: "gpt5.4" },
-  { id: "openrouter/openai/gpt-oss-120b", alias: "gptoss120b" },
-  { id: "openrouter/openai/gpt-oss-20b:nitro", alias: "gptoss20bnitro" },
-  { id: "openrouter/google/gemini-3-flash-preview", alias: "gemini3flash" },
-  { id: "openrouter/google/gemini-3.1-pro-preview", alias: "gemini3pro" },
-  { id: "openrouter/openai/gpt-5.4-nano", alias: "gpt5.4-nano" },
-  { id: "openrouter/openai/gpt-5.4-mini", alias: "gpt5.4-mini" },
-  { id: "openrouter/stepfun/step-3.5-flash:free", alias: "Step Flash Free" },
-  { id: "openrouter/mistralai/devstral-2512:free", alias: "Devstral Free" },
-  { id: "openrouter/qwen/qwen3-coder:free", alias: "Qwen3 Coder" },
-  { id: "openrouter/deepseek/deepseek-chat-v3:free", alias: "Deepseek Chat V3 Free" },
-];
-
-// ── Provider label from model id ─────────────────────────────────────────────
-
-function getProviderLabel(modelId: string): string {
-  if (modelId.startsWith('anthropic/')) return 'Anthropic';
-  if (modelId.startsWith('openrouter/openai/')) return 'OpenAI';
-  if (modelId.startsWith('openrouter/google/')) return 'Google';
-  if (modelId.startsWith('openrouter/deepseek/')) return 'DeepSeek';
-  if (modelId.startsWith('openrouter/minimax/')) return 'MiniMax';
-  if (modelId.startsWith('openrouter/mistralai/')) return 'Mistral';
-  if (modelId.startsWith('openrouter/qwen/')) return 'Qwen';
-  if (modelId.startsWith('openrouter/stepfun/')) return 'StepFun';
-  if (modelId === 'openrouter/auto') return 'OpenRouter';
-  return 'Other';
-}
 
 const TIMEZONES = [
   { value: "Europe/Amsterdam", label: "Europe/Amsterdam (CET)", abbr: "CET" },
@@ -181,17 +148,12 @@ function snapToStep(minutes: number, stepMinutes: number): number {
 
 function getCurrentTimeInTz(tz: string, stepMinutes = 15): string {
   try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(new Date());
-    const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "10", 10);
-    const rawM = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+    // @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+    const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
+    const now = DateTime.now().setZone(tz);
+    const rawM = now.minute;
     const snapped = stepMinutes === 0 ? rawM : snapToStep(rawM, stepMinutes);
-    // Handle overflow (e.g. 23:53 → snaps to 60 → next hour)
-    const finalH = snapped >= 60 ? (h + 1) % 24 : h;
+    const finalH = snapped >= 60 ? (now.hour + 1) % 24 : now.hour;
     const finalM = snapped >= 60 ? 0 : snapped;
     return `${String(finalH).padStart(2, "0")}:${String(finalM).padStart(2, "0")}`;
   } catch {
@@ -201,16 +163,10 @@ function getCurrentTimeInTz(tz: string, stepMinutes = 15): string {
 
 function getTodayInTz(tz: string): string {
   try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
-    const y = parts.find((p) => p.type === "year")?.value ?? "";
-    const mo = parts.find((p) => p.type === "month")?.value ?? "";
-    const d = parts.find((p) => p.type === "day")?.value ?? "";
-    return `${y}-${mo}-${d}`;
+    // @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+    const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
+    const now = DateTime.now().setZone(tz);
+    return now.toISODate() ?? new Date().toISOString().split("T")[0];
   } catch {
     return new Date().toISOString().split("T")[0];
   }
@@ -357,6 +313,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   const [error, setError] = useState("");
   const [step, setStep] = useState(0);
   const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
+  const models = useModels();
 
   const initialDataRef = useRef(initialData);
   useEffect(() => {
@@ -694,11 +651,18 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
             onValueChange={(v) => updateField("modelOverride", v === "__default__" ? "" : v)}
           >
             <SelectTrigger className="h-10 w-full cursor-pointer">
-              <SelectValue placeholder="Agent default" />
+              <SelectValue placeholder="Agent default">
+                {form.modelOverride
+                  ? <span className="flex gap-1.5 items-center truncate">
+                      <span className="font-medium truncate">{models.find((m) => m.id === form.modelOverride)?.alias ?? form.modelOverride}</span>
+                      <span className="text-muted-foreground text-xs shrink-0">({getProviderLabel(form.modelOverride)})</span>
+                    </span>
+                  : "Agent default"}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__default__">Agent default</SelectItem>
-              {MODELS.map((m) => (
+              {models.map((m) => (
                 <SelectItem key={m.id} value={m.id}>
                   <span className="font-medium">{m.alias}</span>
                   <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
@@ -720,11 +684,18 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
           onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
         >
           <SelectTrigger className="h-10 w-full cursor-pointer">
-            <SelectValue placeholder="None" />
+            <SelectValue placeholder="None">
+              {form.fallbackModel
+                ? <span className="flex gap-1.5 items-center truncate">
+                    <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
+                    <span className="text-muted-foreground text-xs shrink-0">({getProviderLabel(form.fallbackModel)})</span>
+                  </span>
+                : "None"}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__none__">None</SelectItem>
-            {MODELS.map((m) => (
+            {models.map((m) => (
               <SelectItem key={m.id} value={m.id}>
                 <span className="font-medium">{m.alias}</span>
                 <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
@@ -955,7 +926,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
 
   const renderReviewStep = () => {
     const agentName = form.agentId ? (agents.find((a) => a.id === form.agentId)?.name || form.agentId) : "System default";
-    const modelName = form.modelOverride ? (MODELS.find((m) => m.id === form.modelOverride)?.alias || form.modelOverride) : "Agent default";
+    const modelName = form.modelOverride ? (models.find((m) => m.id === form.modelOverride)?.alias || form.modelOverride) : "Agent default";
     const processNames = form.processVersionIds.map((pid) => {
       const proc = processes.find((p) => p.id === pid);
       return proc ? proc.name : pid;
@@ -997,7 +968,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
 
           <ReviewRow label="Timezone" value={form.timezone} />
           {/* executionWindowMinutes uses global default from settings */}
-          {form.fallbackModel && <ReviewRow label="Fallback" value={MODELS.find((m) => m.id === form.fallbackModel)?.alias || form.fallbackModel} />}
+          {form.fallbackModel && <ReviewRow label="Fallback" value={models.find((m) => m.id === form.fallbackModel)?.alias || form.fallbackModel} />}
 
           {/* Simulate section — only show if there's something to simulate */}
           {(form.freePrompt || form.processVersionIds.length > 0) && (

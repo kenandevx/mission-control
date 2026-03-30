@@ -166,15 +166,25 @@ export function useProcesses() {
     }
   };
 
-  const deleteProcess = async (id: string) => {
-    const res = await fetch(`/api/processes/${id}`, { method: "DELETE" });
+  const deleteProcess = async (id: string, opts?: { force?: boolean }) => {
+    const force = opts?.force === true;
+    const res = await fetch(`/api/processes/${id}${force ? "?force=1" : ""}`, { method: "DELETE" });
     const json = await res.json();
     if (json.ok) {
       setProcesses((prev) => prev.filter((p) => p.id !== id));
-      toast.success("Process deleted");
+      if (json.deletedAgendaEvents && Number(json.deletedAgendaEvents) > 0) {
+        toast.success(`Process deleted. Also removed ${json.deletedAgendaEvents} tied agenda event${json.deletedAgendaEvents === 1 ? "" : "s"}.`);
+      } else {
+        toast.success("Process deleted");
+      }
     } else {
+      if (json.code === "PROCESS_IN_USE") {
+        // Let caller decide how to continue (show force delete confirmation).
+        return json;
+      }
       toast.error(json.error ?? "Failed to delete process");
     }
+    return json;
   };
 
   const duplicateProcess = async (id: string) => {

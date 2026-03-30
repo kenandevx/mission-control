@@ -1,6 +1,220 @@
-# OpenClaw Mission Control v1.5.0
+# OpenClaw Mission Control v1.5.1
 
 Local-first dashboard for OpenClaw — boards, agent scheduling, real-time logs, and execution management.
+
+## Latest Updates (2026-03-30 night)
+
+### Artifact system overhaul — agent writes directly, no copying
+- **Agent writes files directly to the artifact dir.** The prompt template now includes `If you create any output files, save them to: <path>` in the output rules. The agent creates files there; the worker scans the dir after execution and records them in `artifact_payload`.
+- **No more post-hoc file copying/detection.** Removed: regex path scanning from agent output, `copyFile` operations, `existsSync` checks. One canonical file location.
+- **Cleanup on failure**: `cleanupRunArtifacts()` deletes the entire run-scoped dir (safe, isolated by run ID).
+- **`runtime-artifacts/` structure**: `agenda/<eventId>/occurrences/<occId>/runs/<runId>/` — agent writes files here directly. No more `request.md`/`response.md`/`meta.json` (DB has all that data). Task worker retains legacy `writeRunArtifacts` for backward compat.
+
+### Retry endpoint moves scheduled_for to now
+- On manual retry, `scheduled_for` is updated to the current time. The occurrence runs fresh — no stale dates from the original schedule.
+- `preserveScheduledFor: true` option available for test scenarios that need to keep the original date.
+- Retry priority set to `0` (highest) since retries run immediately.
+- `executionWindowMinutes` override accepted from request body (defaults to 999 for manual retries).
+
+### Status guard: cannot revert active → draft
+- PATCH endpoint rejects `status: "draft"` if the event has any occurrences (running, succeeded, needs_retry, failed, or scheduled). Returns 409.
+
+### Skill context in prompt template (not CLI flag)
+- Removed non-existent `--skill` flag from agenda-worker.
+- Skill keys are now embedded in the rendered instruction template as `[Skill: <key>]` per step.
+
+### Failed Events dialog improvements
+- Cards now use stacked layout (title/meta on top, action buttons below) — retry button no longer clips on narrow widths.
+- Sort order: oldest at top, most recent at bottom (ascending by `scheduled_for`).
+
+### PageReveal spacing fix
+- `className` (flex/gap/padding) now applies to the inner `motion.div` that wraps children, not the outer container. Fixes missing gap between header and card grid on Processes, Agents, and all other pages using `PageReveal`.
+
+### Hydration mismatch fix (agenda calendar)
+- Date-dependent text (badge day/month, title, range) now renders empty on server and fills on client mount. Prevents SSR/client mismatch on timezone/midnight boundaries.
+
+### Test-only helpers updated
+- `testOnlyCreateScheduledOccurrence`: removed bulk-cancel of existing occurrences, added `ON CONFLICT DO NOTHING`.
+- `testOnlyCreateNeedsRetryOccurrence`: removed bulk-cancel, added `ON CONFLICT DO UPDATE`.
+- `testOnlyInjectRunWithPdf`: fixed missing `finished_at` column reference on `agenda_occurrences`.
+- `testOnlyCheckFileExists`: new action — checks if a file exists at a given path.
+
+### New tests
+- **Retry moves scheduled_for to now** — injects 3-day-old occurrence, retries, verifies date moved.
+- **Missed execution window → needs_retry** — past occurrence with 1-min window, worker detects miss.
+- **Agent saves file to artifact directory** — agent creates file at artifact path, verified in `artifact_payload`.
+- **Simple prompt produces no artifacts** — "reply hello", zero files in artifact dir.
+- **User-specified path stays outside artifact dir** — file saved at user path, not recorded in `artifact_payload`.
+- **Multi-step process output is fully captured** — 3-step process + free prompt, all 4 markers in output.
+- **Event status lifecycle redesigned** — draft→active→can't-revert, runs in ~2s instead of 90s.
+
+### Test improvements
+- PDF test: handles `artifact_payload` as both JSON string and object.
+- Worker-dependent tests (skill-assignment, composed-dispatch): poll up to 120s instead of single 10s sleep.
+
+## Previous Updates (2026-03-30 evening)
+
+### Status-based event colors (replaces random hash coloring)
+Event pills on the calendar now derive their color from occurrence status instead of a random hash of the event ID:
+| Status | Color |
+|---|---|
+| Running | Indigo |
+| Succeeded | Green |
+| Failed | Rose |
+| Needs Retry | Amber |
+| Scheduled / Queued | Gray |
+| Draft | Gray (dashed) |
+
+Centralized in `lib/status-colors.ts` — single source of truth used by calendar pills, detail sheet badges, status guide popup, and occurrence status dots. Change one place, all views update.
+
+### Status Guide popup redesign
+Replaced the old bordered-card layout with a clean, compact popup. Each row shows a mini pill preview (matching the actual calendar appearance) + description. Status colors are derived from the shared `status-colors.ts`.
+
+### Configurable scheduling interval (free-time mode)
+New `scheduling_interval_minutes` column in `worker_settings` (default: 15). When set to 0, the 15-minute grid alignment and slot uniqueness checks are bypassed ("free time" mode). Both `POST /api/agenda/events` and `PATCH /api/agenda/events/[id]` read `timeStepMinutes` from the request body (for dev/test overrides), falling back to the DB setting. Exposed via `GET /api/agenda/settings` as `schedulingIntervalMinutes`.
+
+### Event deletion now cleans BullMQ + agent locks
+Hard-deleting an event (`?hard=1`) and regular delete now:
+1. Remove all queued/delayed/active BullMQ jobs for the event's occurrences
+2. Release any agent execution locks held by those occurrences
+3. Then delete from the database
+
+Previously, orphaned BullMQ jobs would keep re-queuing after event deletion, causing FK violations and agent lock contention loops.
+
+### Agenda worker: FK violation guard
+The worker now catches foreign key violations on `agenda_run_steps` inserts (Postgres error code `23503`) and logs a warning instead of crashing. This handles the race where a test reset or manual delete removes an event while the worker is mid-execution.
+
+### Status priority for multi-occurrence events
+The `latest_occurrence_status` query now prioritizes actionable statuses: running > needs_retry > failed > succeeded > queued > scheduled. Previously it picked by `scheduled_for DESC`, which meant a future `scheduled` occurrence could mask a past `needs_retry`/`failed` one.
+
+### Per-job queue actions
+The Job Queues tab (`/logs`) now supports per-job actions with labeled buttons:
+- **Failed** jobs: "Retry" (re-enqueues) + "Remove"
+- **Delayed** jobs: "Run now" (promotes to waiting) + "Remove"
+- **Waiting** jobs: "Remove"
+
+New API action: `promoteJob` — promotes a delayed job to the waiting state for immediate execution.
+
+### Instance name persistence fix
+The "Save general settings" button in `/settings` now actually persists the instance name to the database (previously it only updated local state). On refresh, the sidebar initializes empty and loads the real name from the API — no more flash of "Mission Control" before the custom name appears.
+
+### Production build script
+New npm scripts:
+- `npm run prod` — starts DB, builds, starts all services (including Next.js production server)
+- `npm run prod:stop` — stops all services + DB
+
+### Build fixes
+- Added `targetUrl` as optional field on `ActivityEntry` type (notifications stream)
+- Added `expired` to `TicketExecutionState` union type
+- Fixed ambiguous `id` column reference in `testOnlySetRunning` / `testOnlySetNeedsRetry` SQL queries (`select id` → `select ao.id`)
+- Fixed `sort_order` → `step_order` column name in `testOnlyInjectRunWithPdf`
+
+### Test framework overhaul
+- **Single reset at run start**: all events + processes are hard-deleted once before the test suite, not per-test
+- **No scheduler waits**: all tests that previously polled for the scheduler (15–30s intervals, 2.5 min timeout) now use `testOnlyCreate*` for instant injection
+- **`ctx.settings`**: agenda settings fetched once per run, available to all tests via context
+- **`ctxOffset(ctx, slots)`**: generates future timestamps respecting the scheduling interval; when interval=0 (free time), uses 1-minute offsets
+- **Validation tests force `timeStepMinutes: 15`**: ensures 15-minute enforcement is tested even when dev mode has interval=0
+- **UI fixture seed**: injects occurrences with real statuses (scheduled, running, succeeded, needs_retry, failed, draft) for visual testing
+- **skipReset flag**: retry/race-guard/fixture tests preserve their events for manual testing
+
+## Previous Updates (2026-03-30)
+
+### Agenda RRULE — recurring events with past start dates now valid
+`events/route.ts` line 313: `if (startsAt < new Date())` changed to `if (!recurrenceRule && startsAt < new Date())`. Recurring events with a past anchor date are no longer rejected — RRULE expansion generates future occurrences starting from today, while one-time past events are still correctly rejected.
+
+### Ordered retry — oldest failures processed first
+BullMQ retry priority is now `Math.floor((now - scheduled_for) / 1000))` — older past occurrences get lower priority number and are retried before more recent ones. File: `app/api/agenda/events/[id]/occurrences/[occurrenceId]/route.ts`.
+
+### Timezone logic — Luxon replaces Intl.DateTimeFormat
+All `Intl.DateTimeFormat`-based timezone math replaced with Luxon (`DateTime.fromObject({ zone })`), which is DST-correct regardless of system TZ. Affects: `buildTzAwareISO` in `agenda-client-wrapper.tsx`, `getCurrentTimeInTz`/`getTodayInTz` in `agenda-event-modal.tsx`, `extractLocalTime`/`localTimeToUTC` in `events/route.ts`. Added `types/luxon.d.ts` type stub.
+
+### Dynamic model list — no more hardcoded arrays
+Model dropdowns now read from OpenClaw config at runtime instead of hardcoded arrays:
+- `GET /api/models` reads `~/.openclaw/openclaw.json` → `agents.defaults.models`
+- `lib/use-models.ts` React hook fetches `/api/models`
+- `lib/models.ts` now only exports `getProviderLabel()` utility
+- Updated: `agenda-event-modal.tsx`, `process-editor-modal.tsx`, `ticket-details-modal.tsx`
+
+### Credit/quota errors → fatal (triggers cleanup)
+`app/api/agenda/debug/run-steps/route.ts` now detects billing/credit errors in agent responses and sets `fatal: true`, which triggers `runFailureCleanup()` (Qdrant → session truncation → file deletion) and marks the occurrence as `needs_retry`. Regex: `/credit\s*balance|too\s*low|plans?\s*&\s*billing|quota\s*exceeded|rate\s*limit|too\s*many\s*requests|insufficient\s*credits|api\s*key\s*invalid|authentication\s*failed/i`.
+
+### Process step validation fix
+Added missing `validateProcessSteps()` function to `app/api/processes/route.ts` (was referenced but undefined), preventing 500 errors on process create/update.
+
+### Test framework — all tests self-sufficient (no skipped tests)
+New test-only debug actions bypass the scheduler for reliable, fast test execution:
+- `POST /api/agenda/events { action: "testOnlyCreateNeedsRetryOccurrence" }`
+- `POST /api/agenda/events { action: "testOnlyCreateScheduledOccurrence" }`
+- `POST /api/agenda/events [id]/occurrences [occurrenceId] { action: "testOnlySetNeedsRetry" }`
+- `POST /api/agenda/events [id]/occurrences [occurrenceId] { action: "testOnlySetRunning" }`
+- `POST /api/agenda/events [id] { action: "testOnlyInjectRunWithPdf" }` — injects a succeeded run_attempt with a PDF artifact for testing artifact display
+
+Tests redesigned: `needs-retry-retry-endpoint`, `past-active-auto-needs-retry`, `retry-endpoint-double-press`, `edit-locked-while-running`, `cancel-single-occurrence`, `event-with-process`, `agenda-workers-stopped-survive`, `race-guard-preempted`, `event-status-lifecycle`.
+
+`isoOffset()` helper now adds a random 0–14 min offset after snapping to the 15-min boundary to prevent time-slot conflicts between concurrent test runs.
+
+### Event status info button
+Agenda event modal now shows an `(i)` icon next to the Status label, with a popover explaining the difference between Active (scheduled automatically) and Draft (manual activation only).
+
+### Settings API
+New `GET /api/agenda/settings` endpoint returns `defaultExecutionWindowMinutes` from worker settings — used by tests for timing calculations.
+
+## Previous Updates (2026-03-28)
+
+### Agenda
+- **Hard 15-minute scheduling validation (server-side):** events can only be created/edited at `:00 / :15 / :30 / :45`.
+- **Past-time guard:** event creation now rejects past timestamps.
+- **Retry-state race fix:** if an occurrence is preempted (e.g. moved to `needs_retry`), stale in-flight completion can no longer overwrite it to `succeeded`.
+- **Running state visibility improved:** clearer animated running indicator in calendar cards.
+- **Test reset wipe:** Agenda test Reset now hard-deletes all agenda events (including draft/recurring leftovers).
+
+### Process deletion safety
+- **Delete lock while running:** a process cannot be deleted while any tied agenda occurrence is `running`.
+- **Explicit force flow:** if tied agenda events exist (and none are running), normal delete is blocked with a confirmation path.
+- **Force delete behavior:** `force=1` removes both the process and tied agenda events.
+
+### New regression tests
+- `race-preempted-run-must-not-autocomplete`
+- `process-delete-blocked-while-event-running`
+- `process-delete-requires-force-when-tied`
+
+### Process Builder UI (Step 2)
+- Improved hierarchy, contrast, card structure, drag/drop affordances, and overrides layout.
+- Added top spacing for the **Instruction** section to avoid touching the header.
+- Placeholder styling improved across inputs/textarea so hint text is clearly distinct from entered content.
+- **Step completeness enforcement:** users cannot proceed to Review with incomplete steps; each step requires both title and instruction.
+- Matching server-side validation added for process create/update APIs.
+
+### Runtime artifact governance
+- New workspace-local artifact root: `runtime-artifacts/`.
+- Agenda runs are structured by event + occurrence + run id.
+- Ticket runs are structured by ticket + run id.
+- Each run stores `request.md`, `response.md`, `meta.json`, and `files/`.
+- `runtime-artifacts/` is git-ignored by default.
+- **Settings → Clean reset** now wipes both database and runtime artifacts.
+
+### Unified execution message template (worker-side)
+- Renderer now uses a single compact cross-model format:
+  - anchor line
+  - `Task`
+  - `Context`
+  - `Instructions`
+  - `Request` (after instructions)
+  - `Output rules`
+- Empty sections are skipped.
+- Generic/noisy titles are omitted from `Task` when they add no value.
+- Output rules are execution-focused (no clarification-question suffix).
+- Kanban ticket execution now uses the same unified renderer philosophy as Agenda (single composed message for execution payload).
+
+### New/updated tests
+- `process-create-requires-step-title-and-instruction`
+- `skill-assignment-actually-used`
+- `prompt-template-order-and-labels`
+- `agenda-single-dispatch-composed-message`
+- `kanban-autostart-requires-assigned-agent` (Kanban test panel)
+- `kanban-schedule-interval-validation` (Kanban test panel)
+- `ui-status-fixture-seed`
 
 ## Quick Start
 
@@ -40,6 +254,8 @@ Open **http://localhost:3000**
 | `npm run dev:services` | Start only host services (no Next.js dev) |
 | `npm run build` | Production Next.js build |
 | `npm start` | Start Next.js production server only |
+| `npm run prod` | Build + start DB + all services (production) |
+| `npm run prod:stop` | Stop all services + DB |
 | `npm run db:setup` | Run DB migrations + seed |
 | `npm run db:reset` | Wipe and recreate DB schema |
 | `npm run db:migrate` | Run pending migrations |
@@ -185,6 +401,7 @@ Step 4: needs_retry + Telegram alert
 | Concurrency | 5 | Max parallel agenda jobs (1–10) |
 | Execution Window | 30 min | How late a job can start; past this → `needs_retry` + Telegram alert |
 | Max Retries | 1 | How many instant auto-retries before trying fallback (0 = no auto-retry) |
+| Scheduling Interval | 15 min | Time-slot grid for events (0 = free time, no enforcement) |
 
 **Per-event settings (in event modal):**
 | Setting | What it does |
@@ -491,13 +708,13 @@ Phase 3: File Deletion
 - Logs: `.runtime/logs/watchdog.log`
 - If a service repeatedly crashes, watchdog keeps restarting it — check the service log for root cause
 
-### 15-Minute Scheduling Rule
-- Events can only be scheduled at 15-minute intervals (XX:00, XX:15, XX:30, XX:45)
-- **One event per time slot** — no two events can share the same 15-min slot
-- Maximum 4 events per hour
-- Enforced in both UI (time selector dropdown) and API (validation rejects non-15-min times + duplicate slots)
-- Reduces scheduling conflicts and gives each event adequate execution time
-- Recurring events follow the same rule — time is always on a 15-min boundary
+### Scheduling Interval (configurable)
+- Default: 15-minute intervals (XX:00, XX:15, XX:30, XX:45)
+- **Configurable** via `scheduling_interval_minutes` in `worker_settings` (exposed in `GET /api/agenda/settings`)
+- When `> 0`: events must align to the interval, one event per slot, enforced server-side
+- When `= 0`: **free-time mode** — no alignment or slot checks, events can be scheduled at any minute
+- API accepts `timeStepMinutes` in request body to override per-request (dev/test use)
+- Recurring events follow the same interval rule
 
 ### Processes
 - Card grid layout with create, edit, duplicate, delete, **simulate**
@@ -603,6 +820,8 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 | `/api/processes/simulate` | POST | SSE stream — simulate a process step-by-step (snapshots session state before run) |
 | `/api/processes/simulate/cleanup` | POST | Full cleanup: delete files + restore agent sessions to pre-sim state |
 | `/api/services` | GET/POST | Service health monitoring and management |
+| `/api/queues` | GET/POST | BullMQ queue inspection + per-job actions (remove, retry, promote) |
+| `/api/models` | GET | Model list from OpenClaw config |
 | `/api/agents` | GET | Agent discovery (reads from DB + runtime) |
 | `/api/skills` | GET | Workspace skills list |
 | `/api/system` | POST | System management (update, reset, uninstall) |

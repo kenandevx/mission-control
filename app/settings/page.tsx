@@ -2,6 +2,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { PageHeader } from "@/components/layout/page-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { SettingsPageClient } from "@/components/settings/settings-page-client";
+import { PageReveal } from "@/components/ui/page-reveal";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,9 @@ export default function SettingsPage() {
       <AppSidebar variant="inset" initialUser={null} />
       <SidebarInset>
         <PageHeader page="Settings" />
-        <SettingsPageClient />
+        <PageReveal label="Loading settings…">
+          <SettingsPageClient />
+        </PageReveal>
       </SidebarInset>
     </SidebarProvider>
   );

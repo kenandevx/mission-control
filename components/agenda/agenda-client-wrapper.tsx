@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -17,6 +18,8 @@ import { toast } from "sonner";
 import { AgendaPageClient } from "@/components/agenda/agenda-page-client";
 import { AgendaEventModal, type AgendaEventFormData } from "@/components/agenda/agenda-event-modal";
 import { AgendaStatsCards } from "@/components/agenda/agenda-stats-cards";
+import { AgendaTestPanel } from "@/components/agenda/agenda-test-panel";
+import { ContainerLoader } from "@/components/ui/container-loader";
 import type { AgendaEventSummary } from "@/components/agenda/agenda-details-sheet";
 
 type AgentOption = { id: string; name: string };
@@ -24,39 +27,19 @@ type ProcessOption = { id: string; name: string; version_number: number };
 
 /**
  * Build an ISO 8601 datetime string that represents the given date+time
- * in the given IANA timezone. This ensures the server stores the correct
- * UTC instant (e.g. "2026-03-26T00:26:00" in "Europe/Amsterdam" → UTC-1h in CET).
+ * in the given IANA timezone. Uses Luxon for reliable DST-aware conversion
+ * (e.g. "2026-03-30T20:00" in "Europe/Amsterdam" → UTC-2h = "2026-03-30T18:00:00.000Z").
  */
 function buildTzAwareISO(date: string, time: string, timezone: string): string {
-  // Create a Date object for the wall-clock time in the target timezone
-  // by using Intl to figure out the UTC offset at that moment.
-  const naive = new Date(`${date}T${time}:00Z`); // treat as UTC temporarily
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  });
-  // What wall-clock time does our naive UTC instant show in the target timezone?
-  const parts = fmt.formatToParts(naive);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-  const wallH = Number(get("hour"));
-  const wallM = Number(get("minute"));
-  const wantH = Number(time.split(":")[0]);
-  const wantM = Number(time.split(":")[1] ?? "0");
-
-  // Offset in minutes: how far is the timezone from UTC?
-  // If we send 00:26 UTC and the wall clock shows 01:26, offset = +60
-  const diffMinutes = (wallH * 60 + wallM) - (wantH * 60 + wantM);
-  // Handle day boundary wrap (e.g. UTC 23:00 → CET 00:00 next day: diff = -1380, should be +60)
-  const offsetMinutes = ((diffMinutes + 1440 + 720) % 1440) - 720;
-
-  // The user wants wantH:wantM in their timezone.
-  // In UTC that is wantH:wantM minus the offset.
-  const utcTotalMin = wantH * 60 + wantM - offsetMinutes;
-  const utcDate = new Date(`${date}T00:00:00Z`);
-  utcDate.setUTCMinutes(utcTotalMin);
-  return utcDate.toISOString();
+  // @ts-ignore — luxon loaded via CommonJS in Next.js; types via types/luxon.d.ts
+  const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute, second: 0, millisecond: 0 },
+    { zone: timezone }
+  );
+  return dt.toUTC().toISO() ?? `${date}T${time}:00Z`;
 }
 
 function toRecurrenceRule(recurrence: AgendaEventFormData["recurrence"], weekdays: string[]): string | null {
@@ -109,6 +92,8 @@ function buildFormFromEvent(event: AgendaEventSummary): Partial<AgendaEventFormD
 export function AgendaClientWrapper() {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [processes, setProcesses] = useState<ProcessOption[]>([]);
+  const [agendaInitialReady, setAgendaInitialReady] = useState(false);
+  const [contentReady, setContentReady] = useState(false);
 
   // Modal state
   const [eventModalOpen, setEventModalOpen] = useState(false);
@@ -153,6 +138,19 @@ export function AgendaClientWrapper() {
     })();
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!agendaInitialReady) return;
+    const timer = setTimeout(() => setContentReady(true), 200);
+    return () => clearTimeout(timer);
+  }, [agendaInitialReady]);
+
+  // Failsafe: never keep the page blocked behind loader indefinitely.
+  useEffect(() => {
+    if (contentReady) return;
+    const safetyTimer = setTimeout(() => setContentReady(true), 3000);
+    return () => clearTimeout(safetyTimer);
+  }, [contentReady]);
 
   const loadProcessOptions = useCallback(async () => {
     if (processes.length > 0) return;
@@ -453,8 +451,13 @@ export function AgendaClientWrapper() {
 
   return (
     <>
-      <div className="@container/main flex flex-1 min-h-0 flex-col overflow-hidden">
-        <div className="flex flex-1 min-h-0 flex-col gap-4 pt-4 pb-4 md:gap-6">
+      <div className="@container/main relative flex flex-1 min-h-0 flex-col overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: contentReady ? 1 : 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="flex flex-1 min-h-0 flex-col gap-4 pt-4 pb-4 md:gap-6"
+        >
           <div className="shrink-0">
             <AgendaStatsCards />
           </div>
@@ -467,9 +470,21 @@ export function AgendaClientWrapper() {
               onEventDrop={handleEventDrop}
               onAddEvent={openNewEventModal}
               agentsForDetails={agents}
+              onInitialReady={() => setAgendaInitialReady(true)}
             />
           </div>
-        </div>
+        </motion.div>
+
+        {!contentReady && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+          >
+            <ContainerLoader label="Loading agenda…" />
+          </motion.div>
+        )}
       </div>
 
       <AgendaEventModal
@@ -598,6 +613,8 @@ export function AgendaClientWrapper() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AgendaTestPanel />
     </>
   );
 }

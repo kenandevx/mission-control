@@ -59,6 +59,7 @@ import {
   IconLock,
   IconCopy,
 } from "@tabler/icons-react";
+import { STATUS_BADGE_MAP, STATUS_BADGE_FALLBACK } from "@/lib/status-colors";
 
 
 export type AgendaEventSummary = {
@@ -169,17 +170,7 @@ function Tip({ text, children }: { text: string; children: React.ReactNode }) {
 }
 
 function ResultBadge({ status }: { status: string | null }) {
-  const map: Record<string, { label: string; className: string; tooltip: string }> = {
-    succeeded:    { label: "✓ Succeeded",  className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", tooltip: "The run completed successfully" },
-    failed:       { label: "✗ Failed",     className: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400", tooltip: "The run failed — check output for errors" },
-    running:      { label: "● Running",    className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "Currently executing" },
-    pending:      { label: "Pending",      className: "border-muted-foreground/30 text-muted-foreground", tooltip: "Waiting to be picked up" },
-    queued:       { label: "Queued",       className: "border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400", tooltip: "In the execution queue" },
-    scheduled:    { label: "Scheduled",    className: "border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400", tooltip: "Scheduled for future execution" },
-    needs_retry:  { label: "⚠ Needs Retry", className: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400", tooltip: "All retries exhausted — needs manual retry" },
-    expired:      { label: "Expired",      className: "border-muted-foreground/30 text-muted-foreground", tooltip: "Execution window expired before the run could start" },
-  };
-  const cfg = map[status ?? ""] ?? { label: status ?? "—", className: "border-muted-foreground/30 text-muted-foreground", tooltip: "" };
+  const cfg = STATUS_BADGE_MAP[status ?? ""] ?? { ...STATUS_BADGE_FALLBACK, label: status ?? STATUS_BADGE_FALLBACK.label };
   return (
     <Tip text={cfg.tooltip}>
       <Badge variant="outline" className={`text-[10px] uppercase tracking-wider ${cfg.className}`}>
@@ -562,7 +553,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </DropdownMenuItem>
                       )}
                       {selectedOccurrence && selectedOccurrenceId && (() => {
-                        const canRetry = ["running", "needs_retry", "failed", "expired"].includes(selectedOccurrence.status);
+                        const canRetry = ["running", "needs_retry", "failed"].includes(selectedOccurrence.status);
                         return (
                           <>
                             <DropdownMenuSeparator />
@@ -611,7 +602,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
             <div className="flex-1 overflow-y-auto px-6 py-4">
               {/* ── Overview ── */}
               <TabsContent value="overview" className="mt-0">
-                <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-3 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
+                <div className="*:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-3 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
                   {/* Schedule */}
                   <Card data-slot="card">
                     <CardHeader>
@@ -723,7 +714,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         <div className="text-muted-foreground text-xs">
                           {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
                         </div>
-                        {["failed", "needs_retry", "expired"].includes(selectedOccurrence.status) && (
+                        {["failed", "needs_retry"].includes(selectedOccurrence.status) && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -773,7 +764,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                 {/* Processes (full width below cards) */}
                 {event.processNames.length > 0 && (
-                  <div className="mt-3 *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
+                  <div className="mt-3 *:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
                     <Card data-slot="card">
                       <CardHeader>
                         <CardDescription>Attached Processes</CardDescription>
@@ -826,8 +817,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           data-slot="card"
                           className={`cursor-pointer transition-all group ${
                             isSelected
-                              ? "border-primary ring-1 ring-primary/20 bg-gradient-to-t from-primary/5 to-card shadow-xs"
-                              : "hover:bg-muted/30 bg-gradient-to-t from-primary/5 to-card shadow-xs"
+                              ? "border-primary ring-1 ring-primary/20 bg-gradient-to-t from-primary/12 to-card shadow-xs"
+                              : "hover:bg-muted/30 bg-gradient-to-t from-primary/12 to-card shadow-xs"
                           }`}
                           onClick={() => {
                             setSelectedAttemptId(attempt.id);
@@ -899,7 +890,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       <Card
                         key={step.id}
                         data-slot="card"
-                        className="bg-gradient-to-t from-primary/5 to-card shadow-xs"
+                        className="bg-gradient-to-t from-primary/12 to-card shadow-xs"
                       >
                         {/* Step header — title + status */}
                         <CardHeader>

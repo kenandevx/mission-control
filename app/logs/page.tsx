@@ -3,6 +3,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { LogsPageClient } from "@/components/agents/logs-page-client";
 import { getSql } from "@/lib/local-db";
 import type { AgentLog } from "@/types/agents";
+import { PageReveal } from "@/components/ui/page-reveal";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +120,9 @@ export default async function LogsPage() {
     >
       <AppSidebar variant="inset" initialUser={null} />
       <SidebarInset>
-        <LogsPageClient initialLogs={initialLogs} initialAgents={[]} initialPageInfo={pageInfo} initialNowIso={initialNowIso} />
+        <PageReveal label="Loading logs…">
+          <LogsPageClient initialLogs={initialLogs} initialAgents={[]} initialPageInfo={pageInfo} initialNowIso={initialNowIso} />
+        </PageReveal>
       </SidebarInset>
     </SidebarProvider>
   );

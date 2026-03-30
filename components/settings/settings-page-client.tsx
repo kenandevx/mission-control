@@ -147,7 +147,7 @@ export function SettingsPageClient(): React.ReactNode {
   const [defaultFallbackModel, setDefaultFallbackModel] = useState("");
   const [maxRetries, setMaxRetries] = useState(1);
   const [sidebarActivityCount, setSidebarActivityCount] = useState(8);
-  const [instanceName, setInstanceName] = useState("Mission Control");
+  const [instanceName, setInstanceName] = useState("");
   const agendaMountedRef = useRef(false);
 
   useEffect(() => {
@@ -352,12 +352,30 @@ export function SettingsPageClient(): React.ReactNode {
       <div className="mt-5">
         <Button
           className="cursor-pointer gap-2 h-10 px-6"
-          onClick={() => {
+          onClick={async () => {
             const nextName = instanceName.trim() || "Mission Control";
-            setInstanceName(nextName);
-            window.dispatchEvent(new CustomEvent("mc-instance-name-changed", { detail: { name: nextName } }));
-            document.title = nextName;
-            toast.success("General settings saved");
+            try {
+              const res = await fetch("/api/tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "updateWorkerSettings",
+                  instanceName: nextName,
+                }),
+              });
+              const json = await res.json();
+              if (json.ok) {
+                const saved = String(json.workerSettings?.instanceName || nextName).trim() || "Mission Control";
+                setInstanceName(saved);
+                window.dispatchEvent(new CustomEvent("mc-instance-name-changed", { detail: { name: saved } }));
+                document.title = saved;
+                toast.success("General settings saved");
+              } else {
+                toast.error(json.error || "Failed to save");
+              }
+            } catch {
+              toast.error("Failed to save general settings");
+            }
           }}
         >
           Save general settings
@@ -847,7 +865,7 @@ export function SettingsPageClient(): React.ReactNode {
                   onClick={() => {
                     setAccentId(accent.id);
                     localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent.id);
-                    applyThemeAccent(accent.id, false);
+                    applyThemeAccent(accent.id, true);
                     window.dispatchEvent(new CustomEvent("mc-theme-accent-changed", { detail: { id: accent.id } }));
                     toast.success(`Main color set to ${accent.label}`);
                   }}

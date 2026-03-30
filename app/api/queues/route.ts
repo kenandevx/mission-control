@@ -94,7 +94,7 @@ export async function POST(request: Request) {
     const queueName = String(body.queue || "");
     const jobId = body.jobId ? String(body.jobId) : null;
 
-    if (!["removeJob", "retryJob", "drainQueue", "cleanQueue", "pauseQueue", "resumeQueue"].includes(action)) {
+    if (!["removeJob", "retryJob", "promoteJob", "drainQueue", "cleanQueue", "pauseQueue", "resumeQueue"].includes(action)) {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
     }
 
@@ -119,6 +119,15 @@ export async function POST(request: Request) {
         if (job) {
           await job.retry();
           return NextResponse.json({ ok: true, message: `Job ${jobId} retried` });
+        }
+        return NextResponse.json({ ok: false, error: "Job not found" }, { status: 404 });
+      }
+
+      if (action === "promoteJob" && jobId) {
+        const job = await queue.getJob(jobId);
+        if (job) {
+          await job.promote();
+          return NextResponse.json({ ok: true, message: `Job ${jobId} promoted to waiting (will run next)` });
         }
         return NextResponse.json({ ok: false, error: "Job not found" }, { status: 404 });
       }

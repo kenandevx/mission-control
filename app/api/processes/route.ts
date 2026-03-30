@@ -12,6 +12,19 @@ async function workspaceId(sql: ReturnType<typeof getSql>) {
   return rows[0]?.id ?? null;
 }
 
+/** Validate that every process step has a title and instruction. */
+function validateProcessSteps(steps: Json[]): string | null {
+  if (!steps.length) return "At least one step is required.";
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const title = String(step.title || "").trim();
+    const instruction = String(step.instruction || "").trim();
+    if (!title) return `Step ${i + 1} is missing a title.`;
+    if (!instruction) return `Step ${i + 1} is missing an instruction.`;
+  }
+  return null;
+}
+
 export async function GET() {
   try {
     const sql = getSql();
@@ -73,6 +86,8 @@ export async function POST(request: Request) {
       const steps: Json[] = Array.isArray(body.steps) ? body.steps as Json[] : [];
 
       if (!name) return fail("Process name is required.");
+      const stepValidationError = validateProcessSteps(steps);
+      if (stepValidationError) return fail(stepValidationError);
 
       // Insert process
       const [proc] = await sql`

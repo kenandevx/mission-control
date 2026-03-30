@@ -390,45 +390,105 @@ export const THEME_ACCENTS: ThemeAccent[] = [
   },
 ];
 
+function wrapHue(value: number): number {
+  const mod = value % 360;
+  return mod < 0 ? mod + 360 : mod;
+}
+
+function hueFromOklch(oklch: string, fallback = 293): number {
+  const match = /oklch\([^\)]*\s(-?\d+(?:\.\d+)?)\)/.exec(oklch);
+  if (!match) return fallback;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? wrapHue(value) : fallback;
+}
+
 export function applyThemeAccent(accentId: string, persist = true): void {
   if (typeof window === "undefined") return;
   const root = document.documentElement;
   const a = THEME_ACCENTS.find((x) => x.id === accentId) ?? THEME_ACCENTS[0];
   const s = root.style.setProperty.bind(root.style);
-  s("--primary", a.primary);
-  s("--primary-foreground", a.primaryForeground);
-  s("--ring", a.ring);
-  s("--secondary", a.secondary);
-  s("--secondary-foreground", a.secondaryForeground);
-  s("--accent", a.accent);
-  s("--accent-foreground", a.accentForeground);
-  s("--muted", a.muted);
-  s("--muted-foreground", a.mutedForeground);
-  s("--foreground", a.foreground);
-  s("--card", a.card);
-  s("--card-foreground", a.cardForeground);
-  s("--popover", a.popover);
-  s("--popover-foreground", a.popoverForeground);
-  s("--border", a.border);
-  s("--input", a.input);
-  s("--sidebar", a.sidebar);
-  s("--sidebar-foreground", a.sidebarForeground);
-  s("--sidebar-primary", a.sidebarPrimary);
-  s("--sidebar-primary-foreground", a.sidebarPrimaryForeground);
-  s("--sidebar-accent", a.sidebarAccent);
-  s("--sidebar-accent-foreground", a.sidebarAccentForeground);
-  s("--sidebar-border", a.sidebarBorder);
-  s("--sidebar-ring", a.sidebarRing);
-  s("--chart-1", a.chart1);
-  s("--chart-2", a.chart2);
-  s("--chart-3", a.chart3);
-  s("--chart-4", a.chart4);
-  s("--chart-5", a.chart5);
-  s("--primary-glow", a.primaryGlow);
+  const isDark = root.classList.contains("dark");
+  const h = hueFromOklch(a.primary);
+
+  if (!isDark) {
+    s("--background", "oklch(0.988 0.006 293)");
+    s("--foreground", a.foreground);
+    s("--card", a.card);
+    s("--card-foreground", a.cardForeground);
+    s("--popover", a.popover);
+    s("--popover-foreground", a.popoverForeground);
+    s("--primary", a.primary);
+    s("--primary-foreground", a.primaryForeground);
+    s("--secondary", `oklch(0.935 0.045 ${h})`);
+    s("--secondary-foreground", `oklch(0.22 0.04 ${h})`);
+    s("--muted", `oklch(0.945 0.03 ${h})`);
+    s("--muted-foreground", `oklch(0.45 0.045 ${h})`);
+    s("--accent", a.accent);
+    s("--accent-foreground", a.accentForeground);
+    s("--border", a.border);
+    s("--input", a.input);
+    s("--ring", a.ring);
+    s("--sidebar", a.sidebar);
+    s("--sidebar-foreground", a.sidebarForeground);
+    s("--sidebar-primary", a.sidebarPrimary);
+    s("--sidebar-primary-foreground", a.sidebarPrimaryForeground);
+    s("--sidebar-accent", a.sidebarAccent);
+    s("--sidebar-accent-foreground", a.sidebarAccentForeground);
+    s("--sidebar-border", a.sidebarBorder);
+    s("--sidebar-ring", a.sidebarRing);
+    s("--chart-1", a.chart1);
+    s("--chart-2", a.chart2);
+    s("--chart-3", a.chart3);
+    s("--chart-4", a.chart4);
+    s("--chart-5", a.chart5);
+    s("--primary-glow", a.primaryGlow);
+  } else {
+    const h2 = wrapHue(h - 90);
+    const h3 = wrapHue(h + 130);
+    const h4 = wrapHue(h - 40);
+    const h5 = wrapHue(h + 40);
+
+    s("--background", `oklch(0.13 0.012 ${h})`);
+    s("--foreground", `oklch(0.96 0.005 ${h})`);
+    s("--card", `oklch(0.185 0.014 ${h})`);
+    s("--card-foreground", `oklch(0.96 0.005 ${h})`);
+    s("--popover", `oklch(0.185 0.014 ${h})`);
+    s("--popover-foreground", `oklch(0.96 0.005 ${h})`);
+    s("--primary", `oklch(0.65 0.24 ${h})`);
+    s("--primary-foreground", `oklch(0.97 0.01 ${h})`);
+    s("--secondary", `oklch(0.28 0.035 ${h})`);
+    s("--secondary-foreground", `oklch(0.93 0.02 ${h})`);
+    s("--muted", `oklch(0.25 0.025 ${h})`);
+    s("--muted-foreground", `oklch(0.76 0.03 ${h})`);
+    s("--accent", `oklch(0.26 0.025 ${h})`);
+    s("--accent-foreground", `oklch(0.95 0.01 ${h})`);
+    s("--border", `oklch(0.32 0.015 ${h})`);
+    s("--input", `oklch(0.28 0.015 ${h})`);
+    s("--ring", `oklch(0.55 0.22 ${h})`);
+    s("--sidebar", `oklch(0.16 0.014 ${h})`);
+    s("--sidebar-foreground", `oklch(0.95 0.005 ${h})`);
+    s("--sidebar-primary", `oklch(0.65 0.24 ${h})`);
+    s("--sidebar-primary-foreground", `oklch(0.97 0.01 ${h})`);
+    s("--sidebar-accent", `oklch(0.24 0.02 ${h})`);
+    s("--sidebar-accent-foreground", `oklch(0.95 0.01 ${h})`);
+    s("--sidebar-border", `oklch(0.30 0.015 ${h})`);
+    s("--sidebar-ring", `oklch(0.55 0.22 ${h})`);
+    s("--chart-1", `oklch(0.78 0.16 ${h})`);
+    s("--chart-2", `oklch(0.72 0.15 ${h2})`);
+    s("--chart-3", `oklch(0.70 0.17 ${h3})`);
+    s("--chart-4", `oklch(0.75 0.14 ${h4})`);
+    s("--chart-5", `oklch(0.70 0.18 ${h5})`);
+    s("--primary-glow", `oklch(0.65 0.24 ${h} / 0.5)`);
+  }
+
+  s("--destructive", isDark ? "oklch(0.68 0.2 25)" : "oklch(0.577 0.245 27.325)");
+  s("--destructive-foreground", isDark ? "oklch(0.98 0 0)" : "oklch(0.985 0 0)");
+
   // neutralise any hardcoded gradient tints
   s("--tw-gradient-stops", "var(--tw-gradient-from), var(--tw-gradient-to)");
-  s("--tw-gradient-from", a.primary + "20");
-  s("--tw-gradient-to", a.primary + "10");
+  s("--tw-gradient-from", (isDark ? `oklch(0.65 0.24 ${h})` : a.primary) + "20");
+  s("--tw-gradient-to", (isDark ? `oklch(0.65 0.24 ${h})` : a.primary) + "10");
+
   if (persist) localStorage.setItem(THEME_ACCENT_STORAGE_KEY, a.id);
 }
 

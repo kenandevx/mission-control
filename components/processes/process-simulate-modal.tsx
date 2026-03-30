@@ -274,7 +274,7 @@ export function ProcessSimulateModal({ open, processId, processName, steps, auto
                 <Card
                   key={result.stepIndex}
                   data-slot="card"
-                  className="bg-gradient-to-t from-primary/5 to-card shadow-xs"
+                  className="bg-gradient-to-t from-primary/12 to-card shadow-xs"
                 >
                   {/* Step header */}
                   <CardHeader>
