@@ -514,10 +514,8 @@ const agendaWorker = new Worker(
         }
       }
 
-      const context = "Agenda event execution";
       const instruction = renderUnifiedTaskMessage({
         title,
-        context,
         instructions: composedSteps.map((s) => ({ order: s.order, title: s.title, instruction: s.instruction, skillKey: s.skillKey })),
         request: freePrompt ? String(freePrompt) : "",
         artifactDir: runArtifactDir,
