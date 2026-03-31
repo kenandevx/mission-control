@@ -24,13 +24,15 @@ New **File Manager** page (`/file-manager`) lets you browse, create, rename, del
 - **Protected paths** — blocks delete/rename/move on critical paths (`/`, `openclaw.json`, `workspace/`, `agents/`, `credentials/`)
 - **Ownership enforcement**: every create, upload, copy, move, rename, and save auto-verifies file ownership matches the process user (`clawdbot:clawdbot`) and corrects mismatches via `chownSync`; recursive ownership fix on directory copies/moves
 - **Owner column**: table view shows `owner:group` per file with amber warning icon on ownership mismatches; Details panel shows Owner row for both files and folders with mismatch indicator
+- **Conflict resolution**: copy, move, and upload detect name conflicts and prompt with **Replace** / **Keep both** / **Cancel** — no silent overwrites or auto-renames
 - **Safety**: name validation (rejects `/`, `..`, null bytes), broken symlink handling, file descriptor leak protection, upload size limit (50 MB), move-into-self detection
 - **Toast notifications** via sonner for all operations
 - **Global search** — toggle the globe icon to search recursively across all folders in `~/.openclaw/`; debounced 300ms, max 200 results, max 12 levels deep; results show a clickable Location column to navigate directly to the containing folder
 - **Inline text editor** — click Edit in the preview panel to switch to a textarea editor; Save/Cancel with unsaved changes guard (confirmation dialog on close)
 - **Folder properties** — "Properties" in any item's dropdown opens the details panel; for folders shows recursive size, file count, subfolder count (capped at 10 levels/10k files)
 - **Grid view** — toggle between table and thumbnail grid; images show actual thumbnails via `object-cover`; view preference persisted in localStorage
-- **Loading states** — skeleton rows on fetch, spinner on mutations, error state with retry
+- **Back button** — arrow button in the toolbar to navigate to the parent folder (also Backspace shortcut)
+- **Loading states** — ContainerLoader spinner on fetch, spinner on mutations, error state with retry
 
 ## Previous Updates (2026-03-30 night)
 
