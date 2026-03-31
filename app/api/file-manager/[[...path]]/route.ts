@@ -434,6 +434,7 @@ export async function POST(
     if (contentType.includes("multipart/form-data")) {
       const formData = await request.formData();
       const parentId = (formData.get("parentId") as string) || "/";
+      const onConflict = (formData.get("onConflict") as string) || "";
       const files = formData.getAll("files");
 
       if (files.length === 0) return err("No files provided");
@@ -443,6 +444,19 @@ export async function POST(
         return err("Parent is not a directory");
       }
 
+      // Check for conflicts first (if no resolution provided)
+      if (!onConflict) {
+        const conflicts: string[] = [];
+        for (const file of files) {
+          if (!(file instanceof globalThis.File)) continue;
+          const dest = path.join(parentPath, file.name);
+          if (fs.existsSync(dest)) conflicts.push(file.name);
+        }
+        if (conflicts.length > 0) {
+          return NextResponse.json({ ok: false, conflicts, error: "Name conflict" }, { status: 409 });
+        }
+      }
+
       const uploaded: FileItem[] = [];
       for (const file of files) {
         if (!(file instanceof globalThis.File)) continue;
@@ -450,7 +464,18 @@ export async function POST(
         if (nameErr) continue;
         if (file.size > MAX_UPLOAD_BYTES) continue;
 
-        const fileName = dedupName(parentPath, file.name);
+        let fileName = file.name;
+        const destCheck = path.join(parentPath, fileName);
+        const destExists = fs.existsSync(destCheck);
+
+        if (destExists) {
+          if (onConflict === "skip") continue;
+          if (onConflict === "keep-both") {
+            fileName = dedupName(parentPath, fileName);
+          }
+          // "replace" → overwrite in place
+        }
+
         const filePath = path.join(parentPath, fileName);
         if (!filePath.startsWith(ROOT)) continue;
 
@@ -557,6 +582,7 @@ export async function PUT(
     }
 
     if ((action === "move" || action === "copy") && ids && targetId) {
+      const { onConflict } = body as { onConflict?: "replace" | "keep-both" | "skip" };
       const targetPath = resolveSafe(targetId);
       if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isDirectory()) {
         return err("Target is not a directory");
@@ -565,6 +591,23 @@ export async function PUT(
       if (action === "move") {
         const blocked = ids.find((i) => isProtected(i));
         if (blocked) return err(`Cannot move protected path: ${blocked}`, 403);
+      }
+
+      // Detect conflicts
+      const conflicts: string[] = [];
+      for (const fileId of ids) {
+        const src = resolveSafe(fileId);
+        if (!fs.existsSync(src)) continue;
+        const rawName = path.basename(src);
+        const dest = path.join(targetPath, rawName);
+        if (fs.existsSync(dest) && dest !== src) {
+          conflicts.push(rawName);
+        }
+      }
+
+      // If conflicts exist and no resolution provided, return the conflict list
+      if (conflicts.length > 0 && !onConflict) {
+        return NextResponse.json({ ok: false, conflicts, error: "Name conflict" }, { status: 409 });
       }
 
       const results: FileItem[] = [];
@@ -580,29 +623,53 @@ export async function PUT(
         }
 
         const rawName = path.basename(src);
-        const fileName = action === "copy" ? dedupName(targetPath, rawName) : rawName;
-        const dest = path.join(targetPath, fileName);
+        const dest = path.join(targetPath, rawName);
         if (!dest.startsWith(ROOT)) continue;
 
+        const destExists = fs.existsSync(dest) && dest !== src;
+
+        // Resolve conflict
+        let finalDest = dest;
+        if (destExists) {
+          if (onConflict === "skip") continue;
+          if (onConflict === "keep-both") {
+            const dedupedName = dedupName(targetPath, rawName);
+            finalDest = path.join(targetPath, dedupedName);
+          }
+          // "replace" → overwrite in place (finalDest stays as dest)
+        }
+
         if (action === "copy") {
+          // Remove existing target if replacing
+          if (onConflict === "replace" && destExists && fs.existsSync(finalDest)) {
+            const destStat = fs.statSync(finalDest);
+            if (destStat.isDirectory()) fs.rmSync(finalDest, { recursive: true });
+            else fs.unlinkSync(finalDest);
+          }
           if (fs.statSync(src).isDirectory()) {
-            fs.cpSync(src, dest, { recursive: true });
-            ensureOwnershipRecursive(dest);
+            fs.cpSync(src, finalDest, { recursive: true });
+            ensureOwnershipRecursive(finalDest);
           } else {
-            fs.copyFileSync(src, dest);
-            ensureOwnership(dest);
+            fs.copyFileSync(src, finalDest);
+            ensureOwnership(finalDest);
           }
         } else {
-          if (fs.existsSync(dest) && dest !== src) continue;
-          fs.renameSync(src, dest);
-          if (fs.statSync(dest).isDirectory()) {
-            ensureOwnershipRecursive(dest);
+          // Move
+          if (onConflict === "replace" && destExists && fs.existsSync(finalDest)) {
+            const destStat = fs.statSync(finalDest);
+            if (destStat.isDirectory()) fs.rmSync(finalDest, { recursive: true });
+            else fs.unlinkSync(finalDest);
+          }
+          if (fs.existsSync(finalDest) && finalDest !== src && onConflict !== "replace") continue;
+          fs.renameSync(src, finalDest);
+          if (fs.statSync(finalDest).isDirectory()) {
+            ensureOwnershipRecursive(finalDest);
           } else {
-            ensureOwnership(dest);
+            ensureOwnership(finalDest);
           }
         }
-        const newId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
-        const item = toItem(dest, newId);
+        const newId = "/" + path.relative(ROOT, finalDest).replace(/\\/g, "/");
+        const item = toItem(finalDest, newId);
         if (item) results.push(item);
       }
       return ok({ items: results });

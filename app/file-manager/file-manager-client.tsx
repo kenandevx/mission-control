@@ -287,25 +287,48 @@ async function apiDelete(ids: string[]): Promise<void> {
   if (!data.ok) throw new Error(data.error ?? "Failed to delete");
 }
 
-async function apiMoveOrCopy(action: "move" | "copy", ids: string[], targetId: string): Promise<void> {
+type ConflictResult = { ok: false; conflicts: string[]; error: string };
+type MoveOrCopyResult = { ok: true } | ConflictResult;
+
+async function apiMoveOrCopy(
+  action: "move" | "copy",
+  ids: string[],
+  targetId: string,
+  onConflict?: "replace" | "keep-both" | "skip",
+): Promise<MoveOrCopyResult> {
   const res = await fetch("/api/file-manager", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, ids, targetId }),
+    body: JSON.stringify({ action, ids, targetId, onConflict }),
   });
   const data = await res.json();
+  if (res.status === 409 && data.conflicts) {
+    return data as ConflictResult;
+  }
   if (!data.ok) throw new Error(data.error ?? `Failed to ${action}`);
+  return { ok: true };
 }
 
-async function apiUpload(parentId: string, files: globalThis.File[]): Promise<void> {
+type UploadResult = { ok: true } | ConflictResult;
+
+async function apiUpload(
+  parentId: string,
+  files: globalThis.File[],
+  onConflict?: "replace" | "keep-both" | "skip",
+): Promise<UploadResult> {
   const form = new FormData();
   form.set("parentId", parentId);
+  if (onConflict) form.set("onConflict", onConflict);
   for (const file of files) {
     form.append("files", file);
   }
   const res = await fetch("/api/file-manager", { method: "POST", body: form });
   const data = await res.json();
+  if (res.status === 409 && data.conflicts) {
+    return data as ConflictResult;
+  }
   if (!data.ok) throw new Error(data.error ?? "Upload failed");
+  return { ok: true };
 }
 
 async function apiSearch(query: string): Promise<FileItem[]> {
@@ -546,6 +569,20 @@ export function FileManagerClient(): React.JSX.Element {
   const [moveCopyIds, setMoveCopyIds] = useState<string[]>([]);
   const [moveCopyTarget, setMoveCopyTarget] = useState<string | null>(null);
 
+  // Conflict resolution dialog
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+  const [conflictFiles, setConflictFiles] = useState<string[]>([]);
+  const [conflictContext, setConflictContext] = useState<
+    | { type: "movecopy"; action: "move" | "copy"; ids: string[]; targetId: string }
+    | { type: "upload"; parentId: string; files: globalThis.File[] }
+    | null
+  >(null);
+
+  // Copy confirmation dialog
+  const [copyConfirmOpen, setCopyConfirmOpen] = useState(false);
+  const [copyConfirmIds, setCopyConfirmIds] = useState<string[]>([]);
+  const [copyConfirmTarget, setCopyConfirmTarget] = useState<string | null>(null);
+
   const mountedRef = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -565,7 +602,7 @@ export function FileManagerClient(): React.JSX.Element {
     return sortItemsBy(list, sortField, sortDir);
   }, [items, searchQuery, sortField, sortDir, globalSearch, globalResults]);
 
-  const anyDialogOpen = createDialogOpen || deleteDialogOpen || moveCopyDialogOpen || previewItem !== null;
+  const anyDialogOpen = createDialogOpen || deleteDialogOpen || moveCopyDialogOpen || conflictDialogOpen || previewItem !== null;
 
   // ─── Fetch directory ───────────────────────────────────────────────────────
 
@@ -886,7 +923,15 @@ export function FileManagerClient(): React.JSX.Element {
     if (!moveCopyTarget) return;
     setMutating(true);
     try {
-      await apiMoveOrCopy(moveCopyAction, moveCopyIds, moveCopyTarget);
+      const result = await apiMoveOrCopy(moveCopyAction, moveCopyIds, moveCopyTarget);
+      if (!result.ok && "conflicts" in result) {
+        // Conflicts detected — show resolution dialog
+        setMoveCopyDialogOpen(false);
+        setConflictFiles(result.conflicts);
+        setConflictContext({ type: "movecopy", action: moveCopyAction, ids: moveCopyIds, targetId: moveCopyTarget });
+        setConflictDialogOpen(true);
+        return;
+      }
       setMoveCopyDialogOpen(false);
       toast.success(`${moveCopyAction === "move" ? "Moved" : "Copied"} ${moveCopyIds.length} item${moveCopyIds.length > 1 ? "s" : ""}`);
       refresh();
@@ -896,6 +941,34 @@ export function FileManagerClient(): React.JSX.Element {
       setMutating(false);
     }
   }, [moveCopyAction, moveCopyIds, moveCopyTarget, refresh]);
+
+  // Execute move/copy/upload with a conflict resolution
+  const handleConflictResolve = useCallback(async (resolution: "replace" | "keep-both") => {
+    setConflictDialogOpen(false);
+    setMutating(true);
+    try {
+      if (conflictContext?.type === "movecopy") {
+        await apiMoveOrCopy(conflictContext.action, conflictContext.ids, conflictContext.targetId, resolution);
+        toast.success(`${conflictContext.action === "move" ? "Moved" : "Copied"} ${conflictContext.ids.length} item${conflictContext.ids.length > 1 ? "s" : ""}`);
+      } else if (conflictContext?.type === "upload") {
+        await apiUpload(conflictContext.parentId, conflictContext.files, resolution);
+        toast.success(`Uploaded ${conflictContext.files.length} file${conflictContext.files.length > 1 ? "s" : ""}`);
+      }
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Operation failed");
+    } finally {
+      setMutating(false);
+      setConflictContext(null);
+      setConflictFiles([]);
+    }
+  }, [conflictContext, refresh]);
+
+  const handleConflictCancel = useCallback(() => {
+    setConflictDialogOpen(false);
+    setConflictContext(null);
+    setConflictFiles([]);
+  }, []);
 
   // ─── Download ──────────────────────────────────────────────────────────────
 
@@ -914,7 +987,14 @@ export function FileManagerClient(): React.JSX.Element {
     if (!fileList || (fileList instanceof FileList && fileList.length === 0)) return;
     const files = Array.from(fileList);
     try {
-      await apiUpload(currentPath, files);
+      const result = await apiUpload(currentPath, files);
+      if (!result.ok && "conflicts" in result) {
+        // Conflicts detected — show resolution dialog
+        setConflictFiles(result.conflicts);
+        setConflictContext({ type: "upload", parentId: currentPath, files });
+        setConflictDialogOpen(true);
+        return;
+      }
       toast.success(`Uploaded ${files.length} file${files.length > 1 ? "s" : ""}`);
       refresh();
     } catch (e) {
@@ -1952,6 +2032,53 @@ export function FileManagerClient(): React.JSX.Element {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Conflict Resolution Dialog */}
+      <AlertDialog open={conflictDialogOpen} onOpenChange={(open) => { if (!open) handleConflictCancel(); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {conflictFiles.length === 1
+                ? `"${conflictFiles[0]}" already exists`
+                : `${conflictFiles.length} files already exist`}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <p className="mb-2">
+                  The destination already contains {conflictFiles.length === 1 ? "a file" : "files"} with the same name{conflictFiles.length > 1 ? "s" : ""}:
+                </p>
+                <ul className="list-disc pl-5 text-xs text-muted-foreground max-h-32 overflow-y-auto space-y-0.5">
+                  {conflictFiles.slice(0, 10).map((f) => (
+                    <li key={f} className="font-mono">{f}</li>
+                  ))}
+                  {conflictFiles.length > 10 && (
+                    <li className="text-muted-foreground/60">…and {conflictFiles.length - 10} more</li>
+                  )}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={handleConflictCancel}>Cancel</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => handleConflictResolve("keep-both")}
+              disabled={mutating}
+            >
+              {mutating && <Loader2 className="h-4 w-4 animate-spin" />}
+              Keep both
+            </Button>
+            <AlertDialogAction
+              onClick={() => handleConflictResolve("replace")}
+              disabled={mutating}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {mutating && <Loader2 className="h-4 w-4 animate-spin" />}
+              Replace
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
