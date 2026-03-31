@@ -24,6 +24,7 @@ New **File Manager** page (`/file-manager`) lets you browse, create, rename, del
 - **Protected paths** — blocks delete/rename/move on critical paths (`/`, `openclaw.json`, `workspace/`, `agents/`, `credentials/`)
 - **Safety**: name validation (rejects `/`, `..`, null bytes), broken symlink handling, file descriptor leak protection, upload size limit (50 MB), move-into-self detection
 - **Toast notifications** via sonner for all operations
+- **Global search** — toggle the globe icon to search recursively across all folders in `~/.openclaw/`; debounced 300ms, max 200 results, max 12 levels deep; results show a clickable Location column to navigate directly to the containing folder
 - **Loading states** — skeleton rows on fetch, spinner on mutations, error state with retry
 
 ## Previous Updates (2026-03-30 night)
