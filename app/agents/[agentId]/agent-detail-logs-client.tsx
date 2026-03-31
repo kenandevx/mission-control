@@ -103,7 +103,7 @@ export function AgentDetailLogsClient({ agentId, initialLogs, initialPageInfo, i
     try {
       const res = await fetch(
         `/api/agent/logs?limit=${pageInfo.limit}&page=${target}&agentId=${encodeURIComponent(agentId)}`,
-        { cache: "reload" },
+        { cache: "no-cache" },
       );
       const json = await res.json();
       setLogs(Array.isArray(json?.logs) ? json.logs : []);

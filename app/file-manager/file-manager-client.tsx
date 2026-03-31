@@ -52,7 +52,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ContainerLoader } from "@/components/ui/container-loader";
 import {
   Empty,
   EmptyHeader,
@@ -96,8 +96,7 @@ import {
   LayoutGrid,
   Info,
   Save,
-
-
+  ArrowLeft,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -235,14 +234,14 @@ async function apiFetch(currentPath: string): Promise<FileItem[]> {
   const url = currentPath === "/"
     ? "/api/file-manager"
     : `/api/file-manager${currentPath}`;
-  const res = await fetch(url, { cache: "reload" });
+  const res = await fetch(url, { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to fetch");
   return data.items ?? [];
 }
 
 async function apiPreview(id: string): Promise<string> {
-  const res = await fetch(`/api/file-manager?preview=true&id=${encodeURIComponent(id)}`, { cache: "reload" });
+  const res = await fetch(`/api/file-manager?preview=true&id=${encodeURIComponent(id)}`, { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to preview");
   return data.content ?? "";
@@ -310,7 +309,7 @@ async function apiUpload(parentId: string, files: globalThis.File[]): Promise<vo
 }
 
 async function apiSearch(query: string): Promise<FileItem[]> {
-  const res = await fetch(`/api/file-manager?search=${encodeURIComponent(query)}`, { cache: "reload" });
+  const res = await fetch(`/api/file-manager?search=${encodeURIComponent(query)}`, { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Search failed");
   return data.items ?? [];
@@ -324,7 +323,7 @@ async function apiFetchFolders(dirPath: string): Promise<FolderNode[]> {
 }
 
 async function apiDirSize(id: string): Promise<DirSizeInfo> {
-  const res = await fetch(`/api/file-manager?dirsize=true&id=${encodeURIComponent(id)}`, { cache: "reload" });
+  const res = await fetch(`/api/file-manager?dirsize=true&id=${encodeURIComponent(id)}`, { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to get dir size");
   return { size: data.size, fileCount: data.fileCount, folderCount: data.folderCount };
@@ -393,8 +392,9 @@ function FolderTreeNode({
       {isExpanded && node.children && (
         <div>
           {node.loading && (
-            <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }} className="py-1">
-              <Skeleton className="h-4 w-24" />
+            <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }} className="py-1 flex items-center gap-1.5">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading…</span>
             </div>
           )}
           {node.children.map((child) => (
@@ -1076,6 +1076,17 @@ export function FileManagerClient(): React.JSX.Element {
       <div className="flex flex-wrap items-center gap-2">
         {/* Breadcrumb */}
         <div className="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
+          {currentPath !== "/" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 h-8 w-8"
+              onClick={() => navigateTo(parentPath(currentPath))}
+              title="Go back (Backspace)"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -1198,17 +1209,8 @@ export function FileManagerClient(): React.JSX.Element {
       {/* Content area */}
       <div className="bg-card rounded-xl border overflow-hidden">
         {loading ? (
-          <div className="p-4 space-y-3">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <Skeleton className="h-4 w-4 rounded" />
-                <Skeleton className="h-4 w-4" />
-                <Skeleton className="h-4 flex-1" />
-                <Skeleton className="h-4 w-16" />
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 w-6" />
-              </div>
-            ))}
+          <div className="relative min-h-[300px]">
+            <ContainerLoader label="Loading files…" />
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -1570,13 +1572,9 @@ export function FileManagerClient(): React.JSX.Element {
               <div className="flex-1 min-h-0 overflow-auto px-5 py-4">
                 <p className="text-xs font-semibold text-foreground mb-3">Folder Statistics</p>
                 {dirSizeLoading ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Calculating folder size…</span>
-                    </div>
-                    <Skeleton className="h-4 w-48" />
-                    <Skeleton className="h-4 w-36" />
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Calculating folder size…</span>
                   </div>
                 ) : dirSizeInfo ? (
                   <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
@@ -1757,12 +1755,8 @@ export function FileManagerClient(): React.JSX.Element {
                   </ScrollArea>
                 ) : isTextFile(previewItem.name) ? (
                   previewLoading ? (
-                    <div className="p-5 space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-4 w-5/6" />
-                      <Skeleton className="h-4 w-2/3" />
-                      <Skeleton className="h-4 w-full" />
+                    <div className="relative min-h-[200px]">
+                      <ContainerLoader label="Loading preview…" />
                     </div>
                   ) : (
                     <ScrollArea className="h-full">

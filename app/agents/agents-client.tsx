@@ -8,6 +8,7 @@ import { AgentStatusBadge, formatAgentName } from "@/components/agents/agent-ui"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { ContainerLoader } from "@/components/ui/container-loader";
 
 type AgentEntry = {
   id: string;
@@ -68,47 +69,12 @@ function resolveAgentCardStatus(
     : status;
 }
 
-// ── Skeleton ─────────────────────────────────────────────────────────────────
+// ── Loading state ────────────────────────────────────────────────────────────
 
 function AgentsPageSkeleton(): React.ReactElement {
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {["Total agents", "Running", "Responses (1h)", "Memory ops (1h)"].map((label) => (
-          <Card key={label}>
-            <CardHeader className="pb-2">
-              <CardDescription>{label}</CardDescription>
-              <div className="h-8 w-12 rounded animate-pulse bg-muted mt-1" />
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {[1, 2, 3, 4].map((i) => (
-          <Card key={i} className="overflow-hidden">
-            <div className="h-2 w-full bg-muted animate-pulse" />
-            <CardHeader className="gap-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="size-10 rounded-xl animate-pulse bg-muted" />
-                  <div className="h-4 w-32 rounded animate-pulse bg-muted" />
-                </div>
-                <div className="h-5 w-16 rounded-full animate-pulse bg-muted" />
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Model</span>
-                <div className="h-3 w-24 rounded animate-pulse bg-muted" />
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Last heartbeat</span>
-                <div className="h-3 w-20 rounded animate-pulse bg-muted" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+    <div className="relative min-h-[400px]">
+      <ContainerLoader label="Loading agents…" />
     </div>
   );
 }
@@ -140,7 +106,7 @@ function AgentsClientGrid({ showAgentDebug }: { showAgentDebug: boolean }): Reac
 
     const load = async () => {
       try {
-        const res = await fetch("/api/agents", { cache: "reload" });
+        const res = await fetch("/api/agents", { cache: "no-cache" });
         const json = await res.json();
         setAgents(json.agents ?? []);
       } catch (err) {
