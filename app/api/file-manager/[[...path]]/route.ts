@@ -1,0 +1,454 @@
+import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
+
+const ROOT = "/home/clawdbot/.openclaw";
+const MAX_PREVIEW_BYTES = 100 * 1024; // 100 KB
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
+
+type RouteContext = { params: Promise<{ path?: string[] | undefined }> };
+
+// ─── Safety ──────────────────────────────────────────────────────────────────
+
+function resolveSafe(id: string): string {
+  if (id === "/" || id === "") return ROOT;
+  const cleaned = id.startsWith("/") ? id.slice(1) : id;
+  const resolved = path.resolve(ROOT, cleaned);
+  if (resolved !== ROOT && !resolved.startsWith(ROOT + "/")) {
+    throw new Error("Access denied");
+  }
+  return resolved;
+}
+
+/** Reject names that could cause path traversal or filesystem issues */
+function validateName(name: string): string | null {
+  if (!name || name.length > 255) return "Invalid name length";
+  if (name === "." || name === "..") return "Reserved name";
+  if (/[\x00/\\]/.test(name)) return "Name contains invalid characters";
+  return null;
+}
+
+/** Paths that should never be deleted/renamed/moved */
+const PROTECTED_PATHS = new Set([
+  "/",
+  "/openclaw.json",
+  "/workspace",
+  "/agents",
+  "/credentials",
+]);
+
+function isProtected(id: string): boolean {
+  return PROTECTED_PATHS.has(id);
+}
+
+// ─── File item ───────────────────────────────────────────────────────────────
+
+type FileItem = {
+  id: string;
+  name: string;
+  type: "file" | "folder";
+  size: number;
+  modified: string;
+  created: string;
+  accessed: string;
+  permissions: string;
+};
+
+function toItem(filePath: string, id: string): FileItem | null {
+  try {
+    // Use lstatSync to handle broken symlinks gracefully
+    const stat = fs.statSync(filePath);
+    return {
+      id,
+      name: path.basename(filePath),
+      type: stat.isDirectory() ? "folder" : "file",
+      size: stat.isFile() ? stat.size : 0,
+      modified: stat.mtime.toISOString(),
+      created: stat.birthtime.toISOString(),
+      accessed: stat.atime.toISOString(),
+      permissions: "0" + (stat.mode & 0o777).toString(8),
+    };
+  } catch {
+    // Broken symlink or permission error — try lstat for basic info
+    try {
+      const lstat = fs.lstatSync(filePath);
+      return {
+        id,
+        name: path.basename(filePath),
+        type: lstat.isDirectory() ? "folder" : "file",
+        size: 0,
+        modified: lstat.mtime.toISOString(),
+        created: lstat.birthtime.toISOString(),
+        accessed: lstat.atime.toISOString(),
+        permissions: "0" + (lstat.mode & 0o777).toString(8),
+      };
+    } catch {
+      return null; // skip completely broken entries
+    }
+  }
+}
+
+function sortItems(items: FileItem[]): FileItem[] {
+  return items.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function dedupName(dir: string, name: string): string {
+  const target = path.join(dir, name);
+  if (!fs.existsSync(target)) return name;
+
+  const ext = path.extname(name);
+  const base = ext ? name.slice(0, -ext.length) : name;
+
+  const firstTry = `${base} (copy)${ext}`;
+  if (!fs.existsSync(path.join(dir, firstTry))) return firstTry;
+
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base} (copy ${i})${ext}`;
+    if (!fs.existsSync(path.join(dir, candidate))) return candidate;
+  }
+  return `${base} (copy ${Date.now()})${ext}`;
+}
+
+// ─── Response helpers ────────────────────────────────────────────────────────
+
+function ok(data: Record<string, unknown> = {}): NextResponse {
+  return NextResponse.json({ ok: true, ...data });
+}
+
+function err(message: string, status = 400): NextResponse {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
+
+/** RFC 5987 encode for Content-Disposition filenames */
+function encodeFilename(name: string): string {
+  const ascii = /^[\x20-\x7E]+$/.test(name);
+  if (ascii && !name.includes('"')) {
+    return `filename="${name}"`;
+  }
+  const encoded = encodeURIComponent(name).replace(/'/g, "%27");
+  return `filename="download"; filename*=UTF-8''${encoded}`;
+}
+
+// ─── MIME map ────────────────────────────────────────────────────────────────
+
+const MIME_MAP: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+  ".ico": "image/x-icon", ".bmp": "image/bmp",
+  ".pdf": "application/pdf",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+  ".mp4": "video/mp4", ".webm": "video/webm",
+};
+
+// ─── GET ─────────────────────────────────────────────────────────────────────
+
+export async function GET(
+  request: NextRequest,
+  { params }: RouteContext,
+): Promise<NextResponse> {
+  try {
+    const { searchParams } = request.nextUrl;
+
+    // Download file
+    if (searchParams.get("download") === "true") {
+      const id = searchParams.get("id");
+      if (!id) return err("Missing id");
+      const resolved = resolveSafe(id);
+      if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+        return err("Not a file", 404);
+      }
+      const buf = fs.readFileSync(resolved);
+      return new NextResponse(buf, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; ${encodeFilename(path.basename(resolved))}`,
+          "Content-Length": String(buf.length),
+        },
+      });
+    }
+
+    // Serve file inline (images, pdf, etc.)
+    if (searchParams.get("serve") === "true") {
+      const id = searchParams.get("id");
+      if (!id) return err("Missing id");
+      const resolved = resolveSafe(id);
+      if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+        return err("Not a file", 404);
+      }
+      const ext = path.extname(resolved).toLowerCase();
+      const mime = MIME_MAP[ext] ?? "application/octet-stream";
+      const buf = fs.readFileSync(resolved);
+      return new NextResponse(buf, {
+        headers: {
+          "Content-Type": mime,
+          "Content-Length": String(buf.length),
+          "Cache-Control": "private, max-age=60",
+        },
+      });
+    }
+
+    // Preview text file content
+    if (searchParams.get("preview") === "true") {
+      const id = searchParams.get("id");
+      if (!id) return err("Missing id");
+      const resolved = resolveSafe(id);
+      if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+        return err("Not a file", 404);
+      }
+      const stat = fs.statSync(resolved);
+      const size = Math.min(stat.size, MAX_PREVIEW_BYTES);
+      let content: string;
+      let fd: number | null = null;
+      try {
+        fd = fs.openSync(resolved, "r");
+        const buf = Buffer.alloc(size);
+        fs.readSync(fd, buf, 0, size, 0);
+        content = buf.toString("utf-8");
+        if (stat.size > MAX_PREVIEW_BYTES) {
+          content += "\n\n--- truncated at 100 KB ---";
+        }
+      } finally {
+        if (fd !== null) fs.closeSync(fd);
+      }
+      return ok({ content });
+    }
+
+    // List directory
+    const { path: segments } = await params;
+    let dirId = "/";
+    if (segments && segments.length > 0) {
+      dirId = "/" + segments.join("/");
+    }
+
+    const resolved = resolveSafe(dirId);
+    if (!fs.existsSync(resolved)) return err("Not found", 404);
+    if (!fs.statSync(resolved).isDirectory()) return err("Not a directory", 400);
+
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    const items: FileItem[] = [];
+    for (const entry of entries) {
+      const entryId = (dirId === "/" ? "" : dirId) + "/" + entry.name;
+      const item = toItem(path.join(resolved, entry.name), entryId);
+      if (item) items.push(item);
+    }
+
+    return ok({ items: sortItems(items) });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("Access denied")) return err(msg, 403);
+    if (msg.includes("ENOENT")) return err("Not found", 404);
+    return err(msg, 500);
+  }
+}
+
+// ─── POST (create + upload) ─────────────────────────────────────────────────
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse> {
+  try {
+    const contentType = request.headers.get("content-type") ?? "";
+
+    // Multipart upload
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const parentId = (formData.get("parentId") as string) || "/";
+      const files = formData.getAll("files");
+
+      if (files.length === 0) return err("No files provided");
+
+      const parentPath = resolveSafe(parentId);
+      if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
+        return err("Parent is not a directory");
+      }
+
+      const uploaded: FileItem[] = [];
+      for (const file of files) {
+        if (!(file instanceof globalThis.File)) continue;
+        const nameErr = validateName(file.name);
+        if (nameErr) continue;
+        if (file.size > MAX_UPLOAD_BYTES) continue; // skip oversized files
+
+        const fileName = dedupName(parentPath, file.name);
+        const filePath = path.join(parentPath, fileName);
+        if (!filePath.startsWith(ROOT)) continue;
+
+        const buf = Buffer.from(await file.arrayBuffer());
+        fs.writeFileSync(filePath, buf);
+
+        const newId = (parentId === "/" ? "" : parentId) + "/" + fileName;
+        const item = toItem(filePath, newId);
+        if (item) uploaded.push(item);
+      }
+
+      return ok({ items: uploaded });
+    }
+
+    // JSON create (file or folder)
+    const body = await request.json();
+    const { action, parentId, name, type } = body as {
+      action?: string;
+      parentId?: string;
+      name?: string;
+      type?: "file" | "folder";
+    };
+
+    if (action !== "create") return err("Unknown action");
+    if (!name) return err("Missing name");
+    if (!parentId) return err("Missing parentId");
+
+    const nameErr = validateName(name);
+    if (nameErr) return err(nameErr);
+
+    const parentPath = resolveSafe(parentId);
+    if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
+      return err("Parent is not a directory");
+    }
+
+    const newId = (parentId === "/" ? "" : parentId) + "/" + name;
+    const newPath = resolveSafe(newId);
+
+    if (fs.existsSync(newPath)) return err("Already exists");
+
+    if (type === "folder") {
+      fs.mkdirSync(newPath, { recursive: true });
+    } else {
+      fs.writeFileSync(newPath, "");
+    }
+
+    const item = toItem(newPath, newId);
+    return ok({ item });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("Access denied")) return err(msg, 403);
+    return err(msg, 500);
+  }
+}
+
+// ─── PUT (rename, move, copy) ────────────────────────────────────────────────
+
+export async function PUT(
+  request: NextRequest,
+): Promise<NextResponse> {
+  try {
+    const body = await request.json();
+    const { action, id, newName, ids, targetId } = body as {
+      action?: string;
+      id?: string;
+      newName?: string;
+      ids?: string[];
+      targetId?: string;
+    };
+
+    if (action === "rename" && id && newName) {
+      if (isProtected(id)) return err("Cannot rename protected path", 403);
+      const nameErr = validateName(newName);
+      if (nameErr) return err(nameErr);
+
+      const oldPath = resolveSafe(id);
+      if (!fs.existsSync(oldPath)) return err("Not found", 404);
+      const parentDir = path.dirname(oldPath);
+      const dest = path.join(parentDir, newName);
+      if (!dest.startsWith(ROOT)) return err("Access denied", 403);
+      if (fs.existsSync(dest)) return err("A file with that name already exists");
+      fs.renameSync(oldPath, dest);
+      const renamedId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
+      const item = toItem(dest, renamedId);
+      return ok({ item });
+    }
+
+    if ((action === "move" || action === "copy") && ids && targetId) {
+      const targetPath = resolveSafe(targetId);
+      if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isDirectory()) {
+        return err("Target is not a directory");
+      }
+
+      // Block moving protected paths
+      if (action === "move") {
+        const blocked = ids.find((i) => isProtected(i));
+        if (blocked) return err(`Cannot move protected path: ${blocked}`, 403);
+      }
+
+      const results: FileItem[] = [];
+      for (const fileId of ids) {
+        const src = resolveSafe(fileId);
+        if (!fs.existsSync(src)) continue;
+
+        // Block moving/copying a folder into itself or a subfolder of itself
+        if (fs.statSync(src).isDirectory()) {
+          const targetAbs = resolveSafe(targetId);
+          if (targetAbs === src || targetAbs.startsWith(src + "/")) {
+            continue; // skip — would cause corruption or infinite recursion
+          }
+        }
+
+        const rawName = path.basename(src);
+        const fileName = action === "copy" ? dedupName(targetPath, rawName) : rawName;
+        const dest = path.join(targetPath, fileName);
+        if (!dest.startsWith(ROOT)) continue;
+
+        if (action === "copy") {
+          if (fs.statSync(src).isDirectory()) {
+            fs.cpSync(src, dest, { recursive: true });
+          } else {
+            fs.copyFileSync(src, dest);
+          }
+        } else {
+          // Move: check dest doesn't already exist (no overwrite)
+          if (fs.existsSync(dest) && dest !== src) continue;
+          fs.renameSync(src, dest);
+        }
+        const newId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
+        const item = toItem(dest, newId);
+        if (item) results.push(item);
+      }
+      return ok({ items: results });
+    }
+
+    return err("Unknown action");
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("Access denied")) return err(msg, 403);
+    return err(msg, 500);
+  }
+}
+
+// ─── DELETE ──────────────────────────────────────────────────────────────────
+
+export async function DELETE(
+  request: NextRequest,
+): Promise<NextResponse> {
+  try {
+    const body = await request.json();
+    const { ids } = body as { ids?: string[] };
+
+    if (!ids || ids.length === 0) return err("Missing ids");
+
+    // Block deleting protected paths
+    const blocked = ids.find((i) => isProtected(i));
+    if (blocked) return err(`Cannot delete protected path: ${blocked}`, 403);
+
+    const deleted: string[] = [];
+    for (const id of ids) {
+      const p = resolveSafe(id);
+      if (!fs.existsSync(p)) continue;
+      // Extra safety: never delete ROOT itself
+      if (p === ROOT) continue;
+      const stat = fs.statSync(p);
+      if (stat.isDirectory()) {
+        fs.rmSync(p, { recursive: true });
+      } else {
+        fs.unlinkSync(p);
+      }
+      deleted.push(id);
+    }
+    return ok({ deleted });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("Access denied")) return err(msg, 403);
+    return err(msg, 500);
+  }
+}

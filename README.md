@@ -2,7 +2,31 @@
 
 Local-first dashboard for OpenClaw — boards, agent scheduling, real-time logs, and execution management.
 
-## Latest Updates (2026-03-30 night)
+## Latest Updates (2026-03-31)
+
+### File Manager — browser for `~/.openclaw/`
+New **File Manager** page (`/file-manager`) lets you browse, create, rename, delete, move, copy, upload, and download files and folders directly in Mission Control — no SSH needed.
+
+- **Custom-built UI** using shadcn/ui components (Table, Sheet, Dialog, AlertDialog, DropdownMenu) — no third-party file manager packages
+- Backend: `GET/POST/PUT/DELETE /api/file-manager` (catch-all route at `[[...path]]/route.ts`)
+- All operations scoped to `~/.openclaw/` with path-traversal protection
+- Shows **all files including dotfiles** (`.env`, `.gitignore`, config files, etc.)
+- **Table view** with sortable columns (Name, Size, Modified), checkboxes for multi-select, per-row action dropdown
+- **File preview panel** (Sheet slide-in): text file preview with code formatting, inline image preview (PNG/JPG/GIF/WebP/SVG), Windows-style details section (size, location, created/modified/accessed dates, permissions)
+- **Quick actions** in preview: Download, Rename, Copy, Delete
+- **Search/filter** — live filter in toolbar
+- **Column sorting** — click headers to sort by name/size/modified, folders always on top
+- **Drag-and-drop upload** — drag files onto the area, visual overlay, real multipart upload with file content
+- **File upload** — button or drag-and-drop, auto-dedup names on conflict
+- **Copy to same folder** — auto-generates `filename (copy).ext`, `filename (copy 2).ext`
+- **Move/Copy dialog** — expandable folder tree picker
+- **Keyboard shortcuts**: Backspace (up), Ctrl+A (select all), Delete (delete selected), F2 (rename), F5 (refresh)
+- **Protected paths** — blocks delete/rename/move on critical paths (`/`, `openclaw.json`, `workspace/`, `agents/`, `credentials/`)
+- **Safety**: name validation (rejects `/`, `..`, null bytes), broken symlink handling, file descriptor leak protection, upload size limit (50 MB), move-into-self detection
+- **Toast notifications** via sonner for all operations
+- **Loading states** — skeleton rows on fetch, spinner on mutations, error state with retry
+
+## Previous Updates (2026-03-30 night)
 
 ### Artifact system overhaul — agent writes directly, no copying
 - **Agent writes files directly to the artifact dir.** The prompt template now includes `If you create any output files, save them to: <path>` in the output rules. The agent creates files there; the worker scans the dir after execution and records them in `artifact_payload`.
@@ -280,6 +304,7 @@ Open **http://localhost:3000**
 | `/processes` | Reusable step-by-step execution blueprints |
 | `/agents` | Agent status cards with model, heartbeat, detail pages |
 | `/logs` | Live log explorer, job queues, and service management |
+| `/file-manager` | File browser for `~/.openclaw/` — browse, create, rename, delete, move, copy files and folders via the UI |
 | `/approvals` | Pending plan approval queue |
 | `/settings` | Theme, notifications, agenda settings (concurrency, execution window, auto-retry, fallback model, max retries), system updates, clean reset, uninstall |
 
@@ -815,6 +840,7 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 |---|---|---|
 | `/api/tasks` | POST | Board/ticket CRUD, execution, attachments, activity |
 | `/api/files` | GET | Serve local files by path (for ticket attachments) |
+| `/api/file-manager` | GET/POST/PUT/DELETE | File manager backend — list dirs, download/preview/serve files, create, upload (multipart), rename, move/copy, delete — scoped to `~/.openclaw/` |
 | `/api/agenda/events` | GET/POST | Agenda event CRUD |
 | `/api/agenda/events/stream` | GET | SSE stream for real-time agenda updates (via pg_notify) |
 | `/api/agenda/events/[id]` | GET/PATCH/DELETE | Single event operations |
