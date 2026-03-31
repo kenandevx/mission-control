@@ -92,6 +92,12 @@ import {
   ClipboardCopy,
   Loader2,
   Globe,
+  List,
+  LayoutGrid,
+  Info,
+  Save,
+
+
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -116,6 +122,13 @@ type FolderNode = {
 
 type SortField = "name" | "size" | "modified";
 type SortDir = "asc" | "desc";
+type ViewMode = "list" | "grid";
+
+type DirSizeInfo = {
+  size: number;
+  fileCount: number;
+  folderCount: number;
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -128,7 +141,6 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 function isTextFile(name: string): boolean {
-  // Files without extension (dotfiles like .env, .gitignore, etc.) are often text
   if (name.startsWith(".") && !name.includes(".", 1)) return true;
   const dot = name.lastIndexOf(".");
   if (dot === -1) return false;
@@ -233,6 +245,16 @@ async function apiPreview(id: string): Promise<string> {
   return data.content ?? "";
 }
 
+async function apiSave(id: string, content: string): Promise<void> {
+  const res = await fetch("/api/file-manager", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "save", id, content }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error ?? "Failed to save");
+}
+
 async function apiCreate(parentId: string, name: string, type: "file" | "folder"): Promise<void> {
   const res = await fetch("/api/file-manager", {
     method: "POST",
@@ -298,11 +320,17 @@ async function apiFetchFolders(dirPath: string): Promise<FolderNode[]> {
     .map((i) => ({ id: i.id, name: i.name, children: null, loading: false }));
 }
 
+async function apiDirSize(id: string): Promise<DirSizeInfo> {
+  const res = await fetch(`/api/file-manager?dirsize=true&id=${encodeURIComponent(id)}`, { cache: "reload" });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error ?? "Failed to get dir size");
+  return { size: data.size, fileCount: data.fileCount, folderCount: data.folderCount };
+}
+
 // ─── Sorting ─────────────────────────────────────────────────────────────────
 
 function sortItemsBy(items: FileItem[], field: SortField, dir: SortDir): FileItem[] {
   const sorted = [...items].sort((a, b) => {
-    // Folders always first
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
 
     let cmp = 0;
@@ -483,6 +511,27 @@ export function FileManagerClient(): React.JSX.Element {
   const dragCounterRef = useRef(0);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Inline editor state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [editOriginalContent, setEditOriginalContent] = useState("");
+  const [savingFile, setSavingFile] = useState(false);
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
+
+  // Folder preview state
+  const [dirSizeInfo, setDirSizeInfo] = useState<DirSizeInfo | null>(null);
+  const [dirSizeLoading, setDirSizeLoading] = useState(false);
+
+  // View mode state
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("fm-view-mode") as ViewMode) || "list";
+    }
+    return "list";
+  });
+
+
+
   // Dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createType, setCreateType] = useState<"file" | "folder">("folder");
@@ -497,16 +546,14 @@ export function FileManagerClient(): React.JSX.Element {
   const mountedRef = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const renamingRef = useRef(false); // guard against double-fire
+  const renamingRef = useRef(false);
 
   // ─── Derived ─────────────────────────────────────────────────────────────
 
   const filteredItems = useMemo(() => {
-    // Global search: show server results directly
     if (globalSearch && globalResults !== null) {
       return sortItemsBy(globalResults, sortField, sortDir);
     }
-    // Local filter
     let list = items;
     if (searchQuery.trim() && !globalSearch) {
       const q = searchQuery.toLowerCase();
@@ -544,6 +591,7 @@ export function FileManagerClient(): React.JSX.Element {
     setCurrentPath(p);
     setRenamingId(null);
     setPreviewItem(null);
+    setIsEditing(false);
     setSearchQuery("");
     setGlobalResults(null);
     setGlobalSearch(false);
@@ -578,10 +626,8 @@ export function FileManagerClient(): React.JSX.Element {
     setGlobalSearch((prev) => {
       const next = !prev;
       if (next && searchQuery.trim()) {
-        // Switching to global — trigger search
         runGlobalSearch(searchQuery);
       } else {
-        // Switching to local — clear global results
         setGlobalResults(null);
         setSearchLoading(false);
       }
@@ -592,6 +638,16 @@ export function FileManagerClient(): React.JSX.Element {
   const refresh = useCallback(() => {
     fetchDir(currentPath);
   }, [currentPath, fetchDir]);
+
+  // ─── View mode ─────────────────────────────────────────────────────────────
+
+  const toggleViewMode = useCallback(() => {
+    setViewMode((prev) => {
+      const next = prev === "list" ? "grid" : "list";
+      localStorage.setItem("fm-view-mode", next);
+      return next;
+    });
+  }, []);
 
   // ─── Selection ─────────────────────────────────────────────────────────────
 
@@ -632,6 +688,53 @@ export function FileManagerClient(): React.JSX.Element {
       : <ChevronDown className="h-3 w-3 ml-0.5 inline" />;
   }, [sortField, sortDir]);
 
+  // ─── Preview helpers ───────────────────────────────────────────────────────
+
+  const openPreview = useCallback((item: FileItem) => {
+    setPreviewItem(item);
+    setIsEditing(false);
+    setEditContent("");
+    setEditOriginalContent("");
+    setDirSizeInfo(null);
+    setDirSizeLoading(false);
+
+    if (item.type === "folder") {
+      // Load dir size
+      setDirSizeLoading(true);
+      apiDirSize(item.id)
+        .then((info) => { setDirSizeInfo(info); })
+        .catch(() => { setDirSizeInfo(null); })
+        .finally(() => { setDirSizeLoading(false); });
+      setPreviewContent(null);
+    } else if (isTextFile(item.name)) {
+      setPreviewLoading(true);
+      setPreviewContent(null);
+      apiPreview(item.id)
+        .then((content) => { setPreviewContent(content); })
+        .catch(() => { setPreviewContent("Error loading file"); })
+        .finally(() => { setPreviewLoading(false); });
+    } else {
+      setPreviewContent(null);
+    }
+  }, []);
+
+  const hasUnsavedChanges = isEditing && editContent !== editOriginalContent;
+
+  const handleClosePreview = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setDiscardDialogOpen(true);
+    } else {
+      setPreviewItem(null);
+      setIsEditing(false);
+    }
+  }, [hasUnsavedChanges]);
+
+  const handleConfirmDiscard = useCallback(() => {
+    setDiscardDialogOpen(false);
+    setPreviewItem(null);
+    setIsEditing(false);
+  }, []);
+
   // ─── Row click / navigate ──────────────────────────────────────────────────
 
   const handleRowClick = useCallback((item: FileItem) => {
@@ -639,19 +742,42 @@ export function FileManagerClient(): React.JSX.Element {
     if (item.type === "folder") {
       navigateTo(item.id);
     } else {
-      setPreviewItem(item);
-      if (isTextFile(item.name)) {
-        setPreviewLoading(true);
-        setPreviewContent(null);
-        apiPreview(item.id)
-          .then((content) => { setPreviewContent(content); })
-          .catch(() => { setPreviewContent("Error loading file"); })
-          .finally(() => { setPreviewLoading(false); });
-      } else {
-        setPreviewContent(null);
-      }
+      openPreview(item);
     }
-  }, [renamingId, navigateTo]);
+  }, [renamingId, navigateTo, openPreview]);
+
+  // ─── Inline editor ────────────────────────────────────────────────────────
+
+  const startEditing = useCallback(() => {
+    if (previewContent !== null) {
+      setEditContent(previewContent);
+      setEditOriginalContent(previewContent);
+      setIsEditing(true);
+    }
+  }, [previewContent]);
+
+  const cancelEditing = useCallback(() => {
+    setIsEditing(false);
+    setEditContent("");
+    setEditOriginalContent("");
+  }, []);
+
+  const handleSaveFile = useCallback(async () => {
+    if (!previewItem) return;
+    setSavingFile(true);
+    try {
+      await apiSave(previewItem.id, editContent);
+      toast.success("File saved");
+      setIsEditing(false);
+      setPreviewContent(editContent);
+      setEditOriginalContent(editContent);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSavingFile(false);
+    }
+  }, [previewItem, editContent, refresh]);
 
   // ─── Create ────────────────────────────────────────────────────────────────
 
@@ -695,13 +821,11 @@ export function FileManagerClient(): React.JSX.Element {
   }, []);
 
   const confirmRename = useCallback(async () => {
-    // Guard against double-fire from blur + Enter
     if (renamingRef.current) return;
     if (!renamingId || !renameValue.trim()) {
       setRenamingId(null);
       return;
     }
-    // Skip if name unchanged
     if (renameValue.trim() === renameOriginal) {
       setRenamingId(null);
       return;
@@ -834,7 +958,6 @@ export function FileManagerClient(): React.JSX.Element {
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
       ) return;
-      // Don't fire shortcuts when dialogs are open
       if (anyDialogOpen) return;
 
       if (e.key === "Backspace") {
@@ -868,6 +991,63 @@ export function FileManagerClient(): React.JSX.Element {
   const segments = useMemo(() => pathSegments(currentPath), [currentPath]);
   const selectedCount = selected.size;
   const totalCount = filteredItems.length;
+
+  // ─── Item icon helper ──────────────────────────────────────────────────────
+
+  const itemIcon = useCallback((item: FileItem, size: string = "h-4 w-4") => {
+    if (item.type === "folder") {
+      return <Folder className={cn(size, "shrink-0 text-primary/70")} />;
+    }
+    if (isImageFile(item.name)) {
+      return <FileImage className={cn(size, "shrink-0 text-emerald-500/70")} />;
+    }
+    if (isTextFile(item.name)) {
+      return <FileText className={cn(size, "shrink-0 text-muted-foreground")} />;
+    }
+    return <File className={cn(size, "shrink-0 text-muted-foreground")} />;
+  }, []);
+
+  // ─── Dropdown menu for items ───────────────────────────────────────────────
+
+  const renderDropdownMenu = useCallback((item: FileItem) => (
+    <DropdownMenuContent align="end">
+      <DropdownMenuItem onClick={() => openPreview(item)}>
+        <Info className="h-4 w-4 mr-2" />
+        Properties
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      {item.type === "file" && (
+        <DropdownMenuItem onClick={() => handleDownload(item.id)}>
+          <Download className="h-4 w-4 mr-2" />
+          Download
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem onClick={() => handleCopyPath(item.id)}>
+        <ClipboardCopy className="h-4 w-4 mr-2" />
+        Copy path
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => startRename(item)}>
+        <Pencil className="h-4 w-4 mr-2" />
+        Rename
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => openMoveCopy("copy", [item.id])}>
+        <Copy className="h-4 w-4 mr-2" />
+        Copy to…
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => openMoveCopy("move", [item.id])}>
+        <Scissors className="h-4 w-4 mr-2" />
+        Move to…
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        className="text-destructive focus:text-destructive"
+        onClick={() => openDeleteDialog([item.id])}
+      >
+        <Trash2 className="h-4 w-4 mr-2" />
+        Delete
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  ), [openPreview, handleDownload, handleCopyPath, startRename, openMoveCopy, openDeleteDialog]);
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -937,7 +1117,7 @@ export function FileManagerClient(): React.JSX.Element {
           <Button
             variant={globalSearch ? "default" : "ghost"}
             size="icon"
-            className={cn("h-8 w-8", globalSearch && "h-8 w-8")}
+            className="h-8 w-8"
             onClick={toggleGlobalSearch}
             title={globalSearch ? "Global search (on)" : "Global search (off)"}
           >
@@ -979,6 +1159,16 @@ export function FileManagerClient(): React.JSX.Element {
               <div className="w-px h-5 bg-border mx-1" />
             </>
           )}
+          {/* View toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={toggleViewMode}
+            title={viewMode === "list" ? "Switch to grid view" : "Switch to list view"}
+          >
+            {viewMode === "list" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
+          </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openCreateDialog("folder")} title="New Folder">
             <FolderPlus className="h-4 w-4" />
           </Button>
@@ -991,6 +1181,7 @@ export function FileManagerClient(): React.JSX.Element {
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refresh} title="Refresh (F5)">
             <RefreshCw className="h-4 w-4" />
           </Button>
+
           <input
             ref={fileInputRef}
             type="file"
@@ -1001,7 +1192,7 @@ export function FileManagerClient(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Content area */}
       <div className="bg-card rounded-xl border overflow-hidden">
         {loading ? (
           <div className="p-4 space-y-3">
@@ -1040,7 +1231,7 @@ export function FileManagerClient(): React.JSX.Element {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : (
+        ) : viewMode === "list" ? (
           <>
             <Table>
               <TableHeader>
@@ -1096,15 +1287,7 @@ export function FileManagerClient(): React.JSX.Element {
                     </TableCell>
                     <TableCell onClick={() => handleRowClick(item)}>
                       <div className="flex items-center gap-2 min-w-0">
-                        {item.type === "folder" ? (
-                          <Folder className="h-4 w-4 shrink-0 text-primary/70" />
-                        ) : isImageFile(item.name) ? (
-                          <FileImage className="h-4 w-4 shrink-0 text-emerald-500/70" />
-                        ) : isTextFile(item.name) ? (
-                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <File className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        )}
+                        {itemIcon(item)}
                         {renamingId === item.id ? (
                           <Input
                             ref={renameInputRef}
@@ -1149,38 +1332,7 @@ export function FileManagerClient(): React.JSX.Element {
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {item.type === "file" && (
-                            <DropdownMenuItem onClick={() => handleDownload(item.id)}>
-                              <Download className="h-4 w-4 mr-2" />
-                              Download
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem onClick={() => handleCopyPath(item.id)}>
-                            <ClipboardCopy className="h-4 w-4 mr-2" />
-                            Copy path
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => startRename(item)}>
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openMoveCopy("copy", [item.id])}>
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy to…
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openMoveCopy("move", [item.id])}>
-                            <Scissors className="h-4 w-4 mr-2" />
-                            Move to…
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onClick={() => openDeleteDialog([item.id])}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
+                        {renderDropdownMenu(item)}
                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
@@ -1210,14 +1362,111 @@ export function FileManagerClient(): React.JSX.Element {
               )}
             </div>
           </>
+        ) : (
+          /* Grid view */
+          <>
+            <div className="p-4">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+                {filteredItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "bg-card rounded-lg border p-3 cursor-pointer hover:bg-accent/50 transition-colors relative group",
+                      selected.has(item.id) && "ring-2 ring-primary bg-accent/30",
+                    )}
+                    onClick={() => handleRowClick(item)}
+                  >
+                    {/* Selection checkbox */}
+                    <div
+                      className="absolute top-2 left-2 z-10"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={selected.has(item.id)}
+                        onCheckedChange={() => toggleSelect(item.id)}
+                        className={cn(
+                          "h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity",
+                          selected.has(item.id) && "opacity-100",
+                        )}
+                        aria-label={`Select ${item.name}`}
+                      />
+                    </div>
+                    {/* Dropdown menu */}
+                    <div
+                      className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-6 w-6">
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        {renderDropdownMenu(item)}
+                      </DropdownMenu>
+                    </div>
+                    {/* Thumbnail / Icon */}
+                    <div className="flex items-center justify-center mb-2 pt-2">
+                      {item.type === "folder" ? (
+                        <Folder className="h-12 w-12 text-primary/60" />
+                      ) : isImageFile(item.name) ? (
+                        <div className="aspect-square w-full max-w-[100px] mx-auto overflow-hidden rounded-md bg-muted/20">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/file-manager?serve=true&id=${encodeURIComponent(item.id)}`}
+                            alt={item.name}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : isTextFile(item.name) ? (
+                        <FileText className="h-12 w-12 text-muted-foreground/60" />
+                      ) : (
+                        <File className="h-12 w-12 text-muted-foreground/60" />
+                      )}
+                    </div>
+                    {/* Name + size */}
+                    <p className="text-xs font-medium truncate text-center">{item.name}</p>
+                    <p className="text-[10px] text-muted-foreground text-center mt-0.5">
+                      {item.type === "file" ? formatSize(item.size) : "Folder"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="px-4 py-2 border-t text-xs text-muted-foreground flex items-center gap-2">
+              <span>{totalCount} result{totalCount !== 1 ? "s" : ""}</span>
+              {globalSearch && globalResults !== null && (
+                <>
+                  <span>·</span>
+                  <span className="flex items-center gap-1"><Globe className="h-3 w-3" /> Global search</span>
+                </>
+              )}
+              {selectedCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span>{selectedCount} selected</span>
+                </>
+              )}
+            </div>
+          </>
         )}
       </div>
 
-      {/* File Preview Sheet */}
-      <Sheet open={previewItem !== null} onOpenChange={(open) => { if (!open) setPreviewItem(null); }}>
-        <SheetContent className="sm:max-w-xl p-0 flex flex-col gap-0">
+      {/* File/Folder Preview Sheet */}
+      <Sheet
+        open={previewItem !== null}
+        onOpenChange={(open) => {
+          if (!open) handleClosePreview();
+        }}
+      >
+        <SheetContent
+          className="sm:max-w-xl p-0 flex flex-col gap-0 overflow-hidden"
+          showCloseButton={false}
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
             <SheetHeader className="p-0 space-y-0">
               <SheetTitle className="flex items-center gap-2.5 text-sm font-semibold">
                 {previewItem?.type === "folder" ? (
@@ -1241,7 +1490,9 @@ export function FileManagerClient(): React.JSX.Element {
                   <p className="truncate">{previewItem?.name}</p>
                   {previewItem && (
                     <p className="text-xs font-normal text-muted-foreground">
-                      {fileExtension(previewItem.name) ? `${fileExtension(previewItem.name)} File` : "File"} · {formatSize(previewItem.size)}
+                      {previewItem.type === "folder"
+                        ? "Folder"
+                        : `${fileExtension(previewItem.name) ? `${fileExtension(previewItem.name)} File` : "File"} · ${formatSize(previewItem.size)}`}
                     </p>
                   )}
                 </div>
@@ -1251,24 +1502,34 @@ export function FileManagerClient(): React.JSX.Element {
               variant="ghost"
               size="icon"
               className="h-8 w-8 shrink-0"
-              onClick={() => setPreviewItem(null)}
+              onClick={handleClosePreview}
             >
               <X className="h-4 w-4" />
             </Button>
           </div>
 
-          {previewItem && previewItem.type === "file" && (
-            <div className="flex flex-col flex-1 min-h-0">
+          {/* Folder preview */}
+          {previewItem && previewItem.type === "folder" && (
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
               {/* Quick actions bar */}
-              <div className="flex items-center gap-1.5 px-5 py-2.5 border-b bg-muted/30">
+              <div className="flex items-center gap-1.5 px-5 py-2.5 border-b bg-muted/30 shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
                   className="gap-1.5 h-7 text-xs"
-                  onClick={() => handleDownload(previewItem.id)}
+                  onClick={() => { setPreviewItem(null); navigateTo(previewItem.id); }}
                 >
-                  <Download className="h-3.5 w-3.5" />
-                  Download
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Open
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-7 text-xs"
+                  onClick={() => handleCopyPath(previewItem.id)}
+                >
+                  <ClipboardCopy className="h-3.5 w-3.5" />
+                  Copy path
                 </Button>
                 <Button
                   variant="outline"
@@ -1282,15 +1543,6 @@ export function FileManagerClient(): React.JSX.Element {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-1.5 h-7 text-xs"
-                  onClick={() => { openMoveCopy("copy", [previewItem.id]); }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
                   className="gap-1.5 h-7 text-xs text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
                   onClick={() => { openDeleteDialog([previewItem.id]); setPreviewItem(null); }}
                 >
@@ -1299,9 +1551,170 @@ export function FileManagerClient(): React.JSX.Element {
                 </Button>
               </div>
 
+              {/* Folder stats */}
+              <div className="flex-1 min-h-0 overflow-auto px-5 py-4">
+                <p className="text-xs font-semibold text-foreground mb-3">Folder Statistics</p>
+                {dirSizeLoading ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Calculating folder size…</span>
+                    </div>
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-4 w-36" />
+                  </div>
+                ) : dirSizeInfo ? (
+                  <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <HardDrive className="h-3 w-3" />
+                      <span>Total size</span>
+                    </div>
+                    <span className="text-foreground">{formatSize(dirSizeInfo.size)}{dirSizeInfo.size > 1024 ? ` (${dirSizeInfo.size.toLocaleString()} bytes)` : ""}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <File className="h-3 w-3" />
+                      <span>Files</span>
+                    </div>
+                    <span className="text-foreground">{dirSizeInfo.fileCount.toLocaleString()}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Folder className="h-3 w-3" />
+                      <span>Subfolders</span>
+                    </div>
+                    <span className="text-foreground">{dirSizeInfo.folderCount.toLocaleString()}</span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Could not calculate folder size</p>
+                )}
+              </div>
+
+              {/* Folder details */}
+              <div className="border-t bg-muted/20 shrink-0">
+                <div className="px-5 py-3">
+                  <p className="text-xs font-semibold text-foreground mb-2.5">Details</p>
+                  <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Folder className="h-3 w-3" />
+                      <span>Location</span>
+                    </div>
+                    <span className="text-foreground truncate font-mono text-[11px]">~/.openclaw{previewItem.id}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Calendar className="h-3 w-3" />
+                      <span>Created</span>
+                    </div>
+                    <span className="text-foreground">{formatDateTime(previewItem.created)}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      <span>Modified</span>
+                    </div>
+                    <span className="text-foreground">{formatDateTime(previewItem.modified)}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Shield className="h-3 w-3" />
+                      <span>Permissions</span>
+                    </div>
+                    <span className="text-foreground font-mono text-[11px]">{previewItem.permissions}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* File preview */}
+          {previewItem && previewItem.type === "file" && (
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* Quick actions bar / Edit actions bar */}
+              {isEditing ? (
+                <div className="flex items-center gap-1.5 px-5 py-2.5 border-b bg-muted/30 shrink-0">
+                  <Button
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={handleSaveFile}
+                    disabled={savingFile}
+                  >
+                    {savingFile ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    Save
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={cancelEditing}
+                    disabled={savingFile}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                  {hasUnsavedChanges && (
+                    <span className="text-[10px] text-amber-500 ml-2">Unsaved changes</span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-5 py-2.5 border-b bg-muted/30 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={() => handleDownload(previewItem.id)}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </Button>
+                  {isTextFile(previewItem.name) && previewContent !== null && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 h-7 text-xs"
+                      onClick={startEditing}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={() => { startRename(previewItem); setPreviewItem(null); }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Rename
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={() => { openMoveCopy("copy", [previewItem.id]); }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+                    onClick={() => { openDeleteDialog([previewItem.id]); setPreviewItem(null); }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                </div>
+              )}
+
               {/* Preview content area */}
               <div className="flex-1 min-h-0 overflow-hidden">
-                {isImageFile(previewItem.name) ? (
+                {isEditing ? (
+                  <div className="h-full flex flex-col p-5">
+                    <textarea
+                      className="flex-1 w-full rounded-lg border bg-muted/30 p-4 font-mono text-xs leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      spellCheck={false}
+                    />
+                  </div>
+                ) : isImageFile(previewItem.name) ? (
                   <ScrollArea className="h-full">
                     <div className="p-5 flex justify-center">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1346,52 +1759,75 @@ export function FileManagerClient(): React.JSX.Element {
               </div>
 
               {/* File details — Windows-style properties */}
-              <div className="border-t bg-muted/20">
-                <div className="px-5 py-3">
-                  <p className="text-xs font-semibold text-foreground mb-2.5">Details</p>
-                  <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <HardDrive className="h-3 w-3" />
-                      <span>Size</span>
-                    </div>
-                    <span className="text-foreground">{formatSize(previewItem.size)}{previewItem.size > 1024 ? ` (${previewItem.size.toLocaleString()} bytes)` : ""}</span>
+              {!isEditing && (
+                <div className="border-t bg-muted/20 shrink-0">
+                  <div className="px-5 py-3">
+                    <p className="text-xs font-semibold text-foreground mb-2.5">Details</p>
+                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <HardDrive className="h-3 w-3" />
+                        <span>Size</span>
+                      </div>
+                      <span className="text-foreground">{formatSize(previewItem.size)}{previewItem.size > 1024 ? ` (${previewItem.size.toLocaleString()} bytes)` : ""}</span>
 
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Folder className="h-3 w-3" />
-                      <span>Location</span>
-                    </div>
-                    <span className="text-foreground truncate font-mono text-[11px]">~/.openclaw{previewItem.id}</span>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Folder className="h-3 w-3" />
+                        <span>Location</span>
+                      </div>
+                      <span className="text-foreground truncate font-mono text-[11px]">~/.openclaw{previewItem.id}</span>
 
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Calendar className="h-3 w-3" />
-                      <span>Created</span>
-                    </div>
-                    <span className="text-foreground">{formatDateTime(previewItem.created)}</span>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        <span>Created</span>
+                      </div>
+                      <span className="text-foreground">{formatDateTime(previewItem.created)}</span>
 
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      <span>Modified</span>
-                    </div>
-                    <span className="text-foreground">{formatDateTime(previewItem.modified)}</span>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <span>Modified</span>
+                      </div>
+                      <span className="text-foreground">{formatDateTime(previewItem.modified)}</span>
 
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Eye className="h-3 w-3" />
-                      <span>Accessed</span>
-                    </div>
-                    <span className="text-foreground">{formatDateTime(previewItem.accessed)}</span>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Eye className="h-3 w-3" />
+                        <span>Accessed</span>
+                      </div>
+                      <span className="text-foreground">{formatDateTime(previewItem.accessed)}</span>
 
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Shield className="h-3 w-3" />
-                      <span>Permissions</span>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Shield className="h-3 w-3" />
+                        <span>Permissions</span>
+                      </div>
+                      <span className="text-foreground font-mono text-[11px]">{previewItem.permissions}</span>
                     </div>
-                    <span className="text-foreground font-mono text-[11px]">{previewItem.permissions}</span>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Discard unsaved changes dialog */}
+      <AlertDialog open={discardDialogOpen} onOpenChange={setDiscardDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes to this file. Are you sure you want to close without saving?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDiscard}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Create Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
@@ -1432,7 +1868,7 @@ export function FileManagerClient(): React.JSX.Element {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteIds.length === 1 ? "item" : `${deleteIds.length} items`}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. {deleteIds.length === 1
+              {deleteIds.length === 1
                 ? `"${items.find((i) => i.id === deleteIds[0])?.name ?? deleteIds[0]}" will be permanently deleted.`
                 : `${deleteIds.length} items will be permanently deleted.`}
             </AlertDialogDescription>

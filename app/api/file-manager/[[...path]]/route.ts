@@ -4,6 +4,7 @@ import path from "node:path";
 
 const ROOT = "/home/clawdbot/.openclaw";
 const MAX_PREVIEW_BYTES = 100 * 1024; // 100 KB
+const MAX_SAVE_BYTES = 1 * 1024 * 1024; // 1 MB
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
 
 type RouteContext = { params: Promise<{ path?: string[] | undefined }> };
@@ -56,7 +57,6 @@ type FileItem = {
 
 function toItem(filePath: string, id: string): FileItem | null {
   try {
-    // Use lstatSync to handle broken symlinks gracefully
     const stat = fs.statSync(filePath);
     return {
       id,
@@ -69,7 +69,6 @@ function toItem(filePath: string, id: string): FileItem | null {
       permissions: "0" + (stat.mode & 0o777).toString(8),
     };
   } catch {
-    // Broken symlink or permission error — try lstat for basic info
     try {
       const lstat = fs.lstatSync(filePath);
       return {
@@ -83,7 +82,7 @@ function toItem(filePath: string, id: string): FileItem | null {
         permissions: "0" + (lstat.mode & 0o777).toString(8),
       };
     } catch {
-      return null; // skip completely broken entries
+      return null;
     }
   }
 }
@@ -104,7 +103,7 @@ function searchRecursive(
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return; // permission denied or broken — skip
+    return;
   }
 
   for (const entry of entries) {
@@ -118,9 +117,51 @@ function searchRecursive(
       if (item) results.push(item);
     }
 
-    // Recurse into subdirectories
     if (entry.isDirectory()) {
       searchRecursive(entryPath, entryId, query, results, depth + 1);
+    }
+  }
+}
+
+// ─── Dir size calculation ────────────────────────────────────────────────────
+
+const MAX_DIRSIZE_DEPTH = 10;
+const MAX_DIRSIZE_FILES = 10000;
+
+type DirSizeResult = {
+  size: number;
+  fileCount: number;
+  folderCount: number;
+  scanned: number;
+};
+
+function calcDirSize(dir: string, depth: number, result: DirSizeResult): void {
+  if (depth > MAX_DIRSIZE_DEPTH || result.scanned >= MAX_DIRSIZE_FILES) return;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (result.scanned >= MAX_DIRSIZE_FILES) return;
+    result.scanned++;
+
+    const entryPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      result.folderCount++;
+      calcDirSize(entryPath, depth + 1, result);
+    } else {
+      try {
+        const stat = fs.statSync(entryPath);
+        result.size += stat.size;
+        result.fileCount++;
+      } catch {
+        result.fileCount++;
+      }
     }
   }
 }
@@ -253,6 +294,19 @@ export async function GET(
       return ok({ content });
     }
 
+    // Directory size calculation
+    if (searchParams.get("dirsize") === "true") {
+      const id = searchParams.get("id");
+      if (!id) return err("Missing id");
+      const resolved = resolveSafe(id);
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        return err("Not a directory", 400);
+      }
+      const result: DirSizeResult = { size: 0, fileCount: 0, folderCount: 0, scanned: 0 };
+      calcDirSize(resolved, 0, result);
+      return ok({ size: result.size, fileCount: result.fileCount, folderCount: result.folderCount });
+    }
+
     // Global search
     if (searchParams.get("search")) {
       const query = (searchParams.get("search") ?? "").toLowerCase().trim();
@@ -316,7 +370,7 @@ export async function POST(
         if (!(file instanceof globalThis.File)) continue;
         const nameErr = validateName(file.name);
         if (nameErr) continue;
-        if (file.size > MAX_UPLOAD_BYTES) continue; // skip oversized files
+        if (file.size > MAX_UPLOAD_BYTES) continue;
 
         const fileName = dedupName(parentPath, file.name);
         const filePath = path.join(parentPath, fileName);
@@ -333,40 +387,43 @@ export async function POST(
       return ok({ items: uploaded });
     }
 
-    // JSON create (file or folder)
+    // JSON actions
     const body = await request.json();
-    const { action, parentId, name, type } = body as {
-      action?: string;
-      parentId?: string;
-      name?: string;
-      type?: "file" | "folder";
-    };
+    const { action } = body as { action?: string };
 
-    if (action !== "create") return err("Unknown action");
-    if (!name) return err("Missing name");
-    if (!parentId) return err("Missing parentId");
+    if (action === "create") {
+      const { parentId, name, type } = body as {
+        parentId?: string;
+        name?: string;
+        type?: "file" | "folder";
+      };
+      if (!name) return err("Missing name");
+      if (!parentId) return err("Missing parentId");
 
-    const nameErr = validateName(name);
-    if (nameErr) return err(nameErr);
+      const nameErr = validateName(name);
+      if (nameErr) return err(nameErr);
 
-    const parentPath = resolveSafe(parentId);
-    if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
-      return err("Parent is not a directory");
+      const parentPath = resolveSafe(parentId);
+      if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
+        return err("Parent is not a directory");
+      }
+
+      const newId = (parentId === "/" ? "" : parentId) + "/" + name;
+      const newPath = resolveSafe(newId);
+
+      if (fs.existsSync(newPath)) return err("Already exists");
+
+      if (type === "folder") {
+        fs.mkdirSync(newPath, { recursive: true });
+      } else {
+        fs.writeFileSync(newPath, "");
+      }
+
+      const item = toItem(newPath, newId);
+      return ok({ item });
     }
 
-    const newId = (parentId === "/" ? "" : parentId) + "/" + name;
-    const newPath = resolveSafe(newId);
-
-    if (fs.existsSync(newPath)) return err("Already exists");
-
-    if (type === "folder") {
-      fs.mkdirSync(newPath, { recursive: true });
-    } else {
-      fs.writeFileSync(newPath, "");
-    }
-
-    const item = toItem(newPath, newId);
-    return ok({ item });
+    return err("Unknown action");
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     if (msg.includes("Access denied")) return err(msg, 403);
@@ -374,20 +431,31 @@ export async function POST(
   }
 }
 
-// ─── PUT (rename, move, copy) ────────────────────────────────────────────────
+// ─── PUT (rename, move, copy, save) ──────────────────────────────────────────
 
 export async function PUT(
   request: NextRequest,
 ): Promise<NextResponse> {
   try {
     const body = await request.json();
-    const { action, id, newName, ids, targetId } = body as {
+    const { action, id, newName, ids, targetId, content } = body as {
       action?: string;
       id?: string;
       newName?: string;
       ids?: string[];
       targetId?: string;
+      content?: string;
     };
+
+    if (action === "save" && id && typeof content === "string") {
+      if (content.length > MAX_SAVE_BYTES) return err("Content too large (max 1MB)");
+      const resolved = resolveSafe(id);
+      if (!fs.existsSync(resolved)) return err("Not found", 404);
+      if (fs.statSync(resolved).isDirectory()) return err("Cannot save to a directory");
+      if (!resolved.startsWith(ROOT + "/")) return err("Access denied", 403);
+      fs.writeFileSync(resolved, content, "utf-8");
+      return ok({});
+    }
 
     if (action === "rename" && id && newName) {
       if (isProtected(id)) return err("Cannot rename protected path", 403);
@@ -412,7 +480,6 @@ export async function PUT(
         return err("Target is not a directory");
       }
 
-      // Block moving protected paths
       if (action === "move") {
         const blocked = ids.find((i) => isProtected(i));
         if (blocked) return err(`Cannot move protected path: ${blocked}`, 403);
@@ -423,11 +490,10 @@ export async function PUT(
         const src = resolveSafe(fileId);
         if (!fs.existsSync(src)) continue;
 
-        // Block moving/copying a folder into itself or a subfolder of itself
         if (fs.statSync(src).isDirectory()) {
           const targetAbs = resolveSafe(targetId);
           if (targetAbs === src || targetAbs.startsWith(src + "/")) {
-            continue; // skip — would cause corruption or infinite recursion
+            continue;
           }
         }
 
@@ -443,7 +509,6 @@ export async function PUT(
             fs.copyFileSync(src, dest);
           }
         } else {
-          // Move: check dest doesn't already exist (no overwrite)
           if (fs.existsSync(dest) && dest !== src) continue;
           fs.renameSync(src, dest);
         }
@@ -473,7 +538,6 @@ export async function DELETE(
 
     if (!ids || ids.length === 0) return err("Missing ids");
 
-    // Block deleting protected paths
     const blocked = ids.find((i) => isProtected(i));
     if (blocked) return err(`Cannot delete protected path: ${blocked}`, 403);
 
@@ -481,7 +545,6 @@ export async function DELETE(
     for (const id of ids) {
       const p = resolveSafe(id);
       if (!fs.existsSync(p)) continue;
-      // Extra safety: never delete ROOT itself
       if (p === ROOT) continue;
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
