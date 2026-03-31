@@ -1,8 +1,77 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execSync } from "node:child_process";
 
 const ROOT = "/home/clawdbot/.openclaw";
+
+// ─── Ownership helpers ───────────────────────────────────────────────────────
+
+const PROCESS_UID = process.getuid?.() ?? 0;
+const PROCESS_GID = process.getgid?.() ?? 0;
+
+/** Cache uid/gid → name lookups */
+const uidNameCache = new Map<number, string>();
+const gidNameCache = new Map<number, string>();
+
+function getUidName(uid: number): string {
+  const cached = uidNameCache.get(uid);
+  if (cached !== undefined) return cached;
+  try {
+    const name = execSync(`id -nu ${uid} 2>/dev/null`, { timeout: 2000 }).toString().trim();
+    uidNameCache.set(uid, name);
+    return name;
+  } catch {
+    const fallback = String(uid);
+    uidNameCache.set(uid, fallback);
+    return fallback;
+  }
+}
+
+function getGidName(gid: number): string {
+  const cached = gidNameCache.get(gid);
+  if (cached !== undefined) return cached;
+  try {
+    const name = execSync(`getent group ${gid} 2>/dev/null | cut -d: -f1`, { timeout: 2000 }).toString().trim() || String(gid);
+    gidNameCache.set(gid, name);
+    return name;
+  } catch {
+    const fallback = String(gid);
+    gidNameCache.set(gid, fallback);
+    return fallback;
+  }
+}
+
+/** Fix ownership to match the running process user if it doesn't match */
+function ensureOwnership(filePath: string): void {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.uid !== PROCESS_UID || stat.gid !== PROCESS_GID) {
+      fs.chownSync(filePath, PROCESS_UID, PROCESS_GID);
+    }
+  } catch {
+    // best effort — may lack permission to chown
+  }
+}
+
+/** Recursively fix ownership for directories (e.g. after cpSync) */
+function ensureOwnershipRecursive(dirPath: string): void {
+  ensureOwnership(dirPath);
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        ensureOwnershipRecursive(entryPath);
+      } else {
+        ensureOwnership(entryPath);
+      }
+    }
+  } catch {
+    // best effort
+  }
+}
 const MAX_PREVIEW_BYTES = 100 * 1024; // 100 KB
 const MAX_SAVE_BYTES = 1 * 1024 * 1024; // 1 MB
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
@@ -53,6 +122,9 @@ type FileItem = {
   created: string;
   accessed: string;
   permissions: string;
+  owner: string;
+  group: string;
+  ownerMismatch: boolean;
 };
 
 function toItem(filePath: string, id: string): FileItem | null {
@@ -67,6 +139,9 @@ function toItem(filePath: string, id: string): FileItem | null {
       created: stat.birthtime.toISOString(),
       accessed: stat.atime.toISOString(),
       permissions: "0" + (stat.mode & 0o777).toString(8),
+      owner: getUidName(stat.uid),
+      group: getGidName(stat.gid),
+      ownerMismatch: stat.uid !== PROCESS_UID || stat.gid !== PROCESS_GID,
     };
   } catch {
     try {
@@ -80,6 +155,9 @@ function toItem(filePath: string, id: string): FileItem | null {
         created: lstat.birthtime.toISOString(),
         accessed: lstat.atime.toISOString(),
         permissions: "0" + (lstat.mode & 0o777).toString(8),
+        owner: getUidName(lstat.uid),
+        group: getGidName(lstat.gid),
+        ownerMismatch: lstat.uid !== PROCESS_UID || lstat.gid !== PROCESS_GID,
       };
     } catch {
       return null;
@@ -378,6 +456,7 @@ export async function POST(
 
         const buf = Buffer.from(await file.arrayBuffer());
         fs.writeFileSync(filePath, buf);
+        ensureOwnership(filePath);
 
         const newId = (parentId === "/" ? "" : parentId) + "/" + fileName;
         const item = toItem(filePath, newId);
@@ -418,6 +497,7 @@ export async function POST(
       } else {
         fs.writeFileSync(newPath, "");
       }
+      ensureOwnership(newPath);
 
       const item = toItem(newPath, newId);
       return ok({ item });
@@ -454,6 +534,7 @@ export async function PUT(
       if (fs.statSync(resolved).isDirectory()) return err("Cannot save to a directory");
       if (!resolved.startsWith(ROOT + "/")) return err("Access denied", 403);
       fs.writeFileSync(resolved, content, "utf-8");
+      ensureOwnership(resolved);
       return ok({});
     }
 
@@ -469,6 +550,7 @@ export async function PUT(
       if (!dest.startsWith(ROOT)) return err("Access denied", 403);
       if (fs.existsSync(dest)) return err("A file with that name already exists");
       fs.renameSync(oldPath, dest);
+      ensureOwnership(dest);
       const renamedId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
       const item = toItem(dest, renamedId);
       return ok({ item });
@@ -505,12 +587,19 @@ export async function PUT(
         if (action === "copy") {
           if (fs.statSync(src).isDirectory()) {
             fs.cpSync(src, dest, { recursive: true });
+            ensureOwnershipRecursive(dest);
           } else {
             fs.copyFileSync(src, dest);
+            ensureOwnership(dest);
           }
         } else {
           if (fs.existsSync(dest) && dest !== src) continue;
           fs.renameSync(src, dest);
+          if (fs.statSync(dest).isDirectory()) {
+            ensureOwnershipRecursive(dest);
+          } else {
+            ensureOwnership(dest);
+          }
         }
         const newId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
         const item = toItem(dest, newId);

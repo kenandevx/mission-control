@@ -111,6 +111,9 @@ type FileItem = {
   created: string;
   accessed: string;
   permissions: string;
+  owner: string;
+  group: string;
+  ownerMismatch: boolean;
 };
 
 type FolderNode = {
@@ -1258,6 +1261,9 @@ export function FileManagerClient(): React.JSX.Element {
                       Size {sortIndicator("size")}
                     </button>
                   </TableHead>
+                  <TableHead className="w-28 hidden lg:table-cell">
+                    <span className="text-muted-foreground">Owner</span>
+                  </TableHead>
                   <TableHead className="w-28 hidden md:table-cell">
                     <button type="button" className="flex items-center hover:text-foreground transition-colors" onClick={() => handleSort("modified")}>
                       Modified {sortIndicator("modified")}
@@ -1321,6 +1327,15 @@ export function FileManagerClient(): React.JSX.Element {
                     )}
                     <TableCell className="hidden sm:table-cell text-muted-foreground text-xs">
                       {item.type === "file" ? formatSize(item.size) : "—"}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs">
+                      <span className={cn(
+                        "inline-flex items-center gap-1 font-mono text-[11px]",
+                        item.ownerMismatch ? "text-amber-500" : "text-muted-foreground",
+                      )}>
+                        {item.ownerMismatch && <AlertCircle className="h-3 w-3 shrink-0" />}
+                        {item.owner}:{item.group}
+                      </span>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground text-xs">
                       {relativeTime(item.modified)}
@@ -1616,6 +1631,21 @@ export function FileManagerClient(): React.JSX.Element {
                       <span>Permissions</span>
                     </div>
                     <span className="text-foreground font-mono text-[11px]">{previewItem.permissions}</span>
+
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Shield className="h-3 w-3" />
+                      <span>Owner</span>
+                    </div>
+                    <span className={cn(
+                      "font-mono text-[11px]",
+                      previewItem.ownerMismatch ? "text-amber-500 flex items-center gap-1" : "text-foreground",
+                    )}>
+                      {previewItem.ownerMismatch && <AlertCircle className="h-3 w-3 shrink-0 inline" />}
+                      {previewItem.owner}:{previewItem.group}
+                      {previewItem.ownerMismatch && (
+                        <span className="text-[10px] ml-1 font-sans">(mismatch)</span>
+                      )}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1799,6 +1829,21 @@ export function FileManagerClient(): React.JSX.Element {
                         <span>Permissions</span>
                       </div>
                       <span className="text-foreground font-mono text-[11px]">{previewItem.permissions}</span>
+
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Shield className="h-3 w-3" />
+                        <span>Owner</span>
+                      </div>
+                      <span className={cn(
+                        "font-mono text-[11px]",
+                        previewItem.ownerMismatch ? "text-amber-500 flex items-center gap-1" : "text-foreground",
+                      )}>
+                        {previewItem.ownerMismatch && <AlertCircle className="h-3 w-3 shrink-0 inline" />}
+                        {previewItem.owner}:{previewItem.group}
+                        {previewItem.ownerMismatch && (
+                          <span className="text-[10px] ml-1 font-sans">(mismatch)</span>
+                        )}
+                      </span>
                     </div>
                   </div>
                 </div>
