@@ -91,6 +91,7 @@ import {
   AlertCircle,
   ClipboardCopy,
   Loader2,
+  Globe,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -198,6 +199,12 @@ function parentPath(p: string): string {
   return idx <= 0 ? "/" : p.slice(0, idx);
 }
 
+function parentFolder(id: string): string {
+  const idx = id.lastIndexOf("/");
+  if (idx <= 0) return "/";
+  return id.slice(0, idx);
+}
+
 function pathSegments(p: string): { label: string; path: string }[] {
   if (p === "/") return [];
   const parts = p.split("/").filter(Boolean);
@@ -275,6 +282,13 @@ async function apiUpload(parentId: string, files: globalThis.File[]): Promise<vo
   const res = await fetch("/api/file-manager", { method: "POST", body: form });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Upload failed");
+}
+
+async function apiSearch(query: string): Promise<FileItem[]> {
+  const res = await fetch(`/api/file-manager?search=${encodeURIComponent(query)}`, { cache: "reload" });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error ?? "Search failed");
+  return data.items ?? [];
 }
 
 async function apiFetchFolders(dirPath: string): Promise<FolderNode[]> {
@@ -459,11 +473,15 @@ export function FileManagerClient(): React.JSX.Element {
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [globalSearch, setGlobalSearch] = useState(false);
+  const [globalResults, setGlobalResults] = useState<FileItem[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [dragging, setDragging] = useState(false);
-  const [mutating, setMutating] = useState(false); // loading for create/delete/move/upload
+  const [mutating, setMutating] = useState(false);
   const dragCounterRef = useRef(0);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -484,13 +502,18 @@ export function FileManagerClient(): React.JSX.Element {
   // ─── Derived ─────────────────────────────────────────────────────────────
 
   const filteredItems = useMemo(() => {
+    // Global search: show server results directly
+    if (globalSearch && globalResults !== null) {
+      return sortItemsBy(globalResults, sortField, sortDir);
+    }
+    // Local filter
     let list = items;
-    if (searchQuery.trim()) {
+    if (searchQuery.trim() && !globalSearch) {
       const q = searchQuery.toLowerCase();
       list = list.filter((i) => i.name.toLowerCase().includes(q));
     }
     return sortItemsBy(list, sortField, sortDir);
-  }, [items, searchQuery, sortField, sortDir]);
+  }, [items, searchQuery, sortField, sortDir, globalSearch, globalResults]);
 
   const anyDialogOpen = createDialogOpen || deleteDialogOpen || moveCopyDialogOpen || previewItem !== null;
 
@@ -522,8 +545,49 @@ export function FileManagerClient(): React.JSX.Element {
     setRenamingId(null);
     setPreviewItem(null);
     setSearchQuery("");
+    setGlobalResults(null);
+    setGlobalSearch(false);
     fetchDir(p);
   }, [fetchDir]);
+
+  // Debounced global search
+  const runGlobalSearch = useCallback((query: string) => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!query.trim()) {
+      setGlobalResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchTimerRef.current = setTimeout(() => {
+      apiSearch(query.trim())
+        .then((results) => { setGlobalResults(results); })
+        .catch(() => { setGlobalResults([]); })
+        .finally(() => { setSearchLoading(false); });
+    }, 300);
+  }, []);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    if (globalSearch) {
+      runGlobalSearch(value);
+    }
+  }, [globalSearch, runGlobalSearch]);
+
+  const toggleGlobalSearch = useCallback(() => {
+    setGlobalSearch((prev) => {
+      const next = !prev;
+      if (next && searchQuery.trim()) {
+        // Switching to global — trigger search
+        runGlobalSearch(searchQuery);
+      } else {
+        // Switching to local — clear global results
+        setGlobalResults(null);
+        setSearchLoading(false);
+      }
+      return next;
+    });
+  }, [searchQuery, runGlobalSearch]);
 
   const refresh = useCallback(() => {
     fetchDir(currentPath);
@@ -856,14 +920,29 @@ export function FileManagerClient(): React.JSX.Element {
         <div className="flex-1" />
 
         {/* Search */}
-        <div className="relative w-44">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="Filter…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 text-xs"
-          />
+        <div className="flex items-center gap-1">
+          <div className="relative w-52">
+            {searchLoading ? (
+              <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground animate-spin pointer-events-none" />
+            ) : (
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            )}
+            <Input
+              placeholder={globalSearch ? "Search all folders…" : "Filter…"}
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <Button
+            variant={globalSearch ? "default" : "ghost"}
+            size="icon"
+            className={cn("h-8 w-8", globalSearch && "h-8 w-8")}
+            onClick={toggleGlobalSearch}
+            title={globalSearch ? "Global search (on)" : "Global search (off)"}
+          >
+            <Globe className="h-3.5 w-3.5" />
+          </Button>
         </div>
 
         {/* Actions */}
@@ -953,9 +1032,11 @@ export function FileManagerClient(): React.JSX.Element {
               <FolderOpen className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
               <EmptyTitle>{searchQuery ? "No matches" : "Empty folder"}</EmptyTitle>
               <EmptyDescription>
-                {searchQuery
-                  ? `No files matching "${searchQuery}"`
-                  : "This directory has no files or folders. Drag files here or use the toolbar to create one."}
+                {searchQuery && globalSearch
+                  ? `No files matching "${searchQuery}" across all folders`
+                  : searchQuery
+                    ? `No files matching "${searchQuery}"`
+                    : "This directory has no files or folders. Drag files here or use the toolbar to create one."}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -976,6 +1057,11 @@ export function FileManagerClient(): React.JSX.Element {
                       Name {sortIndicator("name")}
                     </button>
                   </TableHead>
+                  {globalSearch && globalResults !== null && (
+                    <TableHead className="hidden sm:table-cell">
+                      <span className="text-muted-foreground">Location</span>
+                    </TableHead>
+                  )}
                   <TableHead className="w-24 hidden sm:table-cell">
                     <button type="button" className="flex items-center hover:text-foreground transition-colors" onClick={() => handleSort("size")}>
                       Size {sortIndicator("size")}
@@ -1038,6 +1124,18 @@ export function FileManagerClient(): React.JSX.Element {
                         )}
                       </div>
                     </TableCell>
+                    {globalSearch && globalResults !== null && (
+                      <TableCell className="hidden sm:table-cell text-muted-foreground text-xs">
+                        <button
+                          type="button"
+                          className="hover:text-foreground hover:underline transition-colors truncate max-w-40 block text-left"
+                          onClick={(e) => { e.stopPropagation(); navigateTo(parentFolder(item.id)); }}
+                          title={`Go to ${parentFolder(item.id)}`}
+                        >
+                          {parentFolder(item.id) === "/" ? "/" : parentFolder(item.id)}
+                        </button>
+                      </TableCell>
+                    )}
                     <TableCell className="hidden sm:table-cell text-muted-foreground text-xs">
                       {item.type === "file" ? formatSize(item.size) : "—"}
                     </TableCell>
@@ -1091,14 +1189,20 @@ export function FileManagerClient(): React.JSX.Element {
             </Table>
             {/* Footer: item count */}
             <div className="px-4 py-2 border-t text-xs text-muted-foreground flex items-center gap-2">
-              <span>{totalCount} item{totalCount !== 1 ? "s" : ""}</span>
+              <span>{totalCount} result{totalCount !== 1 ? "s" : ""}</span>
+              {globalSearch && globalResults !== null && (
+                <>
+                  <span>·</span>
+                  <span className="flex items-center gap-1"><Globe className="h-3 w-3" /> Global search</span>
+                </>
+              )}
               {selectedCount > 0 && (
                 <>
                   <span>·</span>
                   <span>{selectedCount} selected</span>
                 </>
               )}
-              {searchQuery && items.length !== totalCount && (
+              {!globalSearch && searchQuery && items.length !== totalCount && (
                 <>
                   <span>·</span>
                   <span>{items.length} total</span>

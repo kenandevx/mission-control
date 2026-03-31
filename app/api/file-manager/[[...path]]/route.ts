@@ -88,6 +88,43 @@ function toItem(filePath: string, id: string): FileItem | null {
   }
 }
 
+const MAX_SEARCH_RESULTS = 200;
+const MAX_SEARCH_DEPTH = 12;
+
+function searchRecursive(
+  dir: string,
+  dirId: string,
+  query: string,
+  results: FileItem[],
+  depth: number,
+): void {
+  if (depth > MAX_SEARCH_DEPTH || results.length >= MAX_SEARCH_RESULTS) return;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // permission denied or broken — skip
+  }
+
+  for (const entry of entries) {
+    if (results.length >= MAX_SEARCH_RESULTS) return;
+
+    const entryId = (dirId === "/" ? "" : dirId) + "/" + entry.name;
+    const entryPath = path.join(dir, entry.name);
+
+    if (entry.name.toLowerCase().includes(query)) {
+      const item = toItem(entryPath, entryId);
+      if (item) results.push(item);
+    }
+
+    // Recurse into subdirectories
+    if (entry.isDirectory()) {
+      searchRecursive(entryPath, entryId, query, results, depth + 1);
+    }
+  }
+}
+
 function sortItems(items: FileItem[]): FileItem[] {
   return items.sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
@@ -214,6 +251,15 @@ export async function GET(
         if (fd !== null) fs.closeSync(fd);
       }
       return ok({ content });
+    }
+
+    // Global search
+    if (searchParams.get("search")) {
+      const query = (searchParams.get("search") ?? "").toLowerCase().trim();
+      if (!query) return ok({ items: [] });
+      const results: FileItem[] = [];
+      searchRecursive(ROOT, "/", query, results, 0);
+      return ok({ items: sortItems(results) });
     }
 
     // List directory
