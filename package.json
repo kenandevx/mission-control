@@ -3,7 +3,7 @@
   "version": "1.6.0",
   "private": true,
   "scripts": {
-    "dev": "docker compose up -d db db-init && bash scripts/mc-services.sh start --dev && next dev",
+    "dev": "docker compose up -d db db-init && bash scripts/mc-services.sh restart --dev",
     "dev:stop": "docker compose stop db && bash scripts/mc-services.sh stop",
     "dev:db": "docker compose up -d db db-init",
     "dev:services": "bash scripts/mc-services.sh start",
