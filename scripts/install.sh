@@ -266,32 +266,8 @@ step "Starting all services (task-worker, gateway-sync, bridge-logger, agenda-sc
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'
 
 # ── Convenience symlinks ────────────────────────────────────
-step "Creating convenience symlinks in /usr/local/bin ..."
-
-create_link() {
-  local source_file="$1"
-  local symlink="$2"
-
-  if [ ! -f "$source_file" ]; then
-    return 0
-  fi
-
-  chmod +x "$source_file" || true
-
-  if ln -sf "$source_file" "$symlink" 2>/dev/null; then
-    info "  $symlink"
-  else
-    warn "Could not create $symlink (permission denied). Skipping."
-  fi
-}
-
-create_link "$INSTALL_DIR/scripts/install.sh" "/usr/local/bin/mc-install"
-create_link "$INSTALL_DIR/scripts/clean.sh" "/usr/local/bin/mc-clean"
-create_link "$INSTALL_DIR/scripts/update.sh" "/usr/local/bin/mc-update"
-create_link "$INSTALL_DIR/scripts/uninstall.sh" "/usr/local/bin/mc-uninstall"
-create_link "$INSTALL_DIR/scripts/mc-services.sh" "/usr/local/bin/mc-services"
-create_link "$INSTALL_DIR/dev.sh" "/usr/local/bin/mc-dev"
-
+info "Skipping /usr/local/bin symlink creation."
+info "Use the scripts directly from: $INSTALL_DIR/scripts"
 echo ""
 
 # ── Done ────────────────────────────────────────────────────
@@ -311,6 +287,7 @@ echo "  agenda-worker         — processes agenda runs"
 echo "  Next.js (host)        — production server, port 3000"
 echo ""
 echo "Commands:"
+echo "  cd $INSTALL_DIR"
 echo "  bash scripts/mc-services.sh stop        — stop all services"
 echo "  bash scripts/mc-services.sh status      — check status"
 echo "  bash scripts/update.sh                  — pull latest + rebuild + restart"
