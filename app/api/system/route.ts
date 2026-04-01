@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (action === "update") {
+    if (action === "updateSystem" || action === "update") {
       try {
         const sql = (await import("@/lib/local-db")).getSql();
         const running = await sql`

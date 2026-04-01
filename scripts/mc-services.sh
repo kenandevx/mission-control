@@ -48,7 +48,7 @@ SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
 SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
 SERVICE_CMDS[agenda-worker]="node scripts/agenda-worker.mjs"
 
-NEXTJS_DEV_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=development npm run dev"
+NEXTJS_DEV_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=development npx next dev"
 NEXTJS_PROD_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=production npm run start"
 SERVICE_CMDS[nextjs]="$NEXTJS_PROD_CMD"
 
