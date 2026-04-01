@@ -92,7 +92,7 @@ start_service() {
   if [ "$svc" = "nextjs" ]; then
     if command -v fuser >/dev/null 2>&1; then
       fuser -k 3000/tcp 2>/dev/null || true
-      for i in $(seq 1 10); do
+      for _ in $(seq 1 10); do
         fuser 3000/tcp >/dev/null 2>&1 || break
         sleep 0.5
       done
@@ -107,12 +107,11 @@ start_service() {
   echo -n "  Starting $svc... "
   cd "$PROJECT_ROOT"
 
-  (
-    exec bash -c "$cmd" >> "$log_file" 2>&1
-  ) &
+  nohup bash -c "$cmd" >> "$log_file" 2>&1 < /dev/null &
   local new_pid=$!
   echo "$new_pid" > "$pid_file"
-  sleep 0.5
+  sleep 1
+
   if pid_running "$new_pid"; then
     echo "pid $new_pid"
   else
@@ -130,14 +129,14 @@ stop_service() {
 
   if [ -n "$pid" ] && pid_running "$pid"; then
     echo -n "  Stopping $svc (pid $pid)... "
-    kill "$pid" 2>/dev/null
+    kill "$pid" 2>/dev/null || true
     local count=0
     while pid_running "$pid" && [ $count -lt 10 ]; do
       sleep 0.5
       count=$((count + 1))
     done
     if pid_running "$pid"; then
-      kill -9 "$pid" 2>/dev/null
+      kill -9 "$pid" 2>/dev/null || true
       sleep 0.2
     fi
     echo "stopped"
@@ -174,7 +173,10 @@ status_service() {
 
   if pid_running "$(cat "$pid_file" 2>/dev/null)"; then
     echo "  $svc — RUNNING (pid $(cat "$pid_file"))"
-    [ -f "$log_file" ] && echo "    Last:" && tail -2 "$log_file" | sed 's/^/      /'
+    if [ -f "$log_file" ]; then
+      echo "    Last:"
+      tail -2 "$log_file" | sed 's/^/      /'
+    fi
   else
     echo "  $svc — STOPPED"
   fi
@@ -223,7 +225,7 @@ run_watchdog() {
           fi
         fi
 
-        ( exec bash -c "$cmd" >> "$log_file" 2>&1 ) &
+        nohup bash -c "$cmd" >> "$log_file" 2>&1 < /dev/null &
         local new_pid=$!
         echo "$new_pid" > "$pid_file"
         sleep 1
@@ -243,7 +245,7 @@ start_watchdog() {
     echo "  watchdog — already running (pid $(cat "$WATCHDOG_PID_FILE"))"
     return 0
   fi
-  run_watchdog &
+  nohup bash -c "$(declare -f run_watchdog pid_running kill_port); run_watchdog" >> "$WATCHDOG_LOG" 2>&1 < /dev/null &
   local wpid=$!
   echo "$wpid" > "$WATCHDOG_PID_FILE"
   echo "  watchdog — started (pid $wpid, checking every ${WATCHDOG_INTERVAL}s)"
@@ -253,7 +255,7 @@ stop_watchdog() {
   local wpid
   wpid="$(cat "$WATCHDOG_PID_FILE" 2>/dev/null)" || true
   if [ -n "$wpid" ] && pid_running "$wpid"; then
-    kill "$wpid" 2>/dev/null
+    kill "$wpid" 2>/dev/null || true
     echo "  watchdog — stopped"
   else
     echo "  watchdog — not running"
