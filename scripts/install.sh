@@ -69,7 +69,6 @@ if [ "$(printf '%s\n' "20.10.0" "$DOCKER_VERSION" | sort -V | head -n1)" != "20.
 fi
 info "Docker $DOCKER_VERSION — OK"
 
-# Check for Redis (required for BullMQ)
 if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
   warn "Redis not found. BullMQ requires Redis."
   warn "Install: sudo apt install redis-server"
@@ -147,20 +146,30 @@ step "Starting database container ..."
 docker compose up -d db
 docker compose up -d db-init
 
-step "Waiting for database to be ready ..."
+step "Waiting for database to be healthy ..."
 db_ready=0
 for i in $(seq 1 "$DB_READY_TIMEOUT"); do
-  if ! docker compose ps db 2>/dev/null | grep -q "running\|healthy\|Up"; then
+  db_state="$(docker compose ps db 2>/dev/null || true)"
+
+  if [ -z "$db_state" ]; then
     echo ""
-    err "Database container is not running."
+    err "Database service not found in docker compose status output."
     docker compose ps || true
     docker compose logs db --tail=100 || true
     exit 1
   fi
 
-  if docker compose exec -T db pg_isready -U openclaw -d mission_control >/dev/null 2>&1; then
+  if echo "$db_state" | grep -q "Up .*healthy\|healthy"; then
     db_ready=1
     break
+  fi
+
+  if echo "$db_state" | grep -q "Exited\|Dead"; then
+    echo ""
+    err "Database container stopped unexpectedly."
+    docker compose ps || true
+    docker compose logs db --tail=100 || true
+    exit 1
   fi
 
   printf "."
@@ -169,13 +178,13 @@ done
 echo ""
 
 if [ "$db_ready" -ne 1 ]; then
-  err "Timed out waiting for database to be ready after ${DB_READY_TIMEOUT}s."
+  err "Timed out waiting for database health after ${DB_READY_TIMEOUT}s."
   docker compose ps || true
   docker compose logs db --tail=100 || true
   exit 1
 fi
 
-info "Database ready."
+info "Database healthy."
 
 step "Waiting for schema initialization ..."
 db_init_done=0
@@ -201,13 +210,7 @@ for i in $(seq 1 "$DB_INIT_TIMEOUT"); do
     exit 1
   fi
 
-  if echo "$db_init_status" | grep -q "Up"; then
-    printf "."
-    sleep 1
-    continue
-  fi
-
-  if echo "$db_init_status" | grep -q "Created\|Restarting\|Running"; then
+  if echo "$db_init_status" | grep -q "Up\|Created\|Restarting\|Running"; then
     printf "."
     sleep 1
     continue
