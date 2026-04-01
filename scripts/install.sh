@@ -65,13 +65,8 @@ if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/nul
   warn "Install: sudo apt install redis-server"
 fi
 
-step "Checking SSH access to GitHub ..."
-if ssh -T git@github.com 2>/dev/null || true | grep -q "successfully"; then
-  info "SSH access to GitHub — OK"
-else
-  warn "No SSH access to GitHub. Switching to HTTPS clone."
-  GIT_REPO="https://github.com/kenandevx/mission-control.git"
-fi
+step "Using HTTPS clone (SSH not required)"
+GIT_REPO="https://github.com/kenandevx/mission-control.git"
 echo ""
 
 # ── Clone or update ────────────────────────────────────────
