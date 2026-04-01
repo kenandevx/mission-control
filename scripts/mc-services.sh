@@ -9,7 +9,7 @@
 #   mc-services stop          — stop all services
 #   mc-services restart       — stop then start
 #   mc-services restart --dev — stop then start, with Next.js in dev mode
-#   mc-services status        — show running status + recent log lines
+#   mc-services status        — show running status + recent log lines 
 # ============================================================
 set -euo pipefail
 
