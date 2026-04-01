@@ -554,14 +554,18 @@ const agendaWorker = new Worker(
         sql,
       });
 
+      // Force needs_retry if the output or error contains known provider rejection messages,
+      // even when the CLI didn't throw a typed error (Gazoh confirmed string match required).
+      const forcedFailure = !r.success || matchesProviderRejection(r.error) || matchesProviderRejection(r.output);
       results.push({
         type: "composed_run",
-        success: r.success,
+        success: forcedFailure ? false : r.success,
         summary: r.output.slice(0, 200),
         steps: composedSteps.length,
+        forcedFailure,
       });
       // Artifacts live in runArtifactDir — cleaned up on failure via cleanupRunArtifacts
-      return { success: r.success, results };
+      return { success: forcedFailure ? false : r.success, results };
     }
 
     try {
@@ -569,6 +573,16 @@ const agendaWorker = new Worker(
       let run = await runAllSteps();
       overallSuccess = run.success;
       stepSummaries.push(...run.results);
+
+      // Check all step outputs/errors for known provider rejection messages that should
+      // force needs_retry even if the step technically "succeeded" (Gazoh confirmed string match required).
+      for (const step of run.results) {
+        if (step.forcedFailure || matchesProviderRejection(step.summary)) {
+          overallSuccess = false;
+          stepSummaries.unshift({ type: "provider_rejection", success: false, stepTitle: "Provider Rejection", summary: `❌ Forced needs_retry: ${step.summary}` });
+          break;
+        }
+      }
 
       // ── 2. Auto-retries (default 1, configurable via settings) ────────────
       let retryCount = 0;
@@ -579,6 +593,13 @@ const agendaWorker = new Worker(
         run = await runAllSteps();
         overallSuccess = run.success;
         stepSummaries.push(...run.results);
+        for (const step of run.results) {
+          if (step.forcedFailure || matchesProviderRejection(step.summary)) {
+            overallSuccess = false;
+            stepSummaries.unshift({ type: "provider_rejection", success: false, stepTitle: "Provider Rejection", summary: `❌ Forced needs_retry: ${step.summary}` });
+            break;
+          }
+        }
       }
 
       // ── 3. Fallback model retry (if all auto-retries failed + fallback set) ──
@@ -588,6 +609,13 @@ const agendaWorker = new Worker(
         run = await runAllSteps(effectiveFallbackModel);
         overallSuccess = run.success;
         stepSummaries.push(...run.results);
+        for (const step of run.results) {
+          if (step.forcedFailure || matchesProviderRejection(step.summary)) {
+            overallSuccess = false;
+            stepSummaries.unshift({ type: "provider_rejection", success: false, stepTitle: "Provider Rejection", summary: `❌ Forced needs_retry: ${step.summary}` });
+            break;
+          }
+        }
       }
 
       // ── Finalize after retries ──────────────────────────────────────────────
@@ -622,6 +650,12 @@ const agendaWorker = new Worker(
         return { success: false, preempted: true, status: occState?.status ?? null };
       }
 
+      // Detect provider rejection message for specific retry_reason
+      const providerRejectionStep = run.results?.find((r) => r.forcedFailure || matchesProviderRejection(r.summary));
+      const retryReason = providerRejectionStep
+        ? `Provider rejected request: ${providerRejectionStep.summary.slice(0, 120)}`
+        : "All retries exhausted; manual retry required";
+
       await sql`
         update agenda_run_attempts
         set status = ${overallSuccess ? "succeeded" : "failed"},
@@ -654,12 +688,15 @@ const agendaWorker = new Worker(
 
         await sql`
           update agenda_occurrences
-          set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = 'All retries exhausted; manual retry required'
+          set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${retryReason}
           where id = ${occurrenceId}
         `;
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId })})`;
-        console.warn(`[agenda-worker] Occurrence ${occurrenceId} needs manual retry (all retries exhausted)`);
-        await sendTelegramNotification(`⚠️ Agenda event "${title}" needs manual retry (all retries exhausted)`, agentId || "main");
+        console.warn(`[agenda-worker] Occurrence ${occurrenceId} needs manual retry: ${retryReason}`);
+        await sendTelegramNotification(
+          `⚠️ Agenda event "${title}" needs manual retry\n\nReason: ${retryReason}\n\nOpen Mission Control to retry.`,
+          agentId || "main"
+        );
       }
 
       clearTimeout(alertTimer);
@@ -758,6 +795,20 @@ function getStructuredCapacitySignal(err) {
   }
 
   return null;
+}
+
+// Explicitly match provider rejection messages that should always trigger manual retry.
+// These are matched as plain text in output/error even when the CLI doesn't throw a typed error.
+// Gazoh confirmed: no structured alternative available from upstream, string match required here.
+const PROVIDER_REJECTION_PATTERNS = [
+  "LLM request rejected: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+  "⚠️ API rate limit reached. Please try again later.",
+];
+
+function matchesProviderRejection(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return PROVIDER_REJECTION_PATTERNS.some((p) => lower.includes(p.toLowerCase()));
 }
 
 function isCapacityConstraintError(errorLike) {

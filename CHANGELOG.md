@@ -2,9 +2,28 @@
 
 This file tracks notable product and engineering changes so `README.md` can stay focused on overview, setup, and usage.
 
-## 2026-04-01
+## 2026-04-01 — v1.6.0
 
 ### Agenda retry + execution reliability
+- Added queue tracking columns to `agenda_occurrences`: `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason`. These give the system explicit state for when a retry was requested, when it was queued, and why it moved to manual-retry.
+- Manual retry now moves occurrence to `queued` with proper `retry_requested_at` and `last_retry_reason` set.
+- Scheduler rescue pass now scans all due `scheduled`/`queued` occurrences directly from the DB and distinguishes: freshly queued (leave alone), stale queued (re-enqueue), past-window before pickup (mark `needs_retry`).
+- Missed execution window before worker pickup now reliably marks occurrence `needs_retry` with a readable reason — user must manually retry.
+- Fixed BullMQ priority calculation to use BullMQ-safe bounded values (max 2097152) instead of raw epoch values that could exceed BullMQ's allowed range.
+- Fixed scheduler priority in `enqueueOccurrenceJob` helper to use bounded age-based priority.
+- Fixed manual retry endpoint priority calculation to use BullMQ-safe bounded values.
+- Replaced the duplicate/malformed trailing block in `db/schema.sql`.
+- Added missing `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason` columns directly to the live database.
+- Restarted `agenda-scheduler` and `agenda-worker` after schema/code changes.
+
+### Provider rejection handling
+- Added explicit string matching for known provider rejection messages that should always trigger `needs_retry` / manual retry:
+  - `LLM request rejected: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.`
+  - `⚠️ API rate limit reached. Please try again later.`
+- These are matched at three levels: immediate step result, after each auto-retry, and after fallback model attempt.
+- When triggered, `last_retry_reason` on the occurrence is set to the specific message, and the Telegram alert shows the exact rejection reason.
+- Structured error detection (HTTP status / provider code) remains the primary path; string matching is the fallback when upstream provides no machine-readable signal (Gazoh confirmed string match required here).
+
 - Fixed grace-window false `needs_retry` behavior for near-now active one-time events on create and edit.
 - Preserved oldest-first retry ordering by using the original `scheduled_for` timestamp as BullMQ priority.
 - Preserved retry priority when jobs are requeued due to agent-lock contention.
