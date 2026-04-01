@@ -296,9 +296,17 @@ export async function PATCH(
 
     if (!title) return fail("Title is required.");
     if (!startsAt || isNaN(new Date(startsAt).getTime())) return fail("Valid start date is required.");
-    // 5-minute grace period for wizard completion time
+    // 5-minute grace period for wizard completion time.
+    // If within grace window, bump to now so the scheduler executes immediately.
     const PAST_GRACE_MS = 5 * 60 * 1000;
-    if (new Date(startsAt).getTime() < Date.now() - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");
+    const nowMs = Date.now();
+    let effectiveStartsAt = startsAt;
+    const startsAtMs = new Date(startsAt).getTime();
+    if (startsAtMs < nowMs - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");
+    if (startsAtMs < nowMs) {
+      // Within grace window — bump to now so it executes immediately
+      effectiveStartsAt = new Date();
+    }
 
     // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
     const timeStepMinutes = await (async () => {
@@ -335,7 +343,7 @@ export async function PATCH(
         free_prompt = ${freePrompt},
         default_agent_id = ${agentId},
         timezone = ${timezone},
-        starts_at = ${startsAt},
+        starts_at = ${effectiveStartsAt},
         ends_at = ${endsAt},
         recurrence_rule = ${recurrenceRule},
         recurrence_until = ${recurrenceUntil},
@@ -348,10 +356,10 @@ export async function PATCH(
     // If a one-time active event is edited into the past, mark it needs_retry immediately.
     let autoNeedsRetry = false;
     const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";
-    if (status === "active" && !recurrenceRule && new Date(startsAt) < new Date()) {
+    if (status === "active" && !recurrenceRule && new Date(effectiveStartsAt) < new Date()) {
       await sql`
         insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
-        values (${id}, ${startsAt}, 'needs_retry')
+        values (${id}, ${effectiveStartsAt}, 'needs_retry')
         on conflict (agenda_event_id, scheduled_for) do update
           set status = 'needs_retry'
       `;

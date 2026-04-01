@@ -330,8 +330,14 @@ export async function POST(request: Request) {
       if (!startsAt || isNaN(startsAt.getTime())) return fail("Valid start date is required.");
       // Allow a 5-minute grace period — user picks a time, goes through the wizard,
       // and by the time they submit it may be a few minutes past the selected time.
+      // If within grace window, bump to now so the scheduler executes it immediately.
       const PAST_GRACE_MS = 5 * 60 * 1000;
-      if (startsAt.getTime() < Date.now() - PAST_GRACE_MS) return fail("Cannot create events in the past.");
+      const now = new Date();
+      if (startsAt.getTime() < now.getTime() - PAST_GRACE_MS) return fail("Cannot create events in the past.");
+      if (startsAt < now) {
+        // Within grace window — bump to now so it executes immediately instead of being flagged as missed
+        startsAt.setTime(now.getTime());
+      }
 
       // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
       const timeStepMinutes = await (async () => {
