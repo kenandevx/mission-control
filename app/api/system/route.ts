@@ -78,6 +78,9 @@ export async function POST(request: Request) {
       try {
         const mcServices = resolve(PROJECT_ROOT, "scripts/mc-services.sh");
 
+        // Ensure DB container is running before trying to exec
+        await execFileAsync("docker", ["compose", "up", "-d", "db"], { cwd: PROJECT_ROOT, timeout: 30000 });
+
         await execFileAsync(
           "docker",
           ["compose", "exec", "-T", "db", "psql", "-U", "openclaw", "-d", "mission_control", "-c", "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"],
