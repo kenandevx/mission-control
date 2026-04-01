@@ -19,6 +19,8 @@ DEFAULT_DIR="$HOME/.openclaw/workspace/mission-control"
 RUN_AS="${RUN_AS:-$(whoami)}"
 DB_READY_TIMEOUT="${DB_READY_TIMEOUT:-60}"
 DB_INIT_TIMEOUT="${DB_INIT_TIMEOUT:-120}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mission-control}"
+PGDATA_VOLUME="${COMPOSE_PROJECT_NAME}_pgdata"
 
 # ── Colors ──────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -99,8 +101,30 @@ else
   cd "$INSTALL_DIR"
 fi
 
+# ── Detect persisted DB state before generating credentials ─
+step "Checking persisted database state ..."
+DB_VOLUME_EXISTS=0
+if docker volume inspect "$PGDATA_VOLUME" >/dev/null 2>&1; then
+  DB_VOLUME_EXISTS=1
+  warn "Detected existing PostgreSQL volume: $PGDATA_VOLUME"
+else
+  info "No existing PostgreSQL volume detected."
+fi
+
 # ── Environment setup ───────────────────────────────────────
 if [ ! -f .env ]; then
+  if [ "$DB_VOLUME_EXISTS" -eq 1 ]; then
+    err ".env is missing, but an existing PostgreSQL volume was found ($PGDATA_VOLUME)."
+    err "Refusing to generate new credentials because the database may already be initialized."
+    err "Restore the previous .env file, or destroy the existing DB state first."
+    err ""
+    err "To reset the database intentionally:"
+    err "  docker compose down -v"
+    err "  rm -f .env .env.local"
+    err "  bash scripts/install.sh"
+    exit 1
+  fi
+
   step "Creating .env from template ..."
   POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
   API_USER="admin"
