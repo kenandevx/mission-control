@@ -26,20 +26,13 @@ type AgentOption = { id: string; name: string };
 type ProcessOption = { id: string; name: string; version_number: number };
 
 /**
- * Build an ISO 8601 datetime string that represents the given date+time
- * in the given IANA timezone. Uses Luxon for reliable DST-aware conversion
- * (e.g. "2026-03-30T20:00" in "Europe/Amsterdam" → UTC-2h = "2026-03-30T18:00:00.000Z").
+ * Build a local ISO 8601 datetime string (no Z suffix) from date + time.
+ * This is NOT converted to UTC — the backend handles timezone conversion
+ * using the `timezone` field in the request body.
+ * e.g. ("2026-04-01", "18:50") → "2026-04-01T18:50:00"
  */
-function buildTzAwareISO(date: string, time: string, timezone: string): string {
-  // @ts-ignore — luxon loaded via CommonJS in Next.js; types via types/luxon.d.ts
-  const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
-  const [year, month, day] = date.split("-").map(Number);
-  const [hour, minute] = time.split(":").map(Number);
-  const dt = DateTime.fromObject(
-    { year, month, day, hour, minute, second: 0, millisecond: 0 },
-    { zone: timezone }
-  );
-  return dt.toUTC().toISO() ?? `${date}T${time}:00Z`;
+function buildLocalISO(date: string, time: string): string {
+  return `${date}T${time}:00`;
 }
 
 function toRecurrenceRule(recurrence: AgendaEventFormData["recurrence"], weekdays: string[]): string | null {
@@ -232,11 +225,11 @@ export function AgendaClientWrapper() {
       }
 
       // Non-recurring: move directly
-      const newStartsAt = buildTzAwareISO(newDate, timeToUse, tz);
+      const newStartsAt = buildLocalISO(newDate, timeToUse);
       const patchRes = await fetch(`/api/agenda/events/${eventId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startsAt: newStartsAt }),
+        body: JSON.stringify({ startsAt: newStartsAt, timezone: tz }),
       });
       const patchJson = await patchRes.json();
       if (patchJson.ok) {
@@ -315,9 +308,10 @@ export function AgendaClientWrapper() {
         occurrenceId = matched?.id ?? null;
       }
 
-      const newStartsAt = buildTzAwareISO(newDate, newTime, tz);
+      const newStartsAt = buildLocalISO(newDate, newTime);
       const patchBody: Record<string, unknown> = {
         startsAt: newStartsAt,
+        timezone: tz,
         editScope: scope,
         occurrenceId,
       };
@@ -353,12 +347,12 @@ export function AgendaClientWrapper() {
 
     if (editingEvent) {
       const startsAt = data.startDate && data.startTime
-        ? buildTzAwareISO(data.startDate, data.startTime, tz)
+        ? buildLocalISO(data.startDate, data.startTime)
         : data.startDate
-          ? buildTzAwareISO(data.startDate, "10:00", tz)
+          ? buildLocalISO(data.startDate, "10:00")
           : null;
       const endsAt = data.endDate
-        ? buildTzAwareISO(data.endDate, data.endTime || "10:00", tz)
+        ? buildLocalISO(data.endDate, data.endTime || "10:00")
         : null;
       const recurrenceRule = toRecurrenceRule(data.recurrence, data.weekdays);
 
@@ -402,9 +396,9 @@ export function AgendaClientWrapper() {
       // Default to today if no startDate (e.g. repeatable "starts now")
       const effectiveStartDate = data.startDate || new Date().toISOString().split("T")[0];
       const effectiveStartTime = data.startTime || "10:00";
-      const startsAt = buildTzAwareISO(effectiveStartDate, effectiveStartTime, tz);
+      const startsAt = buildLocalISO(effectiveStartDate, effectiveStartTime);
       const endsAt = data.endDate
-        ? buildTzAwareISO(data.endDate, data.endTime || "10:00", tz)
+        ? buildLocalISO(data.endDate, data.endTime || "10:00")
         : null;
       const recurrenceRule = toRecurrenceRule(data.recurrence, data.weekdays);
 

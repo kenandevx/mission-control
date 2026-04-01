@@ -31,6 +31,30 @@ function localTimeToUTC(localDateStr: string, localTimeStr: string, timezone: st
   return dt.toUTC().toJSDate();
 }
 
+/**
+ * Parse a datetime string from the client.
+ * Accepts two formats:
+ * 1. Local time (no Z/offset): "2026-04-01T18:50:00" — converted to UTC using the given timezone
+ * 2. UTC time (with Z): "2026-04-01T16:50:00.000Z" — parsed directly (backward compat)
+ */
+function parseClientDateTime(value: string, timezone: string): Date | null {
+  if (!value) return null;
+  const str = String(value);
+  // If it ends with Z or has a timezone offset (+HH:MM / -HH:MM), it's already UTC
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Otherwise it's a local time string like "2026-04-01T18:50:00"
+  const [datePart, timePart] = str.split("T");
+  if (!datePart || !timePart) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const localTime = timePart.slice(0, 5); // "HH:mm"
+  return localTimeToUTC(datePart, localTime, timezone);
+}
+
 async function workspaceId(sql: ReturnType<typeof getSql>) {
   const rows = await sql`select id from workspaces order by created_at asc limit 1`;
   return rows[0]?.id ?? null;
@@ -290,8 +314,8 @@ export async function POST(request: Request) {
       const freePrompt = body.freePrompt ? String(body.freePrompt) : null;
       const agentId = body.agentId && body.agentId !== 'null' ? String(body.agentId) : null;
       const timezone = String(body.timezone || "Europe/Amsterdam");
-      const startsAt = body.startsAt ? new Date(String(body.startsAt)) : null;
-      const endsAt = body.endsAt ? new Date(String(body.endsAt)) : null;
+      const startsAt = body.startsAt ? parseClientDateTime(String(body.startsAt), timezone) : null;
+      const endsAt = body.endsAt ? parseClientDateTime(String(body.endsAt), timezone) : null;
       const recurrenceRule = body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null;
       const recurrenceUntil = body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null;
       const status = String(body.status || "draft");

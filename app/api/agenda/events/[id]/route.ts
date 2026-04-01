@@ -1,8 +1,37 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { Queue } from "bullmq";
+// @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+import { DateTime } from "luxon";
 
 type Json = Record<string, unknown>;
+
+/**
+ * Parse a datetime string from the client.
+ * Accepts two formats:
+ * 1. Local time (no Z/offset): "2026-04-01T18:50:00" — converted to UTC using the given timezone
+ * 2. UTC time (with Z): "2026-04-01T16:50:00.000Z" — parsed directly (backward compat)
+ */
+function parseClientDateTime(value: string, timezone: string): Date | null {
+  if (!value) return null;
+  const str = String(value);
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const [datePart, timePart] = str.split("T");
+  if (!datePart || !timePart) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const [hour, minute] = timePart.slice(0, 5).split(":").map(Number);
+  const [year, month, day] = datePart.split("-").map(Number);
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute, second: 0, millisecond: 0 },
+    { zone: timezone }
+  );
+  return dt.toUTC().toJSDate();
+}
 
 const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) =>
@@ -142,8 +171,9 @@ export async function PATCH(
       const overriddenTitle = body.title !== undefined ? String(body.title).trim() : null;
       const overriddenFreePrompt = body.freePrompt !== undefined ? (body.freePrompt ? String(body.freePrompt) : null) : null;
       const overriddenAgentId = body.agentId !== undefined ? (body.agentId && body.agentId !== 'null' ? String(body.agentId) : null) : null;
+      const overrideTimezone = body.timezone !== undefined ? String(body.timezone) : (existing.timezone || "Europe/Amsterdam");
       const overriddenStartsAt = body.startsAt !== undefined
-        ? (body.startsAt ? new Date(String(body.startsAt)) : null)
+        ? (body.startsAt ? parseClientDateTime(String(body.startsAt), overrideTimezone) : null)
         : null;
       // Upsert override
       const [existingOverride] = await sql`
@@ -198,10 +228,10 @@ export async function PATCH(
       const agentId = body.agentId !== undefined ? (body.agentId && body.agentId !== 'null' ? String(body.agentId) : null) : existing.default_agent_id;
       const timezone = body.timezone !== undefined ? String(body.timezone) : existing.timezone;
       const startsAt = body.startsAt !== undefined
-        ? new Date(String(body.startsAt))
+        ? parseClientDateTime(String(body.startsAt), timezone)
         : existing.starts_at;
       const endsAt = body.endsAt !== undefined
-        ? (body.endsAt ? new Date(String(body.endsAt)) : null)
+        ? (body.endsAt ? parseClientDateTime(String(body.endsAt), timezone) : null)
         : existing.ends_at;
       const recurrenceRule = body.recurrenceRule !== undefined
         ? (body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null)
@@ -244,8 +274,8 @@ export async function PATCH(
     const freePrompt = body.freePrompt !== undefined ? (body.freePrompt ? String(body.freePrompt) : null) : existing.free_prompt;
     const agentId = body.agentId !== undefined ? (body.agentId && body.agentId !== 'null' ? String(body.agentId) : null) : existing.default_agent_id;
     const timezone = body.timezone !== undefined ? String(body.timezone) : existing.timezone;
-    const startsAt = body.startsAt !== undefined ? new Date(String(body.startsAt)) : existing.starts_at;
-    const endsAt = body.endsAt !== undefined ? (body.endsAt ? new Date(String(body.endsAt)) : null) : existing.ends_at;
+    const startsAt = body.startsAt !== undefined ? parseClientDateTime(String(body.startsAt), timezone) ?? existing.starts_at : existing.starts_at;
+    const endsAt = body.endsAt !== undefined ? (body.endsAt ? parseClientDateTime(String(body.endsAt), timezone) : null) : existing.ends_at;
     const recurrenceRule = body.recurrenceRule !== undefined ? (body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null) : existing.recurrence_rule;
     const recurrenceUntil = body.recurrenceUntil !== undefined
       ? (body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null)
