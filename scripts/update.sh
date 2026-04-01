@@ -42,7 +42,6 @@ CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
 step "Pulling latest changes (branch: $CURRENT_BRANCH) ..."
 git pull --ff-only origin "$CURRENT_BRANCH"
 
-# Load .env if present for downstream commands/services
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -71,8 +70,7 @@ step "Building production Next.js ..."
 rm -rf .next
 if ! env -u NODE_ENV NODE_ENV=production npm run build; then
   err "Next.js production build failed."
-  err "This is usually an application error, not an update-script error."
-  err "Inspect the detailed output above and fix the app build issue."
+  err "This is an application build error, not just an update-script issue."
   exit 1
 fi
 
