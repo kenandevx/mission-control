@@ -5,7 +5,7 @@
 #   - Host services
 #   - Docker containers, network, and volumes for this project
 #   - Project directory
-#   - Convenience symlinks
+#   - Convenience symlinks 
 # ============================================================
 
 set -euo pipefail
