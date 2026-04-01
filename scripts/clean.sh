@@ -89,12 +89,8 @@ info "Schema initialized."
 step "Installing npm dependencies ..."
 npm install 2>&1 | tail -3
 
-if [ ! -d ".next" ]; then
-  step "Building production Next.js ..."
-  npm run build 2>&1 | tail -5
-else
-  info "Production build already exists — skipping. Run 'npm run build' to rebuild."
-fi
+step "Building production Next.js ..."
+npm run build 2>&1 | tail -5
 
 # ── Restart host services ────────────────────────────────────
 step "Starting host services ..."

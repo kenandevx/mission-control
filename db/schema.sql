@@ -329,6 +329,10 @@ create table if not exists agenda_occurrences (
   status text not null default 'scheduled' check (status in ('scheduled', 'queued', 'running', 'succeeded', 'failed', 'cancelled')),
   latest_attempt_no integer not null default 0,
   locked_at timestamptz,
+  queue_job_id text,
+  queued_at timestamptz,
+  retry_requested_at timestamptz,
+  last_retry_reason text,
   created_at timestamptz not null default now(),
   unique (agenda_event_id, scheduled_for)
 );

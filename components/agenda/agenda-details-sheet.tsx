@@ -128,7 +128,7 @@ type Props = {
   onClose: () => void;
   onEdit: (event: AgendaEventSummary) => void;
   onCopy?: (event: AgendaEventSummary) => void;
-  onRetry: (occurrenceId: string) => void;
+  onRetry: (occurrenceId: string, options?: { force?: boolean }) => void;
   onDelete: (eventId: string) => void;
 };
 
@@ -393,6 +393,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [forceRetryDialogOpen, setForceRetryDialogOpen] = useState(false);
   const [copyRequested, setCopyRequested] = useState(false);
 
   const isRecurring = event ? (event.recurrence && event.recurrence !== "none") : false;
@@ -553,17 +554,24 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </DropdownMenuItem>
                       )}
                       {selectedOccurrence && selectedOccurrenceId && (() => {
-                        const canRetry = ["running", "needs_retry", "failed"].includes(selectedOccurrence.status);
+                        const canRetry = ["running", "needs_retry", "failed", "succeeded", "cancelled"].includes(selectedOccurrence.status);
                         return (
                           <>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className={`gap-2 ${canRetry ? "cursor-pointer text-amber-600 dark:text-amber-400" : "opacity-50 cursor-not-allowed"}`}
                               disabled={!canRetry}
-                              onClick={() => { if (canRetry) onRetry(selectedOccurrenceId); }}
+                              onClick={() => {
+                                if (!canRetry) return;
+                                if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
+                                  setForceRetryDialogOpen(true);
+                                  return;
+                                }
+                                onRetry(selectedOccurrenceId, { force: selectedOccurrence.status === "running" });
+                              }}
                             >
                               <IconRefresh className="size-3.5" />
-                              {!canRetry ? "Retry (completed)" : selectedOccurrence.status === "running" ? "Force Retry" : "Retry"}
+                              {!canRetry ? "Retry (completed)" : selectedOccurrence.status === "running" ? "Force Retry" : ["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
                             </DropdownMenuItem>
                           </>
                         );
@@ -713,15 +721,21 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         <div className="text-muted-foreground text-xs">
                           {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
                         </div>
-                        {["failed", "needs_retry"].includes(selectedOccurrence.status) && (
+                        {["failed", "needs_retry", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
                           <Button
                             size="sm"
                             variant="outline"
                             className="gap-1 h-7 text-xs mt-1 cursor-pointer"
-                            onClick={() => onRetry(selectedOccurrenceId!)}
+                            onClick={() => {
+                              if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
+                                setForceRetryDialogOpen(true);
+                                return;
+                              }
+                              onRetry(selectedOccurrenceId!);
+                            }}
                           >
                             <IconRefresh className="size-3" />
-                            Retry
+                            {["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
                           </Button>
                         )}
                       </CardFooter>
@@ -926,6 +940,32 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
           </Tabs>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={forceRetryDialogOpen} onOpenChange={(isOpen) => { setForceRetryDialogOpen(isOpen); }}>
+        <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <IconRefresh className="size-4" />
+              Force retry this completed run?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm">
+              This occurrence already executed. Force Retry will clean up prior run artifacts where possible and execute it again. Use this only when you intentionally want to re-run completed work.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (selectedOccurrenceId) onRetry(selectedOccurrenceId, { force: true });
+                setForceRetryDialogOpen(false);
+              }}
+              className="bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+            >
+              Force Retry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete confirmation — uses [&>div]:z-[60] to lift both overlay + content above the Sheet */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={(isOpen) => { setDeleteDialogOpen(isOpen); }}>

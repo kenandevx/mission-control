@@ -356,7 +356,7 @@ async function recoverPendingCleanups() {
 const agendaWorker = new Worker(
   "agenda",
   async (job) => {
-    const { occurrenceId, eventId, title, freePrompt, agentId, processes, scheduledFor, executionWindowMinutes, fallbackModel } = job.data;
+    const { occurrenceId, eventId, title, freePrompt, agentId, processes, scheduledFor, executionWindowMinutes, fallbackModel, queueJobId } = job.data;
 
     console.log(`[agenda-worker] Processing occurrence ${occurrenceId} — "${title}"`);
 
@@ -367,13 +367,14 @@ const agendaWorker = new Worker(
     const [{ now: dbNow }] = await sql`SELECT now() as now`;
     const diffMinutes = (new Date(dbNow).getTime() - scheduledTime.getTime()) / 60000;
     if (diffMinutes > windowMinutes) {
+      const missedWindowReason = `Missed execution window — ${Math.round(diffMinutes)}min past ${windowMinutes}min limit`;
       // Mark as needs_retry (not expired) — user can press Retry to run it now
-      await sql`UPDATE agenda_occurrences SET status = 'needs_retry' WHERE id = ${occurrenceId}`;
+      await sql`UPDATE agenda_occurrences SET status = 'needs_retry', queue_job_id = null, queued_at = null, last_retry_reason = ${missedWindowReason} WHERE id = ${occurrenceId}`;
       // Create a run attempt with the reason logged
       const missedAttemptNo = ((await sql`SELECT latest_attempt_no FROM agenda_occurrences WHERE id = ${occurrenceId}`)[0]?.latest_attempt_no ?? 0) + 1;
       await sql`
-        INSERT INTO agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, error_message)
-        VALUES (${occurrenceId}, ${missedAttemptNo}, 'failed', now(), now(), ${`Missed execution window — ${Math.round(diffMinutes)}min past ${windowMinutes}min limit`})
+        INSERT INTO agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+        VALUES (${occurrenceId}, ${missedAttemptNo}, 'failed', now(), now(), ${missedWindowReason}, ${missedWindowReason})
       `;
       await sql`UPDATE agenda_occurrences SET latest_attempt_no = ${missedAttemptNo} WHERE id = ${occurrenceId}`;
       console.warn(`[agenda-worker] Occurrence ${occurrenceId} needs retry (${diffMinutes.toFixed(1)}m past window of ${windowMinutes}m)`);
@@ -394,15 +395,23 @@ const agendaWorker = new Worker(
       console.log(`[agenda-worker] Agent lock contention for ${occurrenceId} (agents: ${lockFailed.join(", ")}), re-queuing with 30s delay`);
       // Re-queue with delay
       const { Queue } = await import("bullmq");
+      const { randomUUID } = await import("node:crypto");
+      const nextQueueJobId = `agenda-${occurrenceId}-${randomUUID()}`;
       const requeue = new Queue("agenda", { connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD } });
-      await requeue.add("agenda-event", job.data, { delay: 30000 });
+      await requeue.add("run-occurrence", { ...job.data, queueJobId: nextQueueJobId }, {
+        delay: 30000,
+        jobId: nextQueueJobId,
+        priority: typeof job.opts.priority === "number" ? job.opts.priority : undefined,
+        removeOnComplete: false,
+      });
+      await sql`UPDATE agenda_occurrences SET status = 'queued', queue_job_id = ${nextQueueJobId}, queued_at = now(), last_retry_reason = 'Waiting for agent availability' WHERE id = ${occurrenceId}`;
       await requeue.close();
       return { skipped: true, reason: 'agent_locked' };
     }
 
     // ── Postgres-level claim lock ─────────────────────────────────────────────
     const [claimed] = await sql`
-      UPDATE agenda_occurrences SET status = 'running', locked_at = now()
+      UPDATE agenda_occurrences SET status = 'running', locked_at = now(), queue_job_id = null, queued_at = null
       WHERE id = ${occurrenceId} AND status IN ('scheduled', 'queued', 'needs_retry')
       RETURNING id, latest_attempt_no
     `;
@@ -424,8 +433,8 @@ const agendaWorker = new Worker(
 
     // ── Create run attempt ────────────────────────────────────────────────────
     const [attempt] = await sql`
-      insert into agenda_run_attempts (occurrence_id, attempt_no, status, started_at, session_snapshots)
-      values (${occurrenceId}, ${attemptNo}, 'running', now(), ${sql.json(sessionSnapshots)})
+      insert into agenda_run_attempts (occurrence_id, attempt_no, queue_job_id, status, started_at, session_snapshots)
+      values (${occurrenceId}, ${attemptNo}, ${queueJobId ?? null}, 'running', now(), ${sql.json(sessionSnapshots)})
       returning *
     `;
 
@@ -463,9 +472,10 @@ const agendaWorker = new Worker(
       autoRetryTimer = setTimeout(async () => {
         console.warn(`[agenda-worker] Auto-retry triggered for "${title}" after ${autoRetryMinutes}min (occurrence ${occurrenceId})`);
         try {
-          await sql`UPDATE agenda_run_attempts SET status = 'failed', finished_at = now(), error_message = ${`Auto-retried: exceeded ${autoRetryMinutes} minute limit`} WHERE id = ${runAttemptId} AND status = 'running'`;
+          const timeoutReason = `Execution exceeded ${autoRetryMinutes} minute time limit`; 
+          await sql`UPDATE agenda_run_attempts SET status = 'failed', finished_at = now(), summary = ${timeoutReason}, error_message = ${timeoutReason} WHERE id = ${runAttemptId} AND status = 'running'`;
           const [maxAtt] = await sql`SELECT coalesce(max(attempt_no), 0) as max_no FROM agenda_run_attempts WHERE occurrence_id = ${occurrenceId}`;
-          await sql`UPDATE agenda_occurrences SET status = 'needs_retry', locked_at = null, latest_attempt_no = ${maxAtt.max_no} WHERE id = ${occurrenceId}`;
+          await sql`UPDATE agenda_occurrences SET status = 'needs_retry', locked_at = null, latest_attempt_no = ${maxAtt.max_no}, queue_job_id = null, queued_at = null, last_retry_reason = ${timeoutReason} WHERE id = ${occurrenceId}`;
           await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "auto_retry", occurrenceId })})`;
           await sendTelegramNotification(
             `🔄 Auto-retry triggered for "${title}"\n\n` +
@@ -616,14 +626,18 @@ const agendaWorker = new Worker(
         update agenda_run_attempts
         set status = ${overallSuccess ? "succeeded" : "failed"},
             finished_at = now(),
-            summary = ${summaryText}
+            summary = ${summaryText},
+            error_message = case
+              when ${overallSuccess} then error_message
+              else coalesce(error_message, ${summaryText || "All retries exhausted"})
+            end
         where id = ${runAttemptId}
       `;
 
       if (overallSuccess) {
         await sql`
           update agenda_occurrences
-          set status = 'succeeded', latest_attempt_no = ${attemptNo}
+          set status = 'succeeded', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null
           where id = ${occurrenceId} and status = 'running'
         `;
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId })})`;
@@ -640,7 +654,7 @@ const agendaWorker = new Worker(
 
         await sql`
           update agenda_occurrences
-          set status = 'needs_retry', latest_attempt_no = ${attemptNo}
+          set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = 'All retries exhausted; manual retry required'
           where id = ${occurrenceId}
         `;
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId })})`;
@@ -675,7 +689,7 @@ const agendaWorker = new Worker(
       // Fatal error → needs_retry directly
       await sql`
         update agenda_occurrences
-        set status = 'needs_retry', latest_attempt_no = ${attemptNo}
+        set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${msg}
         where id = ${occurrenceId}
       `;
       await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "failed", occurrenceId })})`;
@@ -705,13 +719,58 @@ agendaWorker.on("failed", (job, err) => {
 
 // ── Step execution helper ─────────────────────────────────────────────────────
 
-function isCapacityConstraintError(errorMsg) {
-  const lower = (errorMsg || "").toLowerCase();
+function tryParseJson(value) {
+  if (!value || typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
 
-  // HTTP-level signals
-  if (/(^|\D)(429|402)(\D|$)/.test(lower)) return true;
+function getStructuredCapacitySignal(err) {
+  const stderr = String(err?.stderr || "");
+  const stdout = String(err?.stdout || "");
+  const parsed = tryParseJson(stderr) || tryParseJson(stdout);
+  const status = Number(parsed?.status || parsed?.error?.status || parsed?.result?.status || err?.code || 0);
+  const code = String(parsed?.code || parsed?.error?.code || parsed?.type || parsed?.error?.type || "").toLowerCase();
+  const providerCode = String(parsed?.error?.provider_code || parsed?.error?.providerCode || "").toLowerCase();
 
-  // Provider-level stable codes/phrases
+  if ([402, 429].includes(status)) {
+    return {
+      constrained: true,
+      reason: parsed?.error?.message || parsed?.message || `Provider request rejected with status ${status}`,
+      status,
+      code: code || providerCode || null,
+      structured: true,
+    };
+  }
+
+  const structuredCodes = ["insufficient_quota", "quota_exceeded", "billing_hard_limit", "rate_limit_exceeded", "too_many_requests"];
+  if (structuredCodes.includes(code) || structuredCodes.includes(providerCode)) {
+    return {
+      constrained: true,
+      reason: parsed?.error?.message || parsed?.message || "Provider capacity/credit limit reached",
+      status: status || null,
+      code: code || providerCode || null,
+      structured: true,
+    };
+  }
+
+  return null;
+}
+
+function isCapacityConstraintError(errorLike) {
+  const structured = getStructuredCapacitySignal(errorLike);
+  if (structured?.constrained) return structured;
+
+  const lower = String(errorLike?.message || errorLike || "").toLowerCase();
+
+  // Fallback only when upstream did not provide machine-readable status/code.
+  if (/(^|\D)(429|402)(\D|$)/.test(lower)) {
+    return { constrained: true, reason: String(errorLike?.message || errorLike), status: null, code: null, structured: false };
+  }
+
   if (
     lower.includes("insufficient_quota") ||
     lower.includes("quota_exceeded") ||
@@ -722,10 +781,10 @@ function isCapacityConstraintError(errorMsg) {
     lower.includes("insufficient credits") ||
     (lower.includes("plans & billing") && lower.includes("upgrade"))
   ) {
-    return true;
+    return { constrained: true, reason: String(errorLike?.message || errorLike), status: null, code: null, structured: false };
   }
 
-  return false;
+  return { constrained: false, reason: null, status: null, code: null, structured: false };
 }
 
 async function runAgentStep({
@@ -781,19 +840,21 @@ async function runAgentStep({
       const result = await executeAgent();
       raw = result.stdout;
     } catch (primaryErr) {
-      const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      const capacity = isCapacityConstraintError(primaryErr);
 
       // Capacity-constrained failures (rate-limit/quota/low credits) should auto-fallback
       // when a fallback model is configured.
-      if (fallbackModel && isCapacityConstraintError(primaryMsg)) {
+      if (fallbackModel && capacity.constrained) {
         try {
           const fallbackResult = await executeAgent(fallbackModel);
           raw = fallbackResult.stdout;
           usedFallback = true;
         } catch (fallbackErr) {
           const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-          throw new Error(`Primary model capacity-constrained and fallback failed: ${fallbackMsg}`);
+          throw new Error(`LLM request rejected on primary model; fallback failed: ${fallbackMsg}`);
         }
+      } else if (capacity.constrained) {
+        throw new Error(`LLM request rejected: ${capacity.reason || "provider capacity/credit limit reached"}`);
       } else {
         throw primaryErr;
       }
@@ -870,12 +931,22 @@ async function recoverStaleLocks() {
   try {
     const stale = await sql`
       update agenda_occurrences
-      set status = 'needs_retry', locked_at = null
+      set status = 'needs_retry', locked_at = null, queue_job_id = null, queued_at = null, last_retry_reason = 'Worker crashed or stalled during execution; manual retry required'
       where status = 'running'
         and locked_at < now() - interval '15 minutes'
       returning id
     `;
     if (stale.length > 0) {
+      const staleIds = stale.map((r) => r.id);
+      const staleReason = 'Worker crashed or stalled during execution; status set to needs_retry after stale-lock recovery';
+      await sql`
+        update agenda_run_attempts
+        set status = 'failed',
+            finished_at = now(),
+            summary = coalesce(summary, ${staleReason}),
+            error_message = coalesce(error_message, ${staleReason})
+        where occurrence_id = any(${staleIds}) and status = 'running'
+      `;
       console.log(`[agenda-worker] Recovered ${stale.length} stale lock(s) → needs_retry`);
       for (const row of stale) {
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "stale_recovery", occurrenceId: row.id })})`;

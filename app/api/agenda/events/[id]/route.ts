@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { Queue } from "bullmq";
-// @ts-ignore — luxon via CJS; types via types/luxon.d.ts
 import { DateTime } from "luxon";
 
 type Json = Record<string, unknown>;
@@ -301,11 +300,13 @@ export async function PATCH(
     const PAST_GRACE_MS = 5 * 60 * 1000;
     const nowMs = Date.now();
     let effectiveStartsAt = startsAt;
+    let bumpedToNow = false;
     const startsAtMs = new Date(startsAt).getTime();
     if (startsAtMs < nowMs - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");
     if (startsAtMs < nowMs) {
       // Within grace window — bump to now so it executes immediately
       effectiveStartsAt = new Date();
+      bumpedToNow = true;
     }
 
     // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
@@ -356,12 +357,21 @@ export async function PATCH(
     // If a one-time active event is edited into the past, mark it needs_retry immediately.
     let autoNeedsRetry = false;
     const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";
-    if (status === "active" && !recurrenceRule && new Date(effectiveStartsAt) < new Date()) {
-      await sql`
+    if (status === "active" && !recurrenceRule && !bumpedToNow && new Date(effectiveStartsAt) < new Date()) {
+      const [occurrence] = await sql`
         insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
         values (${id}, ${effectiveStartsAt}, 'needs_retry')
         on conflict (agenda_event_id, scheduled_for) do update
           set status = 'needs_retry'
+        returning id
+      `;
+      await sql`
+        insert into agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+        values (${occurrence.id}, 1, 'failed', now(), now(), ${autoNeedsRetryReason}, ${autoNeedsRetryReason})
+        on conflict do nothing
+      `;
+      await sql`
+        update agenda_occurrences set latest_attempt_no = 1 where id = ${occurrence.id}
       `;
       autoNeedsRetry = true;
     }

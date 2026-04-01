@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { RRule } from "rrule";
-// @ts-ignore — luxon via CJS; types via types/luxon.d.ts
 import { DateTime } from "luxon";
 
 type Json = Record<string, unknown>;
@@ -333,10 +332,12 @@ export async function POST(request: Request) {
       // If within grace window, bump to now so the scheduler executes it immediately.
       const PAST_GRACE_MS = 5 * 60 * 1000;
       const now = new Date();
+      let bumpedToNow = false;
       if (startsAt.getTime() < now.getTime() - PAST_GRACE_MS) return fail("Cannot create events in the past.");
       if (startsAt < now) {
         // Within grace window — bump to now so it executes immediately instead of being flagged as missed
         startsAt.setTime(now.getTime());
+        bumpedToNow = true;
       }
 
       // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
@@ -394,12 +395,21 @@ export async function POST(request: Request) {
       // If a one-time active event is created in the past, mark it needs_retry immediately.
       let autoNeedsRetry = false;
       const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";
-      if (status === "active" && !recurrenceRule && startsAt < new Date()) {
-        await sql`
+      if (status === "active" && !recurrenceRule && !bumpedToNow && startsAt < new Date()) {
+        const [occurrence] = await sql`
           insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
           values (${event.id}, ${startsAt}, 'needs_retry')
           on conflict (agenda_event_id, scheduled_for) do update
             set status = 'needs_retry'
+          returning id
+        `;
+        await sql`
+          insert into agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+          values (${occurrence.id}, 1, 'failed', now(), now(), ${autoNeedsRetryReason}, ${autoNeedsRetryReason})
+          on conflict do nothing
+        `;
+        await sql`
+          update agenda_occurrences set latest_attempt_no = 1 where id = ${occurrence.id}
         `;
         autoNeedsRetry = true;
       }

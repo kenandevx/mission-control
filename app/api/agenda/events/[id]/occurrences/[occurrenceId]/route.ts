@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { Queue } from "bullmq";
+import { cleanupRunArtifacts, getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 
 type Json = Record<string, unknown>;
 
@@ -83,19 +84,56 @@ export async function POST(
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
 
-    // Allow retry from needs_retry, failed, or running (force retry)
-    const retryableStatuses = ["needs_retry", "failed", "running"];
+    const forceRetry = body.force === true;
+
+    // Allow retry from needs_retry, failed, or running by default.
+    // Succeeded/cancelled/completed states require explicit force=true because this is a re-execution.
+    const retryableStatuses = forceRetry
+      ? ["needs_retry", "failed", "running", "succeeded", "cancelled"]
+      : ["needs_retry", "failed", "running"];
     if (!retryableStatuses.includes(occurrence.status)) {
-      return fail(`Cannot retry occurrence with status "${occurrence.status}"`, 400);
+      return fail(
+        occurrence.status === "succeeded"
+          ? "This occurrence already executed successfully. Use Force Retry to clean up and run it again."
+          : `Cannot retry occurrence with status "${occurrence.status}"`,
+        400,
+      );
     }
 
-    // If force-retrying a running occurrence, mark current attempt as failed
+    // If force-retrying a running occurrence, mark current attempt as failed.
     if (occurrence.status === "running") {
       await sql`
         update agenda_run_attempts
-        set status = 'failed', finished_at = now(), error_message = 'Force retried by user'
+        set status = 'failed', finished_at = now(), summary = 'Force retried by user while running', error_message = 'Force retried by user while running'
         where occurrence_id = ${occurrenceId} and status = 'running'
       `;
+    }
+
+    // If force-retrying a previously completed occurrence, best-effort clean up prior run artifacts
+    // and annotate the previous attempt so downstream debugging is clear.
+    if (forceRetry && ["succeeded", "cancelled"].includes(occurrence.status)) {
+      const [latestAttempt] = await sql`
+        select id, attempt_no
+        from agenda_run_attempts
+        where occurrence_id = ${occurrenceId}
+        order by attempt_no desc
+        limit 1
+      `;
+      if (latestAttempt?.id) {
+        const artifactDir = getRunArtifactDir({
+          kind: "agenda",
+          entityId: eventId,
+          occurrenceId,
+          runId: latestAttempt.id,
+        });
+        await cleanupRunArtifacts(artifactDir);
+        await sql`
+          update agenda_run_attempts
+          set summary = coalesce(summary, 'Previously executed occurrence force-retried by user'),
+              error_message = coalesce(error_message, 'Previously executed occurrence force-retried by user')
+          where id = ${latestAttempt.id}
+        `;
+      }
     }
 
     // Get the actual max attempt number so the next run gets the right number
@@ -113,13 +151,13 @@ export async function POST(
       await sql`
         update agenda_occurrences
         set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no},
-            scheduled_for = ${retryNow}
+            scheduled_for = ${retryNow}, retry_requested_at = now(), last_retry_reason = 'Manual retry requested by user'
         where id = ${occurrenceId}
       `;
     } else {
       await sql`
         update agenda_occurrences
-        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no}
+        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no}, retry_requested_at = now(), last_retry_reason = 'Manual retry requested by user'
         where id = ${occurrenceId}
       `;
     }
@@ -132,11 +170,15 @@ export async function POST(
       order by aep.sort_order asc
     `;
 
-    // Enqueue directly to BullMQ for immediate execution
-    // All retries get priority 0 (highest) since they run now
-    const priority = 0;
+    // Enqueue directly to BullMQ for immediate execution.
+    // Preserve oldest-first ordering across retryable occurrences with a BullMQ-safe
+    // bounded priority (smaller = older = higher priority).
+    const scheduledDate = new Date(occurrence.scheduled_for);
+    const ageSec = Math.max(0, Math.floor((Date.now() - scheduledDate.getTime()) / 1000));
+    const priority = Math.max(1, 2097152 - Math.min(ageSec, 2097151));
 
     try {
+      const queueJobId = `agenda-${occurrenceId}-${Date.now()}`;
       const agendaQueue = new Queue("agenda", {
         connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD },
       });
@@ -161,11 +203,17 @@ export async function POST(
           fallbackModel: occurrence.fallback_model || "",
         },
         {
-          jobId: `agenda-retry-${occurrenceId}-${Date.now()}`,
+          jobId: queueJobId,
           removeOnComplete: false,
           priority,
         }
       );
+
+      await sql`
+        update agenda_occurrences
+        set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
+        where id = ${occurrenceId} and status = 'scheduled'
+      `;
 
       await agendaQueue.close();
     } catch (err) {
@@ -173,8 +221,8 @@ export async function POST(
       console.warn("[occurrence-retry] BullMQ enqueue failed:", err);
     }
 
-    await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "retry" })})`;
-    return ok({ occurrenceId, status: "scheduled" });
+    await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: forceRetry ? "force_retry" : "retry" })})`;
+    return ok({ occurrenceId, status: "scheduled", forced: forceRetry });
   } catch (err) {
     console.error("[occurrence-retry] Error:", err);
     const msg = err instanceof Error ? err.message : "Unknown error";

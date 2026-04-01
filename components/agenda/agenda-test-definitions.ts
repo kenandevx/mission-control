@@ -29,6 +29,8 @@ export type TestDefinition = {
 
 export type AgendaSettings = {
   schedulingIntervalMinutes: number;
+  /** Effective step used by tests: unset => 15, configured 0 => 1 for fast dev testing. */
+  testSchedulingIntervalMinutes: number;
   defaultExecutionWindowMinutes: number;
   maxRetries: number;
   [key: string]: unknown;
@@ -78,11 +80,23 @@ function isoOffset(minutesFromNow: number, stepMinutes = 15): string {
   return snapToInterval(new Date(Date.now() + offset * 60 * 1000), stepMinutes).toISOString();
 }
 
-/** Convenience: read step from ctx.settings */
+/** Convenience: read effective test step from ctx.settings */
 function ctxOffset(ctx: TestContext, slots = 1): string {
-  const step = ctx.settings.schedulingIntervalMinutes;
-  const mins = step === 0 ? slots : step * slots;
-  return isoOffset(mins, step);
+  const step = Number(ctx.settings.testSchedulingIntervalMinutes ?? 15);
+  const safeStep = Number.isFinite(step) && step > 0 ? Math.floor(step) : 15;
+  return isoOffset(safeStep * slots, safeStep);
+}
+
+function isBillingOrCapacityError(message: unknown): boolean {
+  const lower = String(message ?? "").toLowerCase();
+  return lower.includes("llm request rejected")
+    || lower.includes("insufficient_quota")
+    || lower.includes("quota_exceeded")
+    || lower.includes("billing_hard_limit")
+    || lower.includes("credit balance is too low")
+    || lower.includes("insufficient credits")
+    || lower.includes("plans & billing")
+    || /(^|\D)(402|429)(\D|$)/.test(lower);
 }
 
 // ── Test definitions ──────────────────────────────────────────────────────────
@@ -247,15 +261,39 @@ export const AGENDA_TESTS: TestDefinition[] = [
   // 5 ────────────────────────────────────────────────────────────────────────
   {
     id: "validation-15min-interval",
-    name: "Validation: 15-minute interval enforcement",
-    description: "Events at non-15-minute times (e.g. XX:07) must be rejected.",
+    name: "Validation: configured interval enforcement",
+    description: "Uses real agenda settings: unset => 15 min, configured value => that value, free-time 0 => test against 1 minute for fast dev checks.",
     run: async (ctx) => {
       const startedAt = Date.now();
       const log = (m: string) => { ctx.log("validation-15min-interval", m); };
       try {
+        const configuredStep = Number(ctx.settings.schedulingIntervalMinutes ?? 15);
+        const enforcedStep = Number(ctx.settings.testSchedulingIntervalMinutes ?? 15);
+        log(`Configured scheduling interval=${configuredStep}; effective test interval=${enforcedStep}`);
+
+        if (configuredStep === 0) {
+          const oddMinute = new Date(Date.now() + 60 * 60 * 1000);
+          oddMinute.setMinutes(7, 0, 0);
+          const res = await ctx.apiPost("/api/agenda/events", {
+            action: "createEvent",
+            title: ctx.uniqueName("FreeTime"),
+            freePrompt: "Should pass in free-time mode.",
+            agentId: null, timezone: "Europe/Amsterdam",
+            startsAt: oddMinute.toISOString(),
+            endsAt: null, recurrenceRule: null, recurrenceUntil: null,
+            status: "draft", processVersionIds: [],
+            executionWindowMinutes: 30, fallbackModel: "",
+            timeStepMinutes: 0,
+          }) as { ok: boolean; error?: string };
+          log(`Free-time response: ok=${res.ok}, error=${res.error}`);
+          if (res.ok) return makeResult("validation-15min-interval", "Validation: configured interval enforcement", startedAt, true, "Free-time mode accepted a non-grid minute as expected", []);
+          return makeResult("validation-15min-interval", "Validation: configured interval enforcement", startedAt, false, `Expected free-time mode to allow odd minutes, got: ${JSON.stringify(res)}`, []);
+        }
+
         const bad = new Date(Date.now() + 60 * 60 * 1000);
+        bad.setSeconds(0, 0);
         bad.setMinutes(7, 0, 0);
-        log(`Testing non-15-min time: ${bad.toISOString()}`);
+        log(`Testing invalid time against ${enforcedStep}-minute rule: ${bad.toISOString()}`);
         const res = await ctx.apiPost("/api/agenda/events", {
           action: "createEvent",
           title: ctx.uniqueName("BadTime"),
@@ -265,15 +303,15 @@ export const AGENDA_TESTS: TestDefinition[] = [
           endsAt: null, recurrenceRule: null, recurrenceUntil: null,
           status: "draft", processVersionIds: [],
           executionWindowMinutes: 30, fallbackModel: "",
-          timeStepMinutes: 15, // Force 15-min validation regardless of dev mode
+          timeStepMinutes: configuredStep,
         }) as { ok: boolean; error?: string };
 
         log(`Response: ok=${res.ok}, error=${res.error}`);
 
-        if (!res.ok && res.error) return makeResult("validation-15min-interval", "Validation: 15-minute interval enforcement", startedAt, true, "Correctly enforced 15-minute interval", []);
-        return makeResult("validation-15min-interval", "Validation: 15-minute interval enforcement", startedAt, false, `Expected rejection for non-15-minute time, got: ${JSON.stringify(res)}`, []);
+        if (!res.ok && res.error) return makeResult("validation-15min-interval", "Validation: configured interval enforcement", startedAt, true, `Correctly enforced ${configuredStep}-minute interval`, []);
+        return makeResult("validation-15min-interval", "Validation: configured interval enforcement", startedAt, false, `Expected rejection for non-${configuredStep}-minute time, got: ${JSON.stringify(res)}`, []);
       } catch (err) {
-        return makeResult("validation-15min-interval", "Validation: 15-minute interval enforcement", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
+        return makeResult("validation-15min-interval", "Validation: configured interval enforcement", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
       }
     },
   },
@@ -490,6 +528,76 @@ export const AGENDA_TESTS: TestDefinition[] = [
 
   // 9 ────────────────────────────────────────────────────────────────────────
   {
+    id: "completed-occurrence-force-retry",
+    name: "Completed occurrence requires force retry",
+    description: "A succeeded occurrence should reject a normal retry, but accept an explicit force retry and move back to scheduled.",
+    run: async (ctx) => {
+      const startedAt = Date.now();
+      const log = (m: string) => { ctx.log("completed-occurrence-force-retry", m); };
+      try {
+        const title = ctx.uniqueName("TST-force-retry");
+        const startsAt = ctxOffset(ctx);
+        const create = await ctx.apiPost("/api/agenda/events", {
+          action: "createEvent", title,
+          freePrompt: "Force retry test.",
+          agentId: null, timezone: "Europe/Amsterdam", startsAt,
+          endsAt: null, recurrenceRule: null, recurrenceUntil: null,
+          status: "active", processVersionIds: [],
+          executionWindowMinutes: 30, fallbackModel: "",
+        }) as { ok: boolean; event?: { id: string }; error?: string };
+        if (!create.ok || !create.event?.id) return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Create failed: ${create.error ?? "unknown"}`, []);
+        const eventId = create.event.id;
+
+        const occRes = await ctx.apiPost("/api/agenda/events", {
+          action: "testOnlyCreateNeedsRetryOccurrence",
+          eventId,
+          scheduledFor: new Date().toISOString(),
+        }) as { ok: boolean; occurrenceId?: string; error?: string };
+        if (!occRes.ok || !occRes.occurrenceId) return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Failed to inject occurrence: ${occRes.error ?? "unknown"}`, []);
+        const occId = occRes.occurrenceId;
+
+        const inject = await ctx.apiPost("/api/agenda/events", {
+          action: "testOnlyInjectRunWithPdf",
+          eventId,
+          occurrenceId: occId,
+        }) as { ok: boolean; error?: string };
+        if (!inject.ok) return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Failed to mark succeeded occurrence: ${inject.error ?? "unknown"}`, []);
+
+        const normalRetry = await ctx.apiPost(`/api/agenda/events/${eventId}/occurrences/${occId}`, {}) as { ok: boolean; error?: string };
+        log(`Normal retry response: ok=${normalRetry.ok}, error=${normalRetry.error}`);
+        if (normalRetry.ok) {
+          return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, "Normal retry unexpectedly succeeded for a completed occurrence", []);
+        }
+
+        const forceRetry = await ctx.apiPost(`/api/agenda/events/${eventId}/occurrences/${occId}`, { force: true }) as { ok: boolean; status?: string; forced?: boolean; error?: string };
+        log(`Force retry response: ok=${forceRetry.ok}, status=${forceRetry.status}, forced=${String(forceRetry.forced)}`);
+        if (!forceRetry.ok) {
+          return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Force retry rejected: ${forceRetry.error ?? "unknown"}`, []);
+        }
+
+        const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as { ok: boolean; occurrences?: { id: string; status: string }[]; error?: string };
+        const updated = detail.occurrences?.find((o) => o.id === occId);
+        if (!detail.ok || !updated) {
+          return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Failed to reload occurrence: ${detail.error ?? "missing occurrence"}`, []);
+        }
+
+        const passed = updated.status === "scheduled";
+        return makeResult(
+          "completed-occurrence-force-retry",
+          "Completed occurrence requires force retry",
+          startedAt,
+          passed,
+          passed ? "Completed occurrence rejected normal retry and accepted force retry" : `Expected status scheduled after force retry, got ${updated.status}`,
+          [],
+        );
+      } catch (err) {
+        return makeResult("completed-occurrence-force-retry", "Completed occurrence requires force retry", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
+      }
+    },
+  },
+
+  // 10 ────────────────────────────────────────────────────────────────────────
+  {
     id: "recurring-event-expansion",
     name: "Recurring event: RRULE expansion",
     description: "Weekly recurring event should expand to 2+ occurrences across a 2-week range.",
@@ -539,21 +647,22 @@ export const AGENDA_TESTS: TestDefinition[] = [
   {
     id: "event-with-process",
     name: "Event with attached process produces PDF",
-    description: "Create a process with a step, attach it to an event, wait for execution, and verify a PDF artifact is produced.",
+    description: "Create a process with a real PDF-producing instruction, execute it for real, and verify a PDF artifact is attached.",
     run: async (ctx) => {
       const startedAt = Date.now();
       const log = (m: string) => { ctx.log("event-with-process", m); };
+      const NAME = "event-with-process";
+      const LABEL = "Event with attached process produces PDF";
       try {
-        // 1. Create a simple process
         const proc = await ctx.apiPost("/api/processes", {
           action: "createProcess",
           name: ctx.uniqueName("TST-proc-pdf"),
-          description: "Generate a PDF report",
+          description: "Generate a real PDF report",
           status: "draft",
           versionLabel: "",
           steps: [{
             title: "Generate PDF",
-            instruction: "Create a concise text report.",
+            instruction: "Create a short PDF report named test-report.pdf containing the title REAL PDF TEST and one short paragraph. Save it to the output files path provided in the output rules.",
             skillKey: null,
             agentId: null,
             timeoutSeconds: null,
@@ -562,32 +671,30 @@ export const AGENDA_TESTS: TestDefinition[] = [
         }) as { ok: boolean; process?: { id: string; latest_version_id: string }; error?: string };
 
         if (!proc.ok || !proc.process?.latest_version_id) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `Process create failed: ${proc.error ?? "unknown"}`, []);
+          return makeResult(NAME, LABEL, startedAt, false, `Process create failed: ${proc.error ?? "unknown"}`, []);
         }
         const pvId = proc.process.latest_version_id;
-        const eventId = proc.process.id;
         log(`Process created: ${pvId}`);
 
-        // 2. Create an active event with the process attached
+        // Keep the event draft so the test controls the only executed occurrence.
         const title = ctx.uniqueName("TST-pdf-event");
-        const startsAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+        const startsAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
         const create = await ctx.apiPost("/api/agenda/events", {
           action: "createEvent", title,
-          freePrompt: null,
+          freePrompt: "If useful, mention briefly that the PDF was created, but make sure the file itself is saved.",
           agentId: null, timezone: "Europe/Amsterdam", startsAt,
           endsAt: null, recurrenceRule: null, recurrenceUntil: null,
-          status: "active", processVersionIds: [pvId],
+          status: "draft", processVersionIds: [pvId],
           executionWindowMinutes: 30, fallbackModel: "",
           timeStepMinutes: 0,
         }) as { ok: boolean; event?: { id: string }; error?: string };
 
         if (!create.ok || !create.event?.id) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `Event create failed: ${create.error}`, []);
+          return makeResult(NAME, LABEL, startedAt, false, `Event create failed: ${create.error}`, []);
         }
         const evtId = create.event.id;
-        log(`Event created: ${evtId} at ${startsAt}`);
+        log(`Draft event created: ${evtId}`);
 
-        // 3. Inject a needs_retry occurrence so the retry endpoint accepts it
         const occRes = await ctx.apiPost("/api/agenda/events", {
           action: "testOnlyCreateNeedsRetryOccurrence",
           eventId: evtId,
@@ -595,49 +702,61 @@ export const AGENDA_TESTS: TestDefinition[] = [
         }) as { ok: boolean; occurrenceId?: string; error?: string };
 
         if (!occRes.ok || !occRes.occurrenceId) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `Failed to inject occurrence: ${occRes.error ?? "unknown"}`, []);
+          return makeResult(NAME, LABEL, startedAt, false, `Failed to inject occurrence: ${occRes.error ?? "unknown"}`, []);
         }
         const occId = occRes.occurrenceId;
         log(`Injected occurrence: ${occId}`);
 
-        // 4. Skip the retry trigger — go straight to injecting the test result
-        // (The retry endpoint would enqueue to BullMQ which we don't need for this test)
-
-        // 5. Simulate completed execution with a PDF artifact
-        const inject = await ctx.apiPost("/api/agenda/events", {
-          action: "testOnlyInjectRunWithPdf",
-          eventId: evtId,
-          occurrenceId: occId,
-        }) as { ok: boolean; runAttemptId?: string; artifact?: string; error?: string };
-        if (!inject.ok) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `PDF injection failed: ${inject.error}`, []);
+        const retry = await ctx.apiPost(`/api/agenda/events/${evtId}/occurrences/${occId}`, {}) as { ok: boolean; error?: string };
+        if (!retry.ok) {
+          return makeResult(NAME, LABEL, startedAt, false, `Retry failed: ${retry.error ?? "unknown"}`, []);
         }
-        log(`PDF artifact injected: ${inject.artifact}`);
+        log("Enqueued for real execution");
 
-        // 6. Verify the run steps contain the PDF artifact
-        const runsRes = await ctx.apiGet(`/api/agenda/events/${evtId}/occurrences/${occId}/runs`) as { ok: boolean; attempts?: unknown[]; steps?: { id: string; artifact_payload: unknown }[]; error?: string };
+        let runsRes: {
+          ok: boolean;
+          attempts?: { status?: string; error_message?: string | null; summary?: string | null }[];
+          steps?: { id: string; artifact_payload: unknown; error_message?: string | null; status?: string }[];
+          error?: string;
+        } = { ok: false, attempts: [], steps: [] };
+
+        for (let poll = 0; poll < 12; poll++) {
+          await ctx.sleep(10000);
+          runsRes = await ctx.apiGet(`/api/agenda/events/${evtId}/occurrences/${occId}/runs`) as typeof runsRes;
+          const attempt = runsRes.attempts?.[0];
+          const stepErr = runsRes.steps?.find((s) => s.error_message)?.error_message ?? attempt?.error_message ?? "";
+          log(`Poll ${poll + 1}: attempt=${attempt?.status ?? "none"}, steps=${runsRes.steps?.length ?? 0}, err=${stepErr || "none"}`);
+          if (isBillingOrCapacityError(stepErr)) {
+            return makeResult(NAME, LABEL, startedAt, false, `Run failed due billing/capacity rejection: ${stepErr}`, []);
+          }
+          if (attempt?.status === "failed") {
+            return makeResult(NAME, LABEL, startedAt, false, `Real PDF run failed: ${attempt?.summary ?? attempt?.error_message ?? "unknown"}`, []);
+          }
+          if (attempt?.status === "succeeded" && (runsRes.steps?.length ?? 0) > 0) break;
+        }
+
         log(`Runs response: ok=${runsRes.ok}, attempts=${runsRes.attempts?.length ?? 0}, steps=${runsRes.steps?.length ?? 0}`);
-        if (!runsRes.ok) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `Runs fetch failed: ${runsRes.error}`, []);
+        if (!runsRes.ok || runsRes.attempts?.[0]?.status !== "succeeded") {
+          return makeResult(NAME, LABEL, startedAt, false, `Expected successful real run, got: ${runsRes.attempts?.[0]?.status ?? runsRes.error ?? "unknown"}`, []);
         }
 
         const pdfStep = (runsRes.steps ?? []).find((s) => {
           let ap = s.artifact_payload;
           if (typeof ap === "string") { try { ap = JSON.parse(ap); } catch { /* ignore */ } }
           if (typeof ap === "object" && ap !== null && "files" in ap) {
-            return (ap as { files: { name: string }[] }).files.some((f) => f.name.endsWith(".pdf"));
+            return (ap as { files: { name: string; path?: string }[] }).files.some((f) => f.name.endsWith(".pdf"));
           }
           return false;
         });
 
         if (!pdfStep) {
-          return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `No PDF artifact found in run steps. Steps: ${JSON.stringify(runsRes.steps ?? [])}`, []);
+          return makeResult(NAME, LABEL, startedAt, false, `No PDF artifact found from real run. Steps: ${JSON.stringify(runsRes.steps ?? [])}`, []);
         }
 
-        log("PDF artifact verified in occurrence run steps");
-        return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, true, "Process ran and produced a PDF artifact that is attached to the occurrence", []);
+        log("PDF artifact verified from real run output");
+        return makeResult(NAME, LABEL, startedAt, true, "Real process run produced a PDF artifact that is attached to the occurrence", []);
       } catch (err) {
-        return makeResult("event-with-process", "Event with attached process produces PDF", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
+        return makeResult(NAME, LABEL, startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
       }
     },
   },
@@ -882,6 +1001,67 @@ export const AGENDA_TESTS: TestDefinition[] = [
 
   // 14b ──────────────────────────────────────────────────────────────────────
   {
+    id: "grace-window-active-create-does-not-instant-retry",
+    name: "Grace-window active create does not instantly needs_retry",
+    description: "Create an active one-time event slightly in the past but within the 5-minute grace window; it should be bumped to now, not instantly marked needs_retry.",
+    run: async (ctx) => {
+      const startedAt = Date.now();
+      const NAME = "grace-window-active-create-does-not-instant-retry";
+      const LABEL = "Grace-window active create does not instantly needs_retry";
+
+      try {
+        const create = await ctx.apiPost("/api/agenda/events", {
+          action: "createEvent",
+          title: ctx.uniqueName("TST-grace-window"),
+          freePrompt: "Grace-window create test.",
+          agentId: null,
+          timezone: "Europe/Amsterdam",
+          startsAt: new Date(Date.now() - 60_000).toISOString(),
+          endsAt: null,
+          recurrenceRule: null,
+          recurrenceUntil: null,
+          status: "active",
+          processVersionIds: [],
+          executionWindowMinutes: 30,
+          fallbackModel: "",
+          timeStepMinutes: 0,
+        }) as { ok: boolean; autoNeedsRetry?: boolean; event?: { id: string }; error?: string };
+
+        if (!create.ok || !create.event?.id) {
+          return makeResult(NAME, LABEL, startedAt, false, `Create failed: ${create.error ?? "unknown"}`, []);
+        }
+
+        if (create.autoNeedsRetry) {
+          return makeResult(NAME, LABEL, startedAt, false, "Event was incorrectly auto-marked needs_retry inside grace window", []);
+        }
+
+        const detail = await ctx.apiGet(`/api/agenda/events/${create.event.id}`) as {
+          ok: boolean;
+          occurrences?: { status: string }[];
+          error?: string;
+        };
+
+        if (!detail.ok) {
+          return makeResult(NAME, LABEL, startedAt, false, `Detail fetch failed: ${detail.error ?? "unknown"}`, []);
+        }
+
+        const bad = detail.occurrences?.some((o) => o.status === "needs_retry") ?? false;
+        return makeResult(
+          NAME,
+          LABEL,
+          startedAt,
+          !bad,
+          bad ? "Occurrence was unexpectedly marked needs_retry" : "Grace-window event stayed runnable (not instantly needs_retry)",
+          [],
+        );
+      } catch (err) {
+        return makeResult(NAME, LABEL, startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
+      }
+    },
+  },
+
+  // 14c ──────────────────────────────────────────────────────────────────────
+  {
     id: "retry-moves-scheduled-for-to-now",
     name: "Retry moves scheduled_for to now",
     description: "Inject a stale occurrence from days ago, retry it, and verify scheduled_for is updated to approximately now.",
@@ -1110,24 +1290,43 @@ export const AGENDA_TESTS: TestDefinition[] = [
         }
         log("Enqueued with executionWindowMinutes=1");
 
-        // 4. Poll for needs_retry (up to 30s)
+        // 4. Poll for worker pickup + needs_retry (up to 30s).
+        // If it stays scheduled with no attempt/steps, that's a harness/service pickup issue,
+        // not proof that missed-window logic is broken.
         let finalStatus = "scheduled";
+        let sawAttempt = false;
+        let latestAttemptStatus = "none";
         for (let i = 0; i < 6; i++) {
           await ctx.sleep(5000);
           const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as { ok: boolean; occurrences?: { id: string; status: string }[] };
           const occ = detail.occurrences?.find((o) => o.id === occId);
           finalStatus = occ?.status ?? "none";
-          log(`Poll ${i + 1}: status=${finalStatus}`);
+
+          const inspect = await ctx.apiGet(`/api/agenda/debug/run-steps?occurrenceId=${occId}`) as {
+            ok: boolean;
+            attempt?: { status?: string } | null;
+            steps?: { error_message?: string | null }[];
+            error?: string;
+          };
+          sawAttempt = sawAttempt || Boolean(inspect.attempt);
+          latestAttemptStatus = inspect.attempt?.status ?? latestAttemptStatus;
+          const latestErr = inspect.steps?.[0]?.error_message ?? "";
+          log(`Poll ${i + 1}: status=${finalStatus}, attempt=${latestAttemptStatus}, stepErr=${latestErr || "none"}`);
+          if (isBillingOrCapacityError(latestErr)) {
+            return makeResult(NAME, LABEL, startedAt, false, `Test invalid: worker hit billing/capacity rejection instead of clean missed-window handling (${latestErr})`, []);
+          }
           if (finalStatus === "needs_retry" || finalStatus === "failed") break;
         }
 
-        const passed = finalStatus === "needs_retry";
-        return makeResult(NAME, LABEL, startedAt, passed,
-          passed
-            ? "Worker correctly detected missed execution window and set needs_retry"
-            : `Expected needs_retry, got: ${finalStatus}`,
-          [],
-        );
+        if (finalStatus === "needs_retry") {
+          return makeResult(NAME, LABEL, startedAt, true, "Worker correctly detected missed execution window and set needs_retry", []);
+        }
+
+        if (!sawAttempt && finalStatus === "scheduled") {
+          return makeResult(NAME, LABEL, startedAt, false, "Worker never picked up the queued occurrence; this was a harness/service pickup failure, not a real missed-window result", []);
+        }
+
+        return makeResult(NAME, LABEL, startedAt, false, `Expected needs_retry, got status=${finalStatus}, attempt=${latestAttemptStatus}`, []);
       } catch (err) {
         return makeResult(NAME, LABEL, startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
       }
@@ -1543,21 +1742,38 @@ export const AGENDA_TESTS: TestDefinition[] = [
         const retry = await ctx.apiPost(`/api/agenda/events/${eventId}/occurrences/${occId}`, {}) as { ok: boolean; error?: string };
         if (!retry.ok) return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Retry failed: ${retry.error ?? "unknown"}`, []);
 
-        // Poll for worker to pick up and execute (up to 120s)
-        let inspect: { ok: boolean; steps?: { skill_key?: string; status?: string }[]; error?: string } = { ok: false, steps: [] };
+        // Poll for worker to pick up and execute (up to 120s), but fail fast on terminal failure
+        // and never treat billing/capacity rejection as a valid pass.
+        let inspect: {
+          ok: boolean;
+          attempt?: { status?: string } | null;
+          steps?: { skill_key?: string; status?: string; error_message?: string | null }[];
+          error?: string;
+        } = { ok: false, steps: [] };
         for (let poll = 0; poll < 12; poll++) {
           await ctx.sleep(10000);
           inspect = await ctx.apiGet(`/api/agenda/debug/run-steps?occurrenceId=${occId}`) as typeof inspect;
-          if (inspect.ok && (inspect.steps?.length ?? 0) > 0) break;
+          const attemptStatus = inspect.attempt?.status ?? "none";
+          const stepErr = inspect.steps?.find((s) => s.error_message)?.error_message ?? "";
+          if (isBillingOrCapacityError(stepErr)) {
+            return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Run failed due billing/capacity rejection: ${stepErr}`, []);
+          }
+          if (inspect.ok && attemptStatus === "failed") {
+            return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Run attempt failed before skill verification. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+          }
+          if (inspect.ok && (inspect.steps?.length ?? 0) > 0 && attemptStatus === "succeeded") break;
         }
         if (!inspect.ok) return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Inspect failed: ${inspect.error ?? "unknown"}`, []);
-
-        const used = (inspect.steps ?? []).some((s) => s.skill_key === "session-start-protocol");
-        if (!used) {
-          return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `No executed run step persisted expected skill key. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+        if (inspect.attempt?.status !== "succeeded") {
+          return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Run did not finish successfully. Attempt status: ${inspect.attempt?.status ?? "none"}` , []);
         }
 
-        return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, true, "Run step persisted expected skill key", []);
+        const used = (inspect.steps ?? []).some((s) => s.status === "succeeded" && s.skill_key === "session-start-protocol");
+        if (!used) {
+          return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `No successful run step persisted expected skill key. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+        }
+
+        return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, true, "Run step persisted expected skill key on a successful execution", []);
       } catch (err) {
         return makeResult("skill-assignment-actually-used", "Skill assignment is actually used during run", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
       }
@@ -1681,15 +1897,30 @@ export const AGENDA_TESTS: TestDefinition[] = [
           return makeResult("agenda-single-dispatch-composed-message", "Agenda run dispatches one composed model message", startedAt, false, `Retry failed: ${retry.error ?? "unknown"}`, []);
         }
 
-        // Poll for worker to pick up and execute (up to 120s)
-        let inspect: { ok: boolean; steps?: { input_payload?: { instruction?: string } }[]; error?: string } = { ok: false, steps: [] };
+        // Poll for worker to pick up and execute (up to 120s), but require success.
+        let inspect: {
+          ok: boolean;
+          attempt?: { status?: string } | null;
+          steps?: { input_payload?: { instruction?: string }; error_message?: string | null }[];
+          error?: string;
+        } = { ok: false, steps: [] };
         for (let poll = 0; poll < 12; poll++) {
           await ctx.sleep(10000);
           inspect = await ctx.apiGet(`/api/agenda/debug/run-steps?occurrenceId=${occId}`) as typeof inspect;
-          if (inspect.ok && (inspect.steps?.length ?? 0) > 0) break;
+          const stepErr = inspect.steps?.find((s) => s.error_message)?.error_message ?? "";
+          if (isBillingOrCapacityError(stepErr)) {
+            return makeResult("agenda-single-dispatch-composed-message", "Agenda run dispatches one composed model message", startedAt, false, `Run failed due billing/capacity rejection: ${stepErr}`, []);
+          }
+          if (inspect.ok && inspect.attempt?.status === "failed") {
+            return makeResult("agenda-single-dispatch-composed-message", "Agenda run dispatches one composed model message", startedAt, false, `Run failed before composed-message verification. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+          }
+          if (inspect.ok && inspect.attempt?.status === "succeeded" && (inspect.steps?.length ?? 0) > 0) break;
         }
         if (!inspect.ok || !Array.isArray(inspect.steps)) {
           return makeResult("agenda-single-dispatch-composed-message", "Agenda run dispatches one composed model message", startedAt, false, `Inspect failed: ${inspect.error ?? "unknown"}`, []);
+        }
+        if (inspect.attempt?.status !== "succeeded") {
+          return makeResult("agenda-single-dispatch-composed-message", "Agenda run dispatches one composed model message", startedAt, false, `Run did not finish successfully. Attempt status: ${inspect.attempt?.status ?? "none"}`, []);
         }
 
         if (inspect.steps.length !== 1) {
@@ -1834,18 +2065,27 @@ export const AGENDA_TESTS: TestDefinition[] = [
         }
         log("Enqueued for execution");
 
-        // 4. Poll for completion (up to 120s)
-        type StepRow = { output_payload?: { output?: string } | string; status?: string };
-        let inspect: { ok: boolean; steps?: StepRow[]; error?: string } = { ok: false, steps: [] };
+        // 4. Poll for completion (up to 120s) and fail explicitly on billing/capacity rejection.
+        type StepRow = { output_payload?: { output?: string } | string; status?: string; error_message?: string | null };
+        let inspect: { ok: boolean; attempt?: { status?: string } | null; steps?: StepRow[]; error?: string } = { ok: false, steps: [] };
         for (let poll = 0; poll < 12; poll++) {
           await ctx.sleep(10000);
           inspect = await ctx.apiGet(`/api/agenda/debug/run-steps?occurrenceId=${occId}`) as typeof inspect;
           const step = inspect.steps?.[0];
-          if (step && (step.status === "succeeded" || step.status === "failed")) break;
+          if (isBillingOrCapacityError(step?.error_message ?? "")) {
+            return makeResult(NAME, LABEL, startedAt, false, `Run failed due billing/capacity rejection: ${step?.error_message ?? "unknown"}`, []);
+          }
+          if (inspect.ok && inspect.attempt?.status === "failed") {
+            return makeResult(NAME, LABEL, startedAt, false, `Run failed before output verification. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+          }
+          if (inspect.ok && inspect.attempt?.status === "succeeded" && step && step.status === "succeeded") break;
         }
 
         if (!inspect.ok || !inspect.steps?.length) {
           return makeResult(NAME, LABEL, startedAt, false, `No run steps after polling. Steps: ${JSON.stringify(inspect.steps ?? [])}`, []);
+        }
+        if (inspect.attempt?.status !== "succeeded") {
+          return makeResult(NAME, LABEL, startedAt, false, `Run did not finish successfully. Attempt status: ${inspect.attempt?.status ?? "none"}`, []);
         }
 
         // 5. Extract output text

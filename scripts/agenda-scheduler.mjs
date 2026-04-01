@@ -11,6 +11,7 @@
 import postgres from "postgres";
 import { Queue } from "bullmq";
 import * as dns from "node:dns";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 const lookupAsync = promisify(dns.lookup.bind(dns));
@@ -116,7 +117,7 @@ async function expandOccurrences(event, from, to) {
   try {
     const { RRule } = await import("rrule");
     const tz = event.timezone || "UTC";
-    const { date: localDate, time: localTime } = extractLocalTime(startDate, tz);
+    const { time: localTime } = extractLocalTime(startDate, tz);
 
     // Expand RRULE using dtstart so it knows the series anchor
     const opts = RRule.parseString(event.recurrence_rule);
@@ -142,6 +143,47 @@ async function expandOccurrences(event, from, to) {
     if (startDate >= from && startDate <= to) return [startDate];
     return [];
   }
+}
+
+function getBullPriorityForScheduledAt(scheduledDate) {
+  const ageSec = Math.max(0, Math.floor((Date.now() - scheduledDate.getTime()) / 1000));
+  return Math.max(1, 2097152 - Math.min(ageSec, 2097151));
+}
+
+async function enqueueOccurrenceJob({ occurrenceId, eventId, title, freePrompt, agentId, timezone, processes, scheduledFor, executionWindowMinutes, fallbackModel }) {
+  const scheduledDate = new Date(scheduledFor);
+  const diffMs = scheduledDate.getTime() - Date.now();
+  const delay = Math.max(0, diffMs);
+  const queueJobId = `agenda-${occurrenceId}-${randomUUID()}`;
+
+  await agendaQueue.add(
+    "run-occurrence",
+    {
+      occurrenceId,
+      eventId,
+      title,
+      freePrompt,
+      agentId,
+      timezone,
+      processes,
+      scheduledFor: scheduledDate.toISOString(),
+      executionWindowMinutes: executionWindowMinutes || 30,
+      fallbackModel: fallbackModel || "",
+      queueJobId,
+    },
+    {
+      delay,
+      jobId: queueJobId,
+      removeOnComplete: false,
+      priority: getBullPriorityForScheduledAt(scheduledDate),
+    }
+  );
+
+  await sql`
+    update agenda_occurrences
+    set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
+    where id = ${occurrenceId} and status in ('scheduled', 'queued')
+  `;
 }
 
 async function run() {
@@ -207,29 +249,18 @@ async function run() {
         const TWO_MINUTES = 2 * 60 * 1000;
 
         if (diffMs <= TWO_MINUTES) {
-          const delay = Math.max(0, diffMs);
-
-          await agendaQueue.add(
-            "run-occurrence",
-            {
-              occurrenceId: occ.id,
-              eventId: event.id,
-              title: event.title,
-              freePrompt: event.free_prompt,
-              agentId: event.default_agent_id,
-              timezone: event.timezone,
-              processes: event.processes,
-              scheduledFor: scheduledFor.toISOString(),
-              executionWindowMinutes: event.execution_window_minutes || 30,
-              fallbackModel: event.fallback_model || "",
-            },
-            {
-              delay,
-              jobId: `agenda-${occ.id}`,
-              removeOnComplete: false,
-            }
-          );
-
+          await enqueueOccurrenceJob({
+            occurrenceId: occ.id,
+            eventId: event.id,
+            title: event.title,
+            freePrompt: event.free_prompt,
+            agentId: event.default_agent_id,
+            timezone: event.timezone,
+            processes: event.processes,
+            scheduledFor,
+            executionWindowMinutes: event.execution_window_minutes || 30,
+            fallbackModel: event.fallback_model || "",
+          });
           enqueued++;
         }
         // Future occurrences stay as 'scheduled' in DB — will be enqueued when their time comes
@@ -237,7 +268,90 @@ async function run() {
     }
   }
 
-  console.log(`[agenda-scheduler] ${new Date().toISOString()} — scanned ${rows.length} events, enqueued ${enqueued} occurrences`);
+  // Rescue pass: enqueue any due scheduled/queued occurrence directly from DB, even if it
+  // came from manual retry, test injection, or a draft event.
+  // Also mark stale queued/scheduled due occurrences as needs_retry once they are past the
+  // execution window without ever being picked up.
+  const dueOccurrences = await sql`
+    select
+      ao.id as occurrence_id,
+      ao.status as occurrence_status,
+      ao.scheduled_for,
+      ao.queue_job_id,
+      ao.queued_at,
+      ao.latest_attempt_no,
+      ae.id as event_id,
+      ae.title,
+      ae.free_prompt,
+      ae.default_agent_id,
+      ae.timezone,
+      ae.execution_window_minutes,
+      ae.fallback_model,
+      coalesce(
+        (select json_agg(json_build_object(
+          'process_version_id', aep.process_version_id,
+          'sort_order', aep.sort_order
+        ) order by aep.sort_order)
+        from agenda_event_processes aep
+        where aep.agenda_event_id = ae.id),
+        '[]'
+      ) as processes
+    from agenda_occurrences ao
+    join agenda_events ae on ae.id = ao.agenda_event_id
+    where ao.status in ('scheduled', 'queued')
+      and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
+      and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
+  `;
+
+  let rescued = 0;
+  let markedNeedsRetry = 0;
+  for (const row of dueOccurrences) {
+    const scheduledDate = new Date(row.scheduled_for);
+    const windowMinutes = Number(row.execution_window_minutes || 30);
+    const ageMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
+
+    if (ageMinutes > windowMinutes) {
+      const reason = `Missed execution window before worker pickup — ${Math.round(ageMinutes)}min past ${windowMinutes}min limit`;
+      const attemptNo = Number(row.latest_attempt_no ?? 0) + 1;
+      await sql`
+        update agenda_occurrences
+        set status = 'needs_retry', queue_job_id = null, queued_at = null, latest_attempt_no = ${attemptNo}, last_retry_reason = ${reason}
+        where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
+      `;
+      await sql`
+        insert into agenda_run_attempts (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
+        values (${row.occurrence_id}, ${attemptNo}, ${row.queue_job_id ?? null}, 'failed', now(), now(), ${reason}, ${reason})
+      `;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.occurrence_id })})`;
+      markedNeedsRetry++;
+      continue;
+    }
+
+    const queuedAt = row.queued_at ? new Date(row.queued_at) : null;
+    const staleQueued = !queuedAt || (now.getTime() - queuedAt.getTime()) > 90_000;
+    if (!staleQueued) continue;
+
+    try {
+      await enqueueOccurrenceJob({
+        occurrenceId: row.occurrence_id,
+        eventId: row.event_id,
+        title: row.title,
+        freePrompt: row.free_prompt,
+        agentId: row.default_agent_id,
+        timezone: row.timezone,
+        processes: row.processes,
+        scheduledFor: row.scheduled_for,
+        executionWindowMinutes: row.execution_window_minutes || 30,
+        fallbackModel: row.fallback_model || "",
+      });
+      rescued++;
+      enqueued++;
+    } catch (err) {
+      console.warn(`[agenda-scheduler] Rescue enqueue failed for ${row.occurrence_id}:`, err.message);
+    }
+  }
+
+  console.log(`[agenda-scheduler] ${new Date().toISOString()} — scanned ${rows.length} events, rescue-scanned ${dueOccurrences.length} due occurrences, rescued ${rescued}, auto-marked-needs_retry ${markedNeedsRetry}, enqueued ${enqueued} occurrences`);
 }
 
 // ── Service heartbeat on startup + every 30s ──────────────────────────────────

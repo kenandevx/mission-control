@@ -23,7 +23,7 @@ export async function GET(): Promise<NextResponse> {
         ae.title AS event_title,
         ae.default_agent_id,
         (
-          SELECT ara.error_message
+          SELECT COALESCE(ara.error_message, ara.summary)
           FROM agenda_run_attempts ara
           WHERE ara.occurrence_id = ao.id
           ORDER BY ara.attempt_no DESC

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+
+const APPROVAL_KEY = "mc-agenda-test-approval-mode";
 import type { TestDefinition, TestResult, TestRun, TestContext, AgendaSettings } from "./agenda-test-definitions";
 
 export type { TestDefinition, TestResult, TestRun, TestContext };
@@ -38,9 +40,14 @@ export function useAgendaTests(tests: TestDefinition[]) {
   const [liveLogs, setLiveLogs] = useState<Record<string, string[]>>(() =>
     loadFromStorage<Record<string, string[]>>(LOGS_KEY, {})
   );
+  const [requireApprovalBetweenTests, setRequireApprovalBetweenTests] = useState<boolean>(() =>
+    loadFromStorage<boolean>(APPROVAL_KEY, true)
+  );
+  const [waitingApprovalForTestId, setWaitingApprovalForTestId] = useState<string | null>(null);
 
   const runningRef = useRef(false);
   const interruptedRef = useRef(false);
+  const approvalResolverRef = useRef<(() => void) | null>(null);
 
   // Persist whenever state changes (outside of active run — we save final results)
   useEffect(() => {
@@ -54,6 +61,10 @@ export function useAgendaTests(tests: TestDefinition[]) {
       saveToStorage(LOGS_KEY, liveLogs);
     }
   }, [liveLogs]);
+
+  useEffect(() => {
+    saveToStorage(APPROVAL_KEY, requireApprovalBetweenTests);
+  }, [requireApprovalBetweenTests]);
 
   const log = useCallback((testId: string, msg: string) => {
     setLiveLogs((prev) => {
@@ -77,33 +88,15 @@ export function useAgendaTests(tests: TestDefinition[]) {
     return res.json() as Promise<Record<string, unknown>>;
   }, []);
 
-  const getAgendaStepMinutes = useCallback((): number => {
-    try {
-      const raw = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
-      if (!Number.isFinite(raw)) return 15;
-      return Math.max(0, Math.floor(raw));
-    } catch {
-      return 15;
-    }
+  const apiPost = useCallback(async (path: string, body: Record<string, unknown>) => {
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return res.json() as Promise<Record<string, unknown>>;
   }, []);
 
-  const apiPost = useCallback(async (path: string, body: Record<string, unknown>) => {
-    const payload = { ...body };
-    if (path === "/api/agenda/events" && payload.timeStepMinutes === undefined) {
-      payload.timeStepMinutes = getAgendaStepMinutes();
-    }
-    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    return res.json() as Promise<Record<string, unknown>>;
-  }, [getAgendaStepMinutes]);
-
   const apiPatch = useCallback(async (path: string, body: Record<string, unknown>) => {
-    const payload = { ...body };
-    if (path.startsWith("/api/agenda/events/") && payload.timeStepMinutes === undefined) {
-      payload.timeStepMinutes = getAgendaStepMinutes();
-    }
-    const res = await fetch(path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const res = await fetch(path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return res.json() as Promise<Record<string, unknown>>;
-  }, [getAgendaStepMinutes]);
+  }, []);
 
   const apiDelete = useCallback(async (path: string) => {
     const res = await fetch(path, { method: "DELETE" });
@@ -149,6 +142,21 @@ export function useAgendaTests(tests: TestDefinition[]) {
     resetTestEvents,
   }), [log, apiGet, apiPost, apiPatch, apiDelete, sleep, uniqueName, resetTestEvents]);
 
+  const waitForApproval = useCallback(async (testId: string) => {
+    setWaitingApprovalForTestId(testId);
+    await new Promise<void>((resolve) => {
+      approvalResolverRef.current = () => {
+        approvalResolverRef.current = null;
+        setWaitingApprovalForTestId(null);
+        resolve();
+      };
+    });
+  }, []);
+
+  const approveNextTest = useCallback(() => {
+    approvalResolverRef.current?.();
+  }, []);
+
   const runTests = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
@@ -163,18 +171,31 @@ export function useAgendaTests(tests: TestDefinition[]) {
     setTestRun(initial);
     saveToStorage(STORAGE_KEY, initial);
 
-    // Fetch settings once for the entire run
+    // Fetch settings once for the entire run.
+    // Test timing rules:
+    // - setting missing/unset => use 15 minutes
+    // - setting = 0 (free time) => use 1 minute for tests so dev runs stay fast
+    // - setting > 0 => use that exact value
     let agendaSettings: AgendaSettings;
     try {
       const raw = await apiGet("/api/agenda/settings") as Record<string, unknown>;
+      const rawInterval = Number(raw.schedulingIntervalMinutes);
+      const schedulingIntervalMinutes = Number.isFinite(rawInterval) && rawInterval >= 0 ? Math.floor(rawInterval) : 15;
+      const testSchedulingIntervalMinutes = schedulingIntervalMinutes === 0 ? 1 : schedulingIntervalMinutes;
       agendaSettings = {
-        schedulingIntervalMinutes: Number(raw.schedulingIntervalMinutes ?? 15),
+        schedulingIntervalMinutes,
+        testSchedulingIntervalMinutes,
         defaultExecutionWindowMinutes: Number(raw.defaultExecutionWindowMinutes ?? 30),
         maxRetries: Number(raw.maxRetries ?? 1),
         ...raw,
       };
     } catch {
-      agendaSettings = { schedulingIntervalMinutes: 15, defaultExecutionWindowMinutes: 30, maxRetries: 1 };
+      agendaSettings = {
+        schedulingIntervalMinutes: 15,
+        testSchedulingIntervalMinutes: 15,
+        defaultExecutionWindowMinutes: 30,
+        maxRetries: 1,
+      };
     }
 
     // Clean slate once at the start of the run
@@ -186,6 +207,18 @@ export function useAgendaTests(tests: TestDefinition[]) {
 
     for (const test of tests) {
       if (interruptedRef.current) break;
+
+      if (!test.skipReset) {
+        try {
+          const cleanCtx = buildCtx(agendaSettings);
+          const cleaned = await cleanCtx.resetTestEvents();
+          log(test.id, `Pre-test reset removed ${cleaned} event(s)`);
+        } catch (err) {
+          log(test.id, `Pre-test reset warning: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        log(test.id, "skipReset=true — preserving prior agenda state for this test");
+      }
 
       const runningResult: TestResult = {
         id: test.id,
@@ -223,8 +256,24 @@ export function useAgendaTests(tests: TestDefinition[]) {
         saveToStorage(STORAGE_KEY, next);
         return next;
       });
+
+      if (requireApprovalBetweenTests && !interruptedRef.current) {
+        log(test.id, "Paused — waiting for manual approval before reset/next test");
+        await waitForApproval(test.id);
+      }
+
+      if (!test.skipReset && !interruptedRef.current) {
+        try {
+          const cleanCtx = buildCtx(agendaSettings);
+          const cleaned = await cleanCtx.resetTestEvents();
+          log(test.id, `Post-test reset removed ${cleaned} event(s)`);
+        } catch (err) {
+          log(test.id, `Post-test reset warning: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     }
 
+    setWaitingApprovalForTestId(null);
     runningRef.current = false;
     const finished: TestRun = {
       id: runId,
@@ -235,10 +284,11 @@ export function useAgendaTests(tests: TestDefinition[]) {
     };
     setTestRun(finished);
     saveToStorage(STORAGE_KEY, finished);
-  }, [tests, buildCtx]);
+  }, [tests, buildCtx, apiGet, log, requireApprovalBetweenTests, waitForApproval]);
 
   const interruptTests = useCallback(() => {
     interruptedRef.current = true;
+    approvalResolverRef.current?.();
   }, []);
 
   const clearResults = useCallback(() => {
@@ -275,6 +325,10 @@ export function useAgendaTests(tests: TestDefinition[]) {
   return {
     testRun,
     liveLogs,
+    requireApprovalBetweenTests,
+    setRequireApprovalBetweenTests,
+    waitingApprovalForTestId,
+    approveNextTest,
     runTests,
     interruptTests,
     clearResults,

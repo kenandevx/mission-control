@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +18,7 @@ import {
   IconBug,
   IconShieldCheck,
   IconRefresh,
+  IconPlayerTrackNext,
 } from "@tabler/icons-react";
 import { useAgendaTests } from "./use-agenda-tests";
 import { AGENDA_TESTS } from "./agenda-test-definitions";
@@ -155,7 +158,18 @@ export function AgendaTestPanel() {
   const [open, setOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [expandedTests, setExpandedTests] = useState<Set<string>>(new Set());
-  const { testRun, liveLogs, runTests, interruptTests, clearResults, cleanupAllEvents } = useAgendaTests(AGENDA_TESTS);
+  const {
+    testRun,
+    liveLogs,
+    requireApprovalBetweenTests,
+    setRequireApprovalBetweenTests,
+    waitingApprovalForTestId,
+    approveNextTest,
+    runTests,
+    interruptTests,
+    clearResults,
+    cleanupAllEvents,
+  } = useAgendaTests(AGENDA_TESTS);
 
   const devModeEnabled = useSyncExternalStore(
     (onStoreChange) => {
@@ -285,8 +299,26 @@ export function AgendaTestPanel() {
           </div>
 
           {/* Summary bar */}
-          <div className="px-5 py-3 border-b bg-muted/20 shrink-0">
+          <div className="px-5 py-3 border-b bg-muted/20 shrink-0 space-y-3">
             <SummaryBar results={testRun?.results ?? {}} running={!!isRunning} />
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="agenda-test-approval-mode"
+                  checked={requireApprovalBetweenTests}
+                  onCheckedChange={(checked) => setRequireApprovalBetweenTests(checked === true)}
+                />
+                <Label htmlFor="agenda-test-approval-mode" className="text-xs text-muted-foreground cursor-pointer">
+                  Approve before reset + next test
+                </Label>
+              </div>
+              {waitingApprovalForTestId && (
+                <Button size="sm" onClick={approveNextTest} className="gap-1.5 cursor-pointer">
+                  <IconPlayerTrackNext className="size-3.5" />
+                  Approve Next Test
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Test list */}
@@ -320,7 +352,12 @@ export function AgendaTestPanel() {
           </ScrollArea>
 
           {/* Footer */}
-          <div className="px-5 py-2.5 border-t bg-muted/10 shrink-0">
+          <div className="px-5 py-2.5 border-t bg-muted/10 shrink-0 space-y-1">
+            {waitingApprovalForTestId && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 text-center font-medium">
+                Paused after current test. Review logs, then approve to continue with reset + next test.
+              </p>
+            )}
             <p className="text-[10px] text-muted-foreground text-center">
               Tests run against live database. Some tests (scheduler polling) take up to 3 min.
               Gateway restarts do not break the test run — results are stored in component state.

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { rm, mkdir } from "node:fs/promises";
@@ -35,20 +35,40 @@ export async function POST(request: Request) {
 
     if (action === "update") {
       try {
+        const sql = (await import("@/lib/local-db")).getSql();
+        const running = await sql`
+          select count(*)::int as count
+          from agenda_occurrences
+          where status = 'running'
+        `;
+        const runningCount = Number(running[0]?.count ?? 0);
+        if (runningCount > 0) {
+          return fail(`Cannot update while ${runningCount} agenda event${runningCount === 1 ? " is" : "s are"} still running. Wait until execution finishes, then update again.`, 409);
+        }
+
         const { stdout: pullOut } = await execFileAsync("git", ["pull", "--ff-only"], { cwd: PROJECT_ROOT, timeout: 30000 });
         await execFileAsync("npm", ["install", "--no-audit", "--no-fund"], { cwd: PROJECT_ROOT, timeout: 120000 });
-        // Run DB migrations (schema.sql uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS, safe to re-run)
         try {
           await execFileAsync("docker", ["compose", "exec", "-T", "db", "psql", "-U", "openclaw", "-d", "mission_control", "-f", "/workspace/db/schema.sql"], { cwd: PROJECT_ROOT, timeout: 30000 });
         } catch (dbErr) {
           console.warn("[system] DB migration warning (non-fatal):", dbErr instanceof Error ? dbErr.message : dbErr);
         }
         await execFileAsync("npx", ["next", "build"], { cwd: PROJECT_ROOT, timeout: 180000 });
+
         const mcServices = resolve(PROJECT_ROOT, "scripts/mc-services.sh");
         if (existsSync(mcServices)) {
-          await execFileAsync("bash", [mcServices, "restart"], { cwd: PROJECT_ROOT, timeout: 30000 });
+          const child = spawn("bash", ["-lc", `sleep 1; bash '${mcServices}' restart`], {
+            cwd: PROJECT_ROOT,
+            detached: true,
+            stdio: "ignore",
+          });
+          child.unref();
         }
-        return ok({ message: "Update complete. Migrations applied, services restarted.", pullOutput: pullOut.trim() });
+
+        return ok({
+          message: "Update complete. Migrations applied. Services are restarting in the background.",
+          pullOutput: pullOut.trim(),
+        });
       } catch (e) {
         return fail(e instanceof Error ? e.message : "Update failed");
       }
@@ -58,7 +78,6 @@ export async function POST(request: Request) {
       try {
         const mcServices = resolve(PROJECT_ROOT, "scripts/mc-services.sh");
 
-        // Keep Next.js running (dev/start), only wipe DB contents and restart workers.
         await execFileAsync(
           "docker",
           ["compose", "exec", "-T", "db", "psql", "-U", "openclaw", "-d", "mission_control", "-c", "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"],
@@ -69,12 +88,10 @@ export async function POST(request: Request) {
           timeout: 120000,
         });
 
-        // Purge all runtime-generated artifacts inside this workspace.
         const artifactsRoot = resolve(PROJECT_ROOT, "runtime-artifacts");
         await rm(artifactsRoot, { recursive: true, force: true });
         await mkdir(artifactsRoot, { recursive: true });
 
-        // Restart only persistent worker services (not nextjs), so dev/start UI stays alive.
         if (existsSync(mcServices)) {
           for (const svc of ["task-worker", "bridge-logger", "agenda-scheduler", "agenda-worker"]) {
             await execFileAsync("bash", [mcServices, "restart", svc], { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
@@ -94,7 +111,7 @@ export async function POST(request: Request) {
           await execFileAsync("bash", [mcServices, "stop"], { cwd: PROJECT_ROOT, timeout: 15000 }).catch(() => {});
         }
         await execFileAsync("docker", ["compose", "down", "--volumes", "--remove-orphans"], { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
-        for (const cmd of ["mc-services", "mc-update", "mc-clean"]) {
+        for (const cmd of ["mc-install", "mc-clean", "mc-update", "mc-uninstall", "mc-services", "mc-dev"]) {
           await execFileAsync("rm", ["-f", `/usr/local/bin/${cmd}`]).catch(() => {});
         }
         return ok({ message: "Mission Control uninstalled. Services stopped, volumes removed. You can safely delete this directory." });

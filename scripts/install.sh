@@ -45,7 +45,7 @@ echo ""
 
 # ── Prerequisites ───────────────────────────────────────────
 step "Checking prerequisites ..."
-for cmd in docker docker-compose git node npm; do
+for cmd in docker git node npm openssl; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     err "Missing required command: $cmd"
     exit 1
@@ -148,12 +148,8 @@ info "Schema initialized."
 step "Installing npm dependencies ..."
 npm install 2>&1 | tail -3
 
-if [ ! -d ".next" ]; then
-  step "Building production Next.js ..."
-  npm run build 2>&1 | tail -5
-else
-  info "Production build already exists — skipping. Run 'npm run build' to rebuild."
-fi
+step "Building production Next.js ..."
+npm run build 2>&1 | tail -5
 
 # ── mc-services: start host-level daemons ────────────────────
 step "Starting all services (task-worker, gateway-sync, bridge-logger, Next.js) ..."

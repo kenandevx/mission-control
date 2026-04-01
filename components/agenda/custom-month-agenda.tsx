@@ -152,9 +152,12 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
 
 function RunningBadge() {
   return (
-    <span className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-wider leading-none text-blue-600 animate-pulse">
-      <span className="inline-block size-2 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-      Running
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-indigo-700 dark:text-indigo-300 shadow-sm ring-1 ring-indigo-500/20">
+      <span className="relative inline-flex size-3 shrink-0 items-center justify-center">
+        <span className="absolute inset-0 rounded-full bg-indigo-500/30 animate-ping" />
+        <span className="size-3 rounded-full border-[2.5px] border-indigo-500 border-t-transparent animate-spin" />
+      </span>
+      <span className="animate-pulse">Running</span>
     </span>
   );
 }
@@ -202,7 +205,10 @@ function EventPill({ event }: { event: CalendarEvent }) {
 
   return (
     <div
-      className="flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95"
+      className={[
+        "flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95",
+        event.latestResult === "running" ? "shadow-[0_0_0_1px_rgba(99,102,241,0.18),0_8px_24px_rgba(99,102,241,0.18)] ring-1 ring-indigo-400/20" : "",
+      ].join(" ")}
       style={{
         backgroundColor: bg,
         borderLeft: `3px solid ${dotColor}`,
@@ -284,7 +290,10 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
 
   return (
     <div
-      className="flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95"
+      className={[
+        "flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95",
+        event.latestResult === "running" ? "shadow-[0_0_0_1px_rgba(99,102,241,0.18),0_12px_28px_rgba(99,102,241,0.22)] ring-1 ring-indigo-400/25" : "",
+      ].join(" ")}
       style={{
         backgroundColor: bg,
         borderLeft: `4px solid ${dotColor}`,

@@ -283,12 +283,16 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
   }, [searchParams, loading, handleEventClick]);
 
   const handleRetry = useCallback(
-    async (occurrenceId: string) => {
+    async (occurrenceId: string, options?: { force?: boolean }) => {
       if (!selectedEvent) return;
       try {
         const res = await fetch(
           `/api/agenda/events/${selectedEvent.id}/occurrences/${occurrenceId}`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(options?.force ? { force: true } : {}),
+          }
         );
         const json = await res.json();
         if (json.ok) {

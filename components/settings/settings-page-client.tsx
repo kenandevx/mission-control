@@ -246,11 +246,14 @@ export function SettingsPageClient(): React.ReactNode {
       if (json.ok) {
         toast.success(json.message || "Update complete!");
         setUpdateInfo(null);
+        setTimeout(() => {
+          window.location.reload();
+        }, 2500);
       } else {
         toast.error(json.error || "Update failed");
       }
     } catch {
-      toast.error("Update failed — check logs");
+      toast.error("Update failed before completion — check logs if services did not come back");
     } finally {
       setUpdating(false);
     }
