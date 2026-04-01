@@ -2,7 +2,7 @@
 # ============================================================
 # OpenClaw Mission Control — Update Script
 # Pull latest changes, install deps, run migrations, rebuild,
-# and restart services. 
+# and restart services.
 # ============================================================
 
 set -euo pipefail
