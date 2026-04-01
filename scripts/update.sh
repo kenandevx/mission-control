@@ -49,8 +49,18 @@ if [ -f .env ]; then
   set +a
 fi
 
+# Ensure npm installs devDependencies too
+unset NODE_ENV NPM_CONFIG_PRODUCTION npm_config_production
+
 step "Installing npm dependencies ..."
-env -u NODE_ENV npm install --no-audit --no-fund
+npm install --include=dev --no-audit --no-fund
+
+# Guard for next.config.ts requiring TypeScript
+if [ -f next.config.ts ] && [ ! -d node_modules/typescript ]; then
+  err "next.config.ts exists, but TypeScript is not installed."
+  err "Add \"typescript\" to devDependencies in package.json and run the update again."
+  exit 1
+fi
 
 step "Applying database schema ..."
 if [ ! -f db/schema.sql ]; then
@@ -70,7 +80,7 @@ step "Building production Next.js ..."
 rm -rf .next
 if ! env -u NODE_ENV NODE_ENV=production npm run build; then
   err "Next.js production build failed."
-  err "This is an application build error, not just an update-script issue."
+  err "If the error mentions next.config.ts and missing TypeScript, add TypeScript to devDependencies."
   exit 1
 fi
 
@@ -80,4 +90,3 @@ if [ -f scripts/mc-services.sh ]; then
 fi
 
 info "Update complete."
- 
