@@ -689,6 +689,7 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 | Services all stopped | `mc-services start` — watchdog auto-restarts on future crashes |
 | Cleanup status stuck as 'pending' | Worker restart triggers `recoverPendingCleanups()` automatically |
 | Agent lock stuck | Stale lock recovery runs every 5 min, force-deletes locks >20 min old |
+| docker volume rm mission-control_pgdata -> use this if install failed |
 
 ## Database
 
