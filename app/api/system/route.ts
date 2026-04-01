@@ -53,7 +53,10 @@ export async function POST(request: Request) {
         } catch (dbErr) {
           console.warn("[system] DB migration warning (non-fatal):", dbErr instanceof Error ? dbErr.message : dbErr);
         }
-        await execFileAsync("npx", ["next", "build"], { cwd: PROJECT_ROOT, timeout: 180000 });
+        await execFileAsync("bash", ["-lc", "env -u NODE_ENV NODE_ENV=production npm run build"], {
+          cwd: PROJECT_ROOT,
+          timeout: 180000,
+        });
 
         const mcServices = resolve(PROJECT_ROOT, "scripts/mc-services.sh");
         if (existsSync(mcServices)) {

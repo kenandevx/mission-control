@@ -244,11 +244,12 @@ export function SettingsPageClient(): React.ReactNode {
       });
       const json = await res.json();
       if (json.ok) {
-        toast.success(json.message || "Update complete!");
-        setUpdateInfo(null);
+        toast.success("Update complete. Reopening the refreshed app in a moment…");
+        setUpdateInfo({ behind: 0, latestCommit: "" });
         setTimeout(() => {
-          window.location.reload();
-        }, 2500);
+          const nextUrl = `/settings?updated=${Date.now()}`;
+          window.location.replace(nextUrl);
+        }, 4000);
       } else {
         toast.error(json.error || "Update failed");
       }
@@ -681,24 +682,6 @@ export function SettingsPageClient(): React.ReactNode {
           </Button>
         </SettingRow>
 
-        <SettingRow
-          label="Uninstall"
-          description="Stop all services, remove Docker volumes, and clean up symlinks. You'll need to re-run install.sh to set up again."
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setUninstallDialogOpen(true);
-              setUninstallConfirmText("");
-            }}
-            disabled={uninstalling}
-            className="shrink-0 cursor-pointer border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground h-9 px-4 gap-2"
-          >
-            {uninstalling ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
-            Uninstall
-          </Button>
-        </SettingRow>
       </div>
     </section>
   );
