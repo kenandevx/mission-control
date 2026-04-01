@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # OpenClaw Mission Control — Bootstrap Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/claw-arsenal/mission-control/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/install.sh | bash
 #
 # Default install location: ~/.openclaw/workspace/mission-control
 # (inside the OpenClaw workspace — matches openclaw setup layout)
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # ── Constants ───────────────────────────────────────────────
-GIT_REPO="git@github.com:claw-arsenal/mission-control.git"
+GIT_REPO="git@github.com:kenandevx/mission-control.git"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 DEFAULT_DIR="$HOME/.openclaw/workspace/mission-control"
 RUN_AS="${RUN_AS:-$(whoami)}"
@@ -70,7 +70,7 @@ if ssh -T git@github.com 2>/dev/null | grep -q "successfully"; then
   info "SSH access to GitHub — OK"
 else
   warn "No SSH access to GitHub. Switching to HTTPS clone."
-  GIT_REPO="https://github.com/claw-arsenal/mission-control.git"
+  GIT_REPO="https://github.com/kenandevx/mission-control.git"
 fi
 echo ""
 

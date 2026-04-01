@@ -20,7 +20,7 @@ For the detailed running history, see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ```bash
 # Install (clone + env + DB + build — everything in one command)
-curl -fsSL https://github.com/kenandevx/mission-control/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/install.sh | bash
 
 # Development
 npm run dev            # Start DB + all services + Next.js dev server
