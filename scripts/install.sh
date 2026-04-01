@@ -4,6 +4,7 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
 #
 # Default install location: ~/.openclaw/workspace/mission-control
+# (inside the OpenClaw workspace — matches openclaw setup layout)
 # Override with: INSTALL_DIR=/path/to/dir bash -c "$(curl ...)"
 # ============================================================
 
@@ -16,6 +17,8 @@ GIT_REPO="$GIT_REPO_SSH"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 DEFAULT_DIR="$HOME/.openclaw/workspace/mission-control"
 RUN_AS="${RUN_AS:-$(whoami)}"
+DB_READY_TIMEOUT="${DB_READY_TIMEOUT:-60}"
+DB_INIT_TIMEOUT="${DB_INIT_TIMEOUT:-120}"
 
 # ── Colors ──────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -24,10 +27,10 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[install]${NC} $1"; }
-warn() { echo -e "${YELLOW}[install]${NC} $1"; }
-err()  { echo -e "${RED}[install]${NC} $1" >&2; }
-step() { echo -e "${CYAN}[install]${NC} $1"; }
+info()  { echo -e "${GREEN}[install]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[install]${NC} $1"; }
+err()   { echo -e "${RED}[install]${NC} $1" >&2; }
+step()  { echo -e "${CYAN}[install]${NC} $1"; }
 
 # ── Header ──────────────────────────────────────────────────
 echo ""
@@ -36,7 +39,7 @@ echo "║    OpenClaw Mission Control — Bootstrap Installer     ║"
 echo "╚═══════════════════════════════════════════════════════╝"
 echo ""
 
-# ── Resolve install directory ──────────────────────────────
+# ── Resolve install directory ───────────────────────────────
 if [ -n "${INSTALL_DIR:-}" ]; then
   :
 elif [ -d "$HOME/.openclaw/workspace/mission-control/.git" ]; then
@@ -50,7 +53,7 @@ fi
 info "Installing to: $INSTALL_DIR"
 echo ""
 
-# ── Prerequisites ──────────────────────────────────────────
+# ── Prerequisites ───────────────────────────────────────────
 step "Checking prerequisites ..."
 for cmd in docker git node npm openssl; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -66,12 +69,13 @@ if [ "$(printf '%s\n' "20.10.0" "$DOCKER_VERSION" | sort -V | head -n1)" != "20.
 fi
 info "Docker $DOCKER_VERSION — OK"
 
+# Check for Redis (required for BullMQ)
 if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
   warn "Redis not found. BullMQ requires Redis."
   warn "Install: sudo apt install redis-server"
 fi
 
-# ── Git transport check ────────────────────────────────────
+# ── Git transport check ─────────────────────────────────────
 step "Checking GitHub repository access ..."
 if git ls-remote --heads "$GIT_REPO_SSH" "$GIT_BRANCH" >/dev/null 2>&1; then
   info "SSH access to GitHub repo — OK"
@@ -80,9 +84,10 @@ else
   warn "No SSH access to GitHub repo. Switching to HTTPS clone."
   GIT_REPO="$GIT_REPO_HTTPS"
 fi
+info "Using repository: $GIT_REPO"
 echo ""
 
-# ── Clone or update ────────────────────────────────────────
+# ── Clone or update ─────────────────────────────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
   info "Existing install found at $INSTALL_DIR"
   step "Pulling latest changes ..."
@@ -95,10 +100,9 @@ else
   cd "$INSTALL_DIR"
 fi
 
-# ── Environment setup ──────────────────────────────────────
+# ── Environment setup ───────────────────────────────────────
 if [ ! -f .env ]; then
   step "Creating .env from template ..."
-
   POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
   API_USER="admin"
   API_PASS="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
@@ -115,7 +119,6 @@ OPENCLAW_GATEWAY_TOKEN=
 EOF
 
   chmod 600 .env
-
   warn ".env created — credentials:"
   echo "  POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
   echo "  API_USER=${API_USER}"
@@ -129,44 +132,113 @@ fi
 
 cp .env .env.local 2>/dev/null || true
 
-# ── Runtime directories ────────────────────────────────────
+# shellcheck disable=SC1091
+set -a
+source .env
+set +a
+
+# ── Runtime directories ─────────────────────────────────────
 mkdir -p .runtime/bridge-logger .runtime/pids .runtime/logs
 touch .runtime/bridge-logger/bridge-logger.lock .runtime/bridge-logger/offsets.json
 chmod 666 .runtime/bridge-logger/bridge-logger.lock .runtime/bridge-logger/offsets.json
 
-# ── Docker: start database only ────────────────────────────
+# ── Docker: start database only ─────────────────────────────
 step "Starting database container ..."
 docker compose up -d db
 docker compose up -d db-init
 
 step "Waiting for database to be ready ..."
-until docker compose exec -T db pg_isready -U openclaw -d mission_control >/dev/null 2>&1; do
+db_ready=0
+for i in $(seq 1 "$DB_READY_TIMEOUT"); do
+  if ! docker compose ps db 2>/dev/null | grep -q "running\|healthy\|Up"; then
+    echo ""
+    err "Database container is not running."
+    docker compose ps || true
+    docker compose logs db --tail=100 || true
+    exit 1
+  fi
+
+  if docker compose exec -T db pg_isready -U openclaw -d mission_control >/dev/null 2>&1; then
+    db_ready=1
+    break
+  fi
+
   printf "."
   sleep 1
 done
 echo ""
+
+if [ "$db_ready" -ne 1 ]; then
+  err "Timed out waiting for database to be ready after ${DB_READY_TIMEOUT}s."
+  docker compose ps || true
+  docker compose logs db --tail=100 || true
+  exit 1
+fi
+
 info "Database ready."
 
 step "Waiting for schema initialization ..."
-while docker compose ps db-init 2>/dev/null | grep -q "Up"; do
-  printf "."
-  sleep 1
+db_init_done=0
+for i in $(seq 1 "$DB_INIT_TIMEOUT"); do
+  db_init_status="$(docker compose ps db-init 2>/dev/null || true)"
+
+  if [ -z "$db_init_status" ]; then
+    warn "db-init service not found in docker compose status output."
+    db_init_done=1
+    break
+  fi
+
+  if echo "$db_init_status" | grep -q "Exited (0)"; then
+    db_init_done=1
+    break
+  fi
+
+  if echo "$db_init_status" | grep -q "Exited (" && ! echo "$db_init_status" | grep -q "Exited (0)"; then
+    echo ""
+    err "Schema initialization failed."
+    docker compose ps || true
+    docker compose logs db-init --tail=100 || true
+    exit 1
+  fi
+
+  if echo "$db_init_status" | grep -q "Up"; then
+    printf "."
+    sleep 1
+    continue
+  fi
+
+  if echo "$db_init_status" | grep -q "Created\|Restarting\|Running"; then
+    printf "."
+    sleep 1
+    continue
+  fi
+
+  db_init_done=1
+  break
 done
 echo ""
+
+if [ "$db_init_done" -ne 1 ]; then
+  err "Timed out waiting for schema initialization after ${DB_INIT_TIMEOUT}s."
+  docker compose ps || true
+  docker compose logs db-init --tail=100 || true
+  exit 1
+fi
+
 info "Schema initialized."
 
-# ── npm install + build ────────────────────────────────────
+# ── npm install + build ─────────────────────────────────────
 step "Installing npm dependencies ..."
 npm install 2>&1 | tail -3
 
 step "Building production Next.js ..."
 npm run build 2>&1 | tail -5
 
-# ── Start services ─────────────────────────────────────────
+# ── mc-services: start host-level daemons ───────────────────
 step "Starting all services (task-worker, gateway-sync, bridge-logger, Next.js) ..."
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'
 
-# ── Convenience symlinks ───────────────────────────────────
+# ── Convenience symlinks ────────────────────────────────────
 step "Creating convenience symlinks in /usr/local/bin ..."
 for script in install clean update uninstall mc-services dev; do
   symlink="/usr/local/bin/mc-${script}"
@@ -179,7 +251,7 @@ for script in install clean update uninstall mc-services dev; do
 done
 echo ""
 
-# ── Done ───────────────────────────────────────────────────
+# ── Done ────────────────────────────────────────────────────
 echo "╔═══════════════════════════════════════════════════════╗"
 echo "║            Installation complete!                   ║"
 echo "╚═══════════════════════════════════════════════════════╝"
