@@ -296,7 +296,9 @@ export async function PATCH(
 
     if (!title) return fail("Title is required.");
     if (!startsAt || isNaN(new Date(startsAt).getTime())) return fail("Valid start date is required.");
-    if (new Date(startsAt) < new Date()) return fail("Cannot schedule events in the past.");
+    // 5-minute grace period for wizard completion time
+    const PAST_GRACE_MS = 5 * 60 * 1000;
+    if (new Date(startsAt).getTime() < Date.now() - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");
 
     // Resolve scheduling interval: body override (dev/test) → DB setting → default 15
     const timeStepMinutes = await (async () => {
