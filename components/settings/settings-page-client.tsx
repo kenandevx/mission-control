@@ -279,25 +279,6 @@ export function SettingsPageClient(): React.ReactNode {
     }
   };
 
-  const runUninstall = async (): Promise<void> => {
-    setUninstalling(true);
-    try {
-      const res = await fetch("/api/system", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "uninstall" }),
-      });
-      const json = await res.json();
-      if (json.ok) toast.success(json.message || "Uninstalled successfully");
-      else toast.error(json.error || "Uninstall failed");
-    } catch {
-      toast.error("Uninstall failed");
-    } finally {
-      setUninstalling(false);
-      setUninstallDialogOpen(false);
-      setUninstallConfirmText("");
-    }
-  };
 
   const saveAgendaSettings = async (): Promise<void> => {
     setAgendaSettingsLoading(true);
@@ -924,45 +905,7 @@ export function SettingsPageClient(): React.ReactNode {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Uninstall Dialog ──────────────────────────────────────────── */}
-      <AlertDialog open={uninstallDialogOpen} onOpenChange={setUninstallDialogOpen}>
-        <AlertDialogContent className="sm:max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2.5 text-destructive">
-              <IconAlertTriangle className="size-5" />
-              Uninstall Mission Control
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-sm leading-relaxed">
-              This will <strong>stop all services</strong>, remove Docker volumes, and clean up symlinks. Re-run{" "}
-              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">install.sh</code> to reinstall.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex flex-col gap-3 mt-3">
-            <p className="text-sm text-muted-foreground">
-              Type <strong className="text-destructive">UNINSTALL</strong> to confirm:
-            </p>
-            <Input
-              value={uninstallConfirmText}
-              onChange={(e) => setUninstallConfirmText(e.target.value)}
-              placeholder="Type UNINSTALL"
-              className="font-mono h-10"
-              autoFocus
-            />
-          </div>
-          <AlertDialogFooter className="mt-5">
-            <AlertDialogCancel disabled={uninstalling} className="h-10">Cancel</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              onClick={runUninstall}
-              disabled={uninstallConfirmText !== "UNINSTALL" || uninstalling}
-              className="gap-2 cursor-pointer h-10"
-            >
-              {uninstalling ? <IconLoader2 className="size-4 animate-spin" /> : <IconTrash className="size-4" />}
-              {uninstalling ? "Uninstalling…" : "Confirm Uninstall"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+
     </div>
   );
 }
