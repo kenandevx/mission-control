@@ -4,10 +4,12 @@
 # Manages all persistent services as background daemons.
 #
 # Usage:
-#   mc-services start     — start all services
-#   mc-services stop      — stop all services
-#   mc-services restart   — stop then start
-#   mc-services status    — show running status + recent log lines
+#   mc-services start         — start all services in production mode
+#   mc-services start --dev   — start all services, but Next.js in dev mode
+#   mc-services stop          — stop all services
+#   mc-services restart       — stop then start
+#   mc-services restart --dev — stop then start, with Next.js in dev mode
+#   mc-services status        — show running status + recent log lines
 # ============================================================
 set -euo pipefail
 
@@ -45,7 +47,12 @@ SERVICE_CMDS[gateway-sync]="node scripts/gateway-sync.mjs"
 SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
 SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
 SERVICE_CMDS[agenda-worker]="node scripts/agenda-worker.mjs"
-SERVICE_CMDS[nextjs]="cd \"$PROJECT_ROOT\" && npm run dev"
+
+NEXTJS_DEV_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=development npm run dev"
+NEXTJS_PROD_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=production npm run start"
+SERVICE_CMDS[nextjs]="$NEXTJS_PROD_CMD"
+
+NEXTJS_MODE="prod"
 
 # ── Helpers ────────────────────────────────────────────────
 pid_running() {
@@ -55,14 +62,11 @@ pid_running() {
 
 kill_port() {
   local port=${1:-3000}
-  # Kill via fuser
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${port}/tcp" 2>/dev/null || true
     sleep 1
   fi
-  # Kill any next-server processes
   pkill -9 -f "next-server" 2>/dev/null || true
-  # Fallback: kill whatever holds the port
   local pid
   pid=$(lsof -ti:"${port}" 2>/dev/null) || true
   if [ -n "$pid" ]; then
@@ -77,12 +81,17 @@ start_service() {
   local log_file="${SERVICE_LOG_FILES[$svc]}"
   local cmd="${SERVICE_CMDS[$svc]}"
 
-  # ── Pre-start cleanup ─────────────────────────────────────
-  # nextjs: kill anything holding its port and wait for release
+  if [ "$svc" = "nextjs" ]; then
+    if [ "${NEXTJS_MODE:-prod}" = "dev" ]; then
+      cmd="$NEXTJS_DEV_CMD"
+    else
+      cmd="$NEXTJS_PROD_CMD"
+    fi
+  fi
+
   if [ "$svc" = "nextjs" ]; then
     if command -v fuser >/dev/null 2>&1; then
       fuser -k 3000/tcp 2>/dev/null || true
-      # Wait up to 5s for port to be released
       for i in $(seq 1 10); do
         fuser 3000/tcp >/dev/null 2>&1 || break
         sleep 0.5
@@ -97,6 +106,7 @@ start_service() {
 
   echo -n "  Starting $svc... "
   cd "$PROJECT_ROOT"
+
   (
     exec bash -c "$cmd" >> "$log_file" 2>&1
   ) &
@@ -118,7 +128,6 @@ stop_service() {
   local pid
   pid="$(cat "$pid_file" 2>/dev/null)" || true
 
-  # Try PID file first; fall back to pkill if stale/missing
   if [ -n "$pid" ] && pid_running "$pid"; then
     echo -n "  Stopping $svc (pid $pid)... "
     kill "$pid" 2>/dev/null
@@ -133,7 +142,6 @@ stop_service() {
     fi
     echo "stopped"
   else
-    # Fallback: pkill by process name
     case "$svc" in
       task-worker)
         pkill -f "task-worker.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
@@ -172,7 +180,6 @@ status_service() {
   fi
 }
 
-# ── Helpers: validate service name ─────────────────────────
 is_valid_service() {
   local target=$1
   for svc in $SERVICES; do
@@ -183,13 +190,9 @@ is_valid_service() {
   return 1
 }
 
-# ── Watchdog ───────────────────────────────────────────────
-# Runs in the background, checks every 30s, restarts dead services.
 WATCHDOG_PID_FILE="$PID_DIR/watchdog.pid"
 WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
-
-# Services the watchdog should NOT auto-restart (one-shot or optional)
 WATCHDOG_SKIP="gateway-sync"
 
 run_watchdog() {
@@ -197,7 +200,6 @@ run_watchdog() {
   while true; do
     sleep "$WATCHDOG_INTERVAL"
     for svc in $SERVICES; do
-      # Skip services that shouldn't auto-restart
       case " $WATCHDOG_SKIP " in *" $svc "*) continue ;; esac
 
       local pid_file="${SERVICE_PIDS[$svc]}"
@@ -206,17 +208,19 @@ run_watchdog() {
 
       if [ -z "$pid" ] || ! pid_running "$pid"; then
         echo "[watchdog] $(date -u +%Y-%m-%dT%H:%M:%SZ) $svc is DOWN — restarting..." >> "$WATCHDOG_LOG"
-        # Clean up stale pid
         rm -f "$pid_file"
-        # Restart the service
         cd "$PROJECT_ROOT"
         local cmd="${SERVICE_CMDS[$svc]}"
         local log_file="${SERVICE_LOG_FILES[$svc]}"
 
-        # nextjs needs port cleanup
         if [ "$svc" = "nextjs" ]; then
           kill_port 3000
           sleep 1
+          if [ "${NEXTJS_MODE:-prod}" = "dev" ]; then
+            cmd="$NEXTJS_DEV_CMD"
+          else
+            cmd="$NEXTJS_PROD_CMD"
+          fi
         fi
 
         ( exec bash -c "$cmd" >> "$log_file" 2>&1 ) &
@@ -257,12 +261,33 @@ stop_watchdog() {
   rm -f "$WATCHDOG_PID_FILE"
 }
 
-# ── Commands ───────────────────────────────────────────────
 CMD="${1:-status}"
-TARGET_SERVICE="${2:-}"
+TARGET_SERVICE=""
+DEV_MODE=0
 
-# If a second arg is given and it's not a flag, validate it as a service name
-if [ -n "$TARGET_SERVICE" ] && [ "${TARGET_SERVICE:0:1}" != "-" ]; then
+for arg in "$@"; do
+  case "$arg" in
+    start|stop|restart|status|watch)
+      CMD="$arg"
+      ;;
+    --dev)
+      DEV_MODE=1
+      ;;
+    *)
+      if [ -z "$TARGET_SERVICE" ] && [ "${arg:0:1}" != "-" ] && [ "$arg" != "$CMD" ]; then
+        TARGET_SERVICE="$arg"
+      fi
+      ;;
+  esac
+done
+
+if [ "$DEV_MODE" -eq 1 ]; then
+  NEXTJS_MODE="dev"
+else
+  NEXTJS_MODE="prod"
+fi
+
+if [ -n "$TARGET_SERVICE" ]; then
   if ! is_valid_service "$TARGET_SERVICE"; then
     echo "Unknown service: $TARGET_SERVICE"
     echo "Available services: $SERVICES"
@@ -272,16 +297,16 @@ fi
 
 case "$CMD" in
   start)
-    if [ -n "$TARGET_SERVICE" ] && [ "${TARGET_SERVICE:0:1}" != "-" ]; then
+    if [ -n "$TARGET_SERVICE" ]; then
       echo "[mc-services] Starting $TARGET_SERVICE..."
       start_service "$TARGET_SERVICE"
     else
-      echo "[mc-services] Starting services..."
+      if [ "$NEXTJS_MODE" = "dev" ]; then
+        echo "[mc-services] Starting services (Next.js in dev mode)..."
+      else
+        echo "[mc-services] Starting services (Next.js in production mode)..."
+      fi
       for svc in $SERVICES; do
-        if [ "${2:-}" = "--dev" ] && [ "$svc" = "nextjs" ]; then
-          echo "  $svc — skipped (--dev mode)"
-          continue
-        fi
         start_service "$svc"
       done
       echo "[mc-services] All services started."
@@ -289,7 +314,7 @@ case "$CMD" in
     fi
     ;;
   stop)
-    if [ -n "$TARGET_SERVICE" ] && [ "${TARGET_SERVICE:0:1}" != "-" ]; then
+    if [ -n "$TARGET_SERVICE" ]; then
       echo "[mc-services] Stopping $TARGET_SERVICE..."
       stop_service "$TARGET_SERVICE"
     else
@@ -302,7 +327,7 @@ case "$CMD" in
     fi
     ;;
   restart)
-    if [ -n "$TARGET_SERVICE" ] && [ "${TARGET_SERVICE:0:1}" != "-" ]; then
+    if [ -n "$TARGET_SERVICE" ]; then
       echo "[mc-services] Restarting $TARGET_SERVICE..."
       stop_service "$TARGET_SERVICE"
       sleep 1
@@ -310,11 +335,15 @@ case "$CMD" in
     else
       "$0" stop
       sleep 1
-      "$0" start
+      if [ "$NEXTJS_MODE" = "dev" ]; then
+        "$0" start --dev
+      else
+        "$0" start
+      fi
     fi
     ;;
   status)
-    if [ -n "$TARGET_SERVICE" ] && [ "${TARGET_SERVICE:0:1}" != "-" ]; then
+    if [ -n "$TARGET_SERVICE" ]; then
       echo "[mc-services] Service status:"
       status_service "$TARGET_SERVICE"
     else
@@ -322,7 +351,6 @@ case "$CMD" in
       for svc in $SERVICES; do
         status_service "$svc"
       done
-      # Watchdog status
       if pid_running "$(cat "$WATCHDOG_PID_FILE" 2>/dev/null)"; then
         echo "  watchdog — RUNNING (pid $(cat "$WATCHDOG_PID_FILE"))"
       else
@@ -331,11 +359,10 @@ case "$CMD" in
     fi
     ;;
   watch)
-    # Start only the watchdog (useful if services are already running)
     start_watchdog
     ;;
   *)
-    echo "Usage: mc-services {start|stop|restart|status|watch} [service-name]"
+    echo "Usage: mc-services {start|stop|restart|status|watch} [service-name] [--dev]"
     echo "Services: $SERVICES"
     exit 1
     ;;
