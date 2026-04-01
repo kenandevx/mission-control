@@ -551,7 +551,7 @@ export function FileManagerClient(): React.JSX.Element {
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("fm-view-mode") as ViewMode) || "list";
+      return (localStorage.getItem("fm-view-mode") as ViewMode) || "grid";
     }
     return "list";
   });

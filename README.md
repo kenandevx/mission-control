@@ -170,6 +170,8 @@ The task-worker and agenda-worker send Telegram notifications for lifecycle even
 - **3-dot action menu**: Edit, Duplicate, Force Retry, Delete in a single dropdown (with disabled states and tooltips)
 - **Color-coded status badges**: green (active/succeeded), amber (running), red (failed/needs_retry), blue (scheduled/recurring), with Radix tooltips explaining each status
 - Stale lock recovery (occurrences stuck >15min → `needs_retry` + Telegram alert, user decides)
+- **Queue state tracking**: each occurrence carries `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason` for deterministic retry and rescue behavior
+- **Scheduler rescue pass**: the scheduler scans all due `scheduled`/`queued` occurrences directly from DB and re-enqueues stale ones or marks past-window ones `needs_retry`
 - **Now indicator**: current time line in week/day views (behind events, not overlapping)
 
 ### Resilient Job Orchestration (v1.5.0)
@@ -295,9 +297,9 @@ Tickets now use the full resilience stack:
 
 **Event misses its execution window:**
 1. Worker picks up the job but notices it's past the window (default 30 min)
-2. Status set to `needs_retry` (not `expired` — so you can retry immediately)
+2. Status set to `needs_retry` with a readable reason stored in `last_retry_reason`
 3. Telegram alert: "missed execution window — needs manual retry"
-4. Click "Retry" in Mission Control → re-queues instantly, ignores window check
+4. User must click "Retry" in Mission Control → re-queues with fresh queue metadata
 
 **Worker crashes or restarts during execution:**
 1. Occurrence stays in "running" state with a stale lock
@@ -338,10 +340,12 @@ Tickets now use the full resilience stack:
 2. Worker claim lock ensures only one execution starts
 3. No race condition — whichever pickup succeeds first runs, other skips
 
-**Primary model hits rate limit (429/quota):**
-1. Step fails normally — enters the standard retry flow
-2. Auto-retries with same model (will likely fail again if rate limit persists)
-3. Then fallback model if set, then `needs_retry` — user decides (wait for rate limit to clear, change model, or retry later)
+**Primary model hits rate limit (429/quota) or credit exhausted:**
+1. Step fails — enters the standard retry flow
+2. Auto-retries with same model
+3. Then fallback model if set, then `needs_retry`
+4. If output or error contains known provider rejection messages (`LLM request rejected: Your credit balance is too low...` or `⚠️ API rate limit reached...`), the occurrence is forced to `needs_retry` with a specific reason after all retries/fallback are exhausted
+5. User must click "Retry" in Mission Control to re-queue
 
 **Database goes down during execution:**
 1. Worker can't write step results — attempt fails with DB error
@@ -511,11 +515,11 @@ Phase 3: File Deletion
 
 ### Scheduling Interval (configurable)
 - Default: 15-minute intervals (XX:00, XX:15, XX:30, XX:45)
-- **Configurable** via `scheduling_interval_minutes` in `worker_settings` (exposed in `GET /api/agenda/settings`)
+- **Configurable** via `scheduling_interval_minutes` in `worker_settings` (exposed via `GET /api/agenda/settings` as `schedulingIntervalMinutes`)
 - When `> 0`: events must align to the interval, one event per slot, enforced server-side
 - When `= 0`: **free-time mode** — no alignment or slot checks, events can be scheduled at any minute
 - API accepts `timeStepMinutes` in request body to override per-request (dev/test use)
-- Recurring events follow the same interval rule
+- Agenda tests use effective timing rules: unset/invalid → 15 min; configured > 0 → configured value; free-time `0` → 1-min effective test timing for fast dev runs
 
 ### Processes
 - Card grid layout with create, edit, duplicate, delete, **simulate**
@@ -543,7 +547,9 @@ Phase 3: File Deletion
 
 ### Settings
 - Theme: Light / Dark / System
-- System Updates: check for git updates, one-click update
+- **Agenda defaults**: execution window, auto-retry timeout, max retries, fallback model, concurrency, scheduling interval
+- **Scheduling interval**: time-slot grid for events (default 15 min, set to 0 for free-time mode); exposed via `GET /api/agenda/settings` as `schedulingIntervalMinutes`
+- System Updates: check for git updates, one-click update (blocked if any agenda occurrence is actively running)
 - Danger Zone: Clean Reset (type "RESET") and Uninstall (type "UNINSTALL")
 
 ## Ticket Lifecycle
@@ -565,16 +571,22 @@ No agent assigned = manual ticket (never auto-queued).
 draft → [activate] → active
 active → [scheduler] → occurrence created (scheduled)
 scheduled → [worker claims] → running → succeeded ✅
-         → [missed window] → needs_retry → [manual retry] → scheduled → ...
+         → [missed window] → needs_retry → [manual retry required] → ...
 
 running → succeeded ✅
         → failed → [auto-retry 1..N times] → succeeded ✅
                                             → [fallback model if set] → succeeded ✅
                                                                       → [cleanup: Qdrant → session → files]
                                                                       → needs_retry → [user: retry/edit/delete]
+        → [provider rejection: LLM credit/rate-limit] → needs_retry → [manual retry required]
         → [>5 min] → Telegram alert (still running, user decides)
         → [force retry] → current attempt failed → re-scheduled → running → ...
+        → [stale lock >15 min] → needs_retry → [manual retry required]
 ```
+
+**Queue state tracking**: occurrences carry `queue_job_id`, `queued_at`, and `retry_requested_at` so the scheduler can reliably rescue stale queued jobs. BullMQ priority is bounded (1–2097152) to ensure all jobs are sortable.
+
+**Manual retry required**: `needs_retry` occurrences require explicit user action. Clicking Retry in Mission Control re-queues the occurrence and clears stale queue metadata.
 
 Recurring events: each date gets its own independent occurrence (unique `occurrence.id`) and run history. The parent `event.id` is shared across the series, but each day's execution, status, and output are fully isolated. The UI shows the occurrence ID (not the event ID) for recurring events. Editing "only this occurrence" creates an override without affecting other dates.
 
@@ -607,29 +619,37 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/tasks` | POST | Board/ticket CRUD, execution, attachments, activity |
+| `/api/tasks/worker-metrics` | GET | Worker health: enabled, concurrency, active executions, queued count, last tick |
 | `/api/files` | GET | Serve local files by path (for ticket attachments) |
-| `/api/file-manager` | GET/POST/PUT/DELETE | File manager backend — list dirs, download/preview/serve files, create, upload (multipart), rename, move/copy, delete — scoped to `~/.openclaw/` |
-| `/api/agenda/events` | GET/POST | Agenda event CRUD |
-| `/api/agenda/events/stream` | GET | SSE stream for real-time agenda updates (via pg_notify) |
+| `/api/file-manager/[[...path]]` | GET/POST/PUT/DELETE | File manager backend — list dirs, download/preview/serve files, create, upload (multipart), rename, move/copy, delete — scoped to `~/.openclaw/` |
+| `/api/agenda/events` | GET/POST | Agenda event CRUD; test-only helpers: inject needs_retry occurrence, inject succeeded PDF run, check file exists |
+| `/api/agenda/events/stream` | GET | SSE stream for real-time agenda updates (pg_notify) |
 | `/api/agenda/events/[id]` | GET/PATCH/DELETE | Single event operations |
-| `/api/agenda/events/[id]/occurrences/[occId]` | POST/DELETE | Retry or dismiss an occurrence |
+| `/api/agenda/events/[id]/occurrences/[occId]` | POST/DELETE | Retry (manual or force-retry) / dismiss an occurrence |
 | `/api/agenda/events/[id]/occurrences/[occId]/runs` | GET | Run attempts + steps for an occurrence |
 | `/api/agenda/artifacts/[stepId]/[filename]` | GET | Download agent-generated artifacts |
-| `/api/agenda/failed` | GET | Failed/needs_retry/expired occurrences |
-| `/api/agenda/stats` | GET | Agenda statistics |
+| `/api/agenda/failed` | GET | Failed/needs_retry/expired occurrences with last error reason |
+| `/api/agenda/settings` | GET | Agenda settings: execution window, auto-retry timeout, max retries, concurrency, fallback model, scheduling interval |
+| `/api/agenda/stats` | GET | Agenda statistics (counts by status, queue depth) |
+| `/api/agenda/debug/run-steps` | GET | Run steps + latest attempt status for a given occurrence (for test harness) |
+| `/api/agenda/debug/render-template` | POST | Render the unified task message template without executing |
 | `/api/processes` | GET/POST | Process CRUD |
 | `/api/processes/[id]` | GET/PATCH/DELETE | Single process operations |
 | `/api/processes/simulate` | POST | SSE stream — simulate a process step-by-step (snapshots session state before run) |
 | `/api/processes/simulate/cleanup` | POST | Full cleanup: delete files + restore agent sessions to pre-sim state |
-| `/api/services` | GET/POST | Service health monitoring and management |
+| `/api/services` | GET/POST | Service health monitoring, management, log tailing |
 | `/api/queues` | GET/POST | BullMQ queue inspection + per-job actions (remove, retry, promote) |
 | `/api/models` | GET | Model list from OpenClaw config |
 | `/api/agents` | GET | Agent discovery (reads from DB + runtime) |
-| `/api/skills` | GET | Workspace skills list |
-| `/api/system` | POST | System management (update, reset, uninstall) |
-| `/api/notifications/stream` | GET | Unified SSE stream (ticket + agenda activity for sidebar) |
-| `/api/events` | GET | SSE stream (ticket activity, worker ticks) |
+| `/api/agent/logs` | GET | Agent log entries |
 | `/api/agent/logs/stream` | GET | SSE stream (agent logs) |
+| `/api/skills` | GET | Workspace skills list |
+| `/api/system` | POST | System management: check updates, update, clean reset, uninstall |
+| `/api/notifications` | GET | SSE stream — unified ticket + agenda activity for sidebar |
+| `/api/notifications/recent` | GET | Last N activity entries (configurable via `sidebar_activity_count` setting) |
+| `/api/notifications/stream` | GET | Alias for `/api/notifications` (unified SSE stream) |
+| `/api/events` | GET | SSE stream (ticket activity, worker ticks) |
+| `/api/setup` | GET/POST | Setup status and initial configuration (bridge email, setup completed) |
 
 ## Scripts Reference
 
@@ -674,7 +694,7 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 
 Schema managed by `scripts/db-init.sh` (Docker) and `scripts/db-setup.mjs` (Node).
 
-Key tables: `workspaces`, `boards`, `columns`, `tickets`, `ticket_attachments`, `ticket_subtasks`, `ticket_comments`, `ticket_activity`, `agents`, `agent_logs`, `agenda_events`, `agenda_occurrences`, `agenda_run_attempts`, `agenda_run_steps`, `processes`, `process_versions`, `process_steps`, `worker_settings`, `service_health`, `agent_execution_locks`.
+Key tables: `workspaces`, `boards`, `columns`, `tickets`, `ticket_attachments`, `ticket_subtasks`, `ticket_comments`, `ticket_activity`, `agents`, `agent_logs`, `agenda_events`, `agenda_occurrences` (includes `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason`), `agenda_run_attempts`, `agenda_run_steps`, `processes`, `process_versions`, `process_steps`, `worker_settings`, `service_health`, `agent_execution_locks`, `app_settings`.
 
 Reset everything: `npm run db:reset` or `bash scripts/clean.sh`.
 

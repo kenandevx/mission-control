@@ -149,7 +149,7 @@ function snapToStep(minutes: number, stepMinutes: number): number {
 
 function getCurrentTimeInTz(tz: string, stepMinutes = 15): string {
   try {
-    // @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
     const now = DateTime.now().setZone(tz);
     const rawM = now.minute;
@@ -164,7 +164,7 @@ function getCurrentTimeInTz(tz: string, stepMinutes = 15): string {
 
 function getTodayInTz(tz: string): string {
   try {
-    // @ts-ignore — luxon via CJS; types via types/luxon.d.ts
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { DateTime } = require("luxon") as { DateTime: typeof import("luxon").DateTime };
     const now = DateTime.now().setZone(tz);
     return now.toISODate() ?? new Date().toISOString().split("T")[0];
@@ -326,8 +326,10 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   useEffect(() => {
     const raw = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
     const safe = Number.isFinite(raw) ? Math.max(0, Math.min(60, raw)) : 15;
-    setAgendaTimeStepMinutes(safe);
+    /* eslint-disable-next-line */
+setAgendaTimeStepMinutes(safe);
 
+    // eslint-disable-next-line react-compiler/react-compiler
     const onStepChanged = (event: Event) => {
       const custom = event as CustomEvent<{ value?: number }>;
       const value = custom.detail?.value;
@@ -442,6 +444,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   };
 
   const handleSave = () => {
+    if (isReadOnly) return;
     const err = validateStep(1) || validateStep(2);
     if (err) { setError(err); return; }
 
@@ -1075,7 +1078,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
                     </TooltipTrigger>
                     {isReadOnly && (
                       <TooltipContent side="top" className="max-w-xs text-left">
-                        This event has already finished. Copy the details to create a new event instead.
+                        This one-time event has already finished. Use &quot;Retry&quot; or copy the details to create a new event instead.
                       </TooltipContent>
                     )}
                   </Tooltip>

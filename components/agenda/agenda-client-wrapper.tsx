@@ -488,7 +488,10 @@ export function AgendaClientWrapper() {
         agents={agents}
         processes={processes}
         initialData={editingFormData}
-        isReadOnly={editingEvent?.latestResult === "succeeded"}
+        isReadOnly={
+          editingEvent?.latestResult === "succeeded" &&
+          (editingEvent?.recurrence === "none" || !editingEvent?.recurrence)
+        }
         onClose={() => {
           setEventModalOpen(false);
           setEditingEvent(null);

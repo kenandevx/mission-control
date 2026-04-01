@@ -163,6 +163,25 @@ export async function PATCH(
       }
     }
 
+    // ── Completed non-recurring events cannot be edited or moved ───────────────
+    // A non-recurring event with a succeeded occurrence is fully done — reject
+    // all edit/move attempts unless it's an explicit force retry action.
+    const isRetryAction = body.action === "retry";
+    if (!isRetryAction) {
+      const isRecurring = Boolean(existing.recurrence_rule);
+      if (!isRecurring) {
+        const [latestOcc] = await sql`
+          SELECT status FROM agenda_occurrences
+          WHERE agenda_event_id = ${id}
+          ORDER BY scheduled_for DESC
+          LIMIT 1
+        `;
+        if (latestOcc?.status === "succeeded") {
+          return fail("This event has already finished. Use Force Retry to re-run it.", 409);
+        }
+      }
+    }
+
     // ── Recurring edit scope handling ──────────────────────────────────────────
 
     if (editScope === "single" && occurrenceId) {
