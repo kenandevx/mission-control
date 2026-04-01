@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # OpenClaw Mission Control — Bootstrap Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
 #
 # Default install location: ~/.openclaw/workspace/mission-control
 # (inside the OpenClaw workspace — matches openclaw setup layout)
@@ -66,7 +66,7 @@ if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/nul
 fi
 
 step "Checking SSH access to GitHub ..."
-if ssh -T git@github.com 2>/dev/null | grep -q "successfully"; then
+if ssh -T git@github.com 2>/dev/null || true | grep -q "successfully"; then
   info "SSH access to GitHub — OK"
 else
   warn "No SSH access to GitHub. Switching to HTTPS clone."
