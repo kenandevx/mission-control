@@ -119,7 +119,7 @@ if [ ! -f .env ]; then
     err "Restore the previous .env file, or destroy the existing DB state first."
     err ""
     err "To reset the database intentionally:"
-    err "  docker compose down -v"
+    err "  docker volume rm $PGDATA_VOLUME"
     err "  rm -f .env .env.local"
     err "  bash scripts/install.sh"
     exit 1
@@ -256,26 +256,42 @@ info "Schema initialized."
 
 # ── npm install + build ─────────────────────────────────────
 step "Installing npm dependencies ..."
-npm install 2>&1 | tail -3
+env -u NODE_ENV npm install 2>&1 | tail -3
 
 step "Building production Next.js ..."
-npm run build 2>&1 | tail -5
+env -u NODE_ENV NODE_ENV=production npm run build 2>&1 | tail -5
 
 # ── mc-services: start host-level daemons ───────────────────
-step "Starting all services (task-worker, gateway-sync, bridge-logger, Next.js) ..."
+step "Starting all services (task-worker, gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, Next.js) ..."
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'
 
 # ── Convenience symlinks ────────────────────────────────────
 step "Creating convenience symlinks in /usr/local/bin ..."
-for script in install clean update uninstall mc-services dev; do
-  symlink="/usr/local/bin/mc-${script}"
-  source_file="$INSTALL_DIR/scripts/${script}.sh"
-  if [ -f "$source_file" ]; then
-    ln -sf "$source_file" "$symlink"
-    chmod +x "$source_file"
-    info "  /usr/local/bin/mc-${script}"
+
+create_link() {
+  local source_file="$1"
+  local symlink="$2"
+
+  if [ ! -f "$source_file" ]; then
+    return 0
   fi
-done
+
+  chmod +x "$source_file" || true
+
+  if ln -sf "$source_file" "$symlink" 2>/dev/null; then
+    info "  $symlink"
+  else
+    warn "Could not create $symlink (permission denied). Skipping."
+  fi
+}
+
+create_link "$INSTALL_DIR/scripts/install.sh" "/usr/local/bin/mc-install"
+create_link "$INSTALL_DIR/scripts/clean.sh" "/usr/local/bin/mc-clean"
+create_link "$INSTALL_DIR/scripts/update.sh" "/usr/local/bin/mc-update"
+create_link "$INSTALL_DIR/scripts/uninstall.sh" "/usr/local/bin/mc-uninstall"
+create_link "$INSTALL_DIR/scripts/mc-services.sh" "/usr/local/bin/mc-services"
+create_link "$INSTALL_DIR/dev.sh" "/usr/local/bin/mc-dev"
+
 echo ""
 
 # ── Done ────────────────────────────────────────────────────
@@ -290,14 +306,17 @@ echo "  PostgreSQL (Docker)   — port 5432"
 echo "  task-worker (host)    — executes agent tickets"
 echo "  gateway-sync (host)   — imports openclaw sessions"
 echo "  bridge-logger (host)  — tails openclaw logs to DB"
-echo "  Next.js (host)        — production build, port 3000"
+echo "  agenda-scheduler      — schedules agenda occurrences"
+echo "  agenda-worker         — processes agenda runs"
+echo "  Next.js (host)        — production server, port 3000"
 echo ""
 echo "Commands:"
-echo "  mc-services stop      — stop all services"
-echo "  mc-services status    — check status"
-echo "  mc-update             — pull latest + rebuild + restart"
-echo "  mc-clean              — fresh start (destroys DB)"
-echo "  bash dev.sh           — start dev mode (hot-reload, foreground)"
+echo "  bash scripts/mc-services.sh stop        — stop all services"
+echo "  bash scripts/mc-services.sh status      — check status"
+echo "  bash scripts/update.sh                  — pull latest + rebuild + restart"
+echo "  bash scripts/clean.sh                   — fresh start (destroys DB)"
+echo "  bash scripts/uninstall.sh               — remove Mission Control"
+echo "  bash scripts/mc-services.sh start --dev — start stack with Next.js in dev mode"
 echo ""
 echo "Open: http://localhost:3000"
 echo ""
