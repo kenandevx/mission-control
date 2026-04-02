@@ -1,4 +1,4 @@
-# OpenClaw Mission Control v1.6.0
+# OpenClaw Mission Control v1.6.1
 
 Local-first dashboard for OpenClaw — boards, agent scheduling, real-time logs, and execution management.
 
@@ -60,6 +60,8 @@ Open **http://localhost:3000**
 | `npm run db:reset` | Wipe and recreate DB schema |
 | `npm run db:migrate` | Run pending migrations |
 | `npm run worker:tasks` | Run task-worker standalone |
+| `npm run agenda:selfcheck` | Agenda health self-check (schema, queue, locks, failed-latest count + missing queue jobs) |
+| `npm run agenda:smoke` | End-to-end agenda retry smoke test (create needs_retry test occurrence, retry, verify state) |
 | `npm run bridge:logger` | Run bridge-logger standalone |
 
 ## Pages

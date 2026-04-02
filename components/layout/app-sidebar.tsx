@@ -60,7 +60,12 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
   const router = useRouter()
   const [user, setUser] = React.useState<SidebarUser | null>(initialUser)
   const [instanceName, setInstanceName] = React.useState("")
+  const [appVersion, setAppVersion] = React.useState("")
   const adapter = React.useMemo(() => getDataAdapter(), [])
+
+  React.useEffect(() => {
+    setAppVersion(APP_VERSION)
+  }, [])
 
   React.useEffect(() => {
     let cancelled = false
@@ -151,7 +156,7 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
             }
           }}
         >
-          Version v{APP_VERSION}
+          Version v{appVersion || "\u00A0"}
         </button>
         {user ? <NavUser user={user} onLogout={handleLogout} /> : null}
       </SidebarFooter>

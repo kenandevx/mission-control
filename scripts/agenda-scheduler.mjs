@@ -11,6 +11,8 @@ import { Queue } from "bullmq";
 import * as dns from "node:dns";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import { assertAgendaSchema } from "./agenda-schema-check.mjs";
+import { AgendaReasonCodes, reasonDetail } from "./agenda-codes.mjs";
 
 const lookupAsync = promisify(dns.lookup.bind(dns));
 
@@ -76,30 +78,6 @@ async function checkRedis() {
   }
 }
 
-let schemaCaps = {
-  queueColumns: false,
-  retryColumns: false,
-};
-
-async function detectSchemaCapabilities() {
-  try {
-    const columns = await sql`
-      select column_name
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = 'agenda_occurrences'
-    `;
-    const names = new Set(columns.map((c) => c.column_name));
-    schemaCaps = {
-      queueColumns: names.has("queue_job_id") && names.has("queued_at"),
-      retryColumns: names.has("latest_attempt_no") && names.has("last_retry_reason"),
-    };
-    log("log", `Schema capabilities: queueColumns=${schemaCaps.queueColumns}, retryColumns=${schemaCaps.retryColumns}`);
-  } catch (err) {
-    log("warn", "Could not detect schema capabilities; using safe fallback mode", summarizeError(err));
-    schemaCaps = { queueColumns: false, retryColumns: false };
-  }
-}
 
 function localTimeToUTC(localDateStr, localTimeStr, timezone) {
   const targetLocal = `${localDateStr}T${localTimeStr}`;
@@ -203,65 +181,22 @@ async function enqueueOccurrenceJob({ occurrenceId, eventId, title, freePrompt, 
     }
   );
 
-  if (schemaCaps.queueColumns) {
-    await sql`
-      update agenda_occurrences
-      set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
-      where id = ${occurrenceId} and status in ('scheduled', 'queued')
-    `;
-  } else {
-    await sql`
-      update agenda_occurrences
-      set status = 'queued'
-      where id = ${occurrenceId} and status in ('scheduled', 'queued')
-    `;
-  }
+  await sql`
+    update agenda_occurrences
+    set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
+    where id = ${occurrenceId} and status in ('scheduled', 'queued')
+  `;
 }
 
 async function getDueOccurrences(now) {
-  if (schemaCaps.queueColumns || schemaCaps.retryColumns) {
-    return sql`
-      select
-        ao.id as occurrence_id,
-        ao.status as occurrence_status,
-        ao.scheduled_for,
-        ${schemaCaps.queueColumns ? sql`ao.queue_job_id` : sql`null::text`} as queue_job_id,
-        ${schemaCaps.queueColumns ? sql`ao.queued_at` : sql`null::timestamptz`} as queued_at,
-        ${schemaCaps.retryColumns ? sql`ao.latest_attempt_no` : sql`0::int`} as latest_attempt_no,
-        ae.id as event_id,
-        ae.title,
-        ae.free_prompt,
-        ae.default_agent_id,
-        ae.timezone,
-        ae.execution_window_minutes,
-        ae.fallback_model,
-        coalesce(
-          (select json_agg(json_build_object(
-            'process_version_id', aep.process_version_id,
-            'sort_order', aep.sort_order
-          ) order by aep.sort_order)
-          from agenda_event_processes aep
-          where aep.agenda_event_id = ae.id),
-          '[]'
-        ) as processes
-      from agenda_occurrences ao
-      join agenda_events ae on ae.id = ao.agenda_event_id
-      where ao.status in ('scheduled', 'queued')
-        and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
-        and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
-    `;
-  }
-
-  // Legacy schema mode: no queue bookkeeping columns exist.
-  // Only rescue 'scheduled' rows to avoid re-enqueue storms for already queued jobs.
   return sql`
     select
       ao.id as occurrence_id,
       ao.status as occurrence_status,
       ao.scheduled_for,
-      null::text as queue_job_id,
-      null::timestamptz as queued_at,
-      0::int as latest_attempt_no,
+      ao.queue_job_id,
+      ao.queued_at,
+      ao.latest_attempt_no,
       ae.id as event_id,
       ae.title,
       ae.free_prompt,
@@ -280,10 +215,68 @@ async function getDueOccurrences(now) {
       ) as processes
     from agenda_occurrences ao
     join agenda_events ae on ae.id = ao.agenda_event_id
-    where ao.status in ('scheduled')
+    where ao.status in ('scheduled', 'queued')
       and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
       and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
   `;
+}
+
+async function reconcileOrphanQueuedRows() {
+  // Safety net A: queued rows without queue metadata are unrecoverable as queued.
+  const reasonMissingMeta = reasonDetail(AgendaReasonCodes.ORPHANED_QUEUED, "Queued row had missing queue metadata");
+  const missingMeta = await sql`
+    update agenda_occurrences
+    set status = 'needs_retry',
+        last_retry_reason = ${reasonMissingMeta}
+    where status = 'queued'
+      and (queue_job_id is null or queued_at is null)
+    returning id
+  `;
+  if (missingMeta.length > 0) {
+    log("warn", `reconciled ${missingMeta.length} orphan queued occurrence(s) missing metadata -> needs_retry`);
+    for (const row of missingMeta) {
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.id })})`;
+    }
+  }
+
+  // Safety net B: queued rows with metadata but no corresponding BullMQ job.
+  // Only check rows queued for at least 90s to avoid racing freshly enqueued jobs.
+  const candidates = await sql`
+    select id, queue_job_id
+    from agenda_occurrences
+    where status = 'queued'
+      and queue_job_id is not null
+      and queued_at is not null
+      and queued_at < now() - interval '90 seconds'
+    order by queued_at asc
+    limit 100
+  `;
+
+  let missingQueueJobCount = 0;
+  for (const row of candidates) {
+    const job = await agendaQueue.getJob(row.queue_job_id);
+    if (job) continue;
+
+    const reasonNoJob = reasonDetail(AgendaReasonCodes.ORPHANED_QUEUED, `Queued row referenced missing BullMQ job (${row.queue_job_id})`);
+    const updated = await sql`
+      update agenda_occurrences
+      set status = 'needs_retry',
+          last_retry_reason = ${reasonNoJob},
+          queue_job_id = null,
+          queued_at = null
+      where id = ${row.id}
+        and status = 'queued'
+      returning id
+    `;
+    if (updated.length > 0) {
+      missingQueueJobCount += 1;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.id })})`;
+    }
+  }
+
+  if (missingQueueJobCount > 0) {
+    log("warn", `reconciled ${missingQueueJobCount} queued occurrence(s) with missing BullMQ jobs -> needs_retry`);
+  }
 }
 
 async function runCycle() {
@@ -379,19 +372,11 @@ async function runCycle() {
         const reason = `Missed execution window before worker pickup — ${Math.round(ageMinutes)}min past ${windowMinutes}min limit`;
         const attemptNo = Number(row.latest_attempt_no ?? 0) + 1;
 
-        if (schemaCaps.queueColumns && schemaCaps.retryColumns) {
-          await sql`
-            update agenda_occurrences
-            set status = 'needs_retry', queue_job_id = null, queued_at = null, latest_attempt_no = ${attemptNo}, last_retry_reason = ${reason}
-            where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
-          `;
-        } else {
-          await sql`
-            update agenda_occurrences
-            set status = 'needs_retry'
-            where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
-          `;
-        }
+        await sql`
+          update agenda_occurrences
+          set status = 'needs_retry', queue_job_id = null, queued_at = null, latest_attempt_no = ${attemptNo}, last_retry_reason = ${reason}
+          where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
+        `;
 
         await sql`
           insert into agenda_run_attempts (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
@@ -425,6 +410,8 @@ async function runCycle() {
     }
   }
 
+  await reconcileOrphanQueuedRows();
+
   log("log", `scanned ${rows.length} events, rescue-scanned ${dueOccurrences.length} due occurrences, rescued ${rescued}, auto-marked-needs_retry ${markedNeedsRetry}, enqueued ${enqueued} occurrences`);
 }
 
@@ -447,7 +434,14 @@ async function tick() {
   }
 }
 
-await detectSchemaCapabilities();
+try {
+  await assertAgendaSchema(sql);
+  log("log", "Schema assertion passed (strict mode)");
+} catch (err) {
+  log("error", "Schema assertion failed; refusing to start without full agenda_occurrences schema", summarizeError(err));
+  process.exit(1);
+}
+
 await writeHeartbeat("running");
 const heartbeatInterval = setInterval(() => { void writeHeartbeat("running"); }, 30_000);
 

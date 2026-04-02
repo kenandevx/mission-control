@@ -2,6 +2,34 @@
 
 This file tracks notable product and engineering changes so `README.md` can stay focused on overview, setup, and usage.
 
+## 2026-04-02 — v1.6.1
+
+### Agenda reliability + retry hotfixes
+- Fixed scheduler/worker failures caused by schema drift by aligning `agenda_occurrences` with required runtime columns (`queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason`).
+- Added explicit schema assertions in both `agenda-scheduler` and `agenda-worker` startup paths (fail-fast by default; optional legacy override via `AGENDA_ALLOW_LEGACY_SCHEMA_FALLBACK=1`).
+- Added shared agenda constants (`lib/agenda/constants.ts`) to centralize status/retryable-state definitions.
+- Hardened scheduler and worker behavior for mixed-schema environments to avoid crash loops while migrating.
+- Fixed manual retry endpoint failure when `retry_requested_at` was missing; retry now succeeds again from the Agenda modal.
+- Retry API now returns explicit action metadata (`retry_requested` / `force_retry_requested`) for cleaner client handling.
+- Fixed retry UX silent-failure path in Agenda UI by surfacing success/error toasts.
+- Expanded retry eligibility to include stuck `queued`/`scheduled` occurrences so manual recovery works from modal controls.
+- Fixed failed-count and failed-bucket logic to use the **latest occurrence per event** (prevents historical failed attempts from inflating current failed stats).
+- Added `npm run agenda:selfcheck` to validate schema, queue health, lock health, and failed-latest-event count in one check.
+- Added shared reason-code helpers (`scripts/agenda-codes.mjs`) to keep worker/scheduler failure reasons consistent.
+- Added scheduler reconciliation for orphaned queued rows (queued with missing queue metadata) to auto-move them to `needs_retry` with explicit reason.
+- Added transition helpers in `scripts/agenda-domain.mjs` and refactored core worker transitions to use them (queued / running claim / succeeded / needs_retry paths).
+- Added API-side transition helper (`lib/agenda/domain.ts`) and refactored manual retry transition to use centralized domain logic.
+- Added runtime transition helper module (`scripts/agenda-domain.mjs`) and moved core worker state transitions onto it.
+- Added centralized retry policy module (`scripts/agenda-retry-policy.mjs`) to unify lock-retry and auto-retry decision logic.
+- Removed remaining legacy column-fallback branches from core worker and scheduler paths; scheduler/worker now run strict schema mode only.
+- Simplified scheduler due-occurrence query path to strict-schema single flow (removed legacy branch logic).
+- Added scheduler reconciliation pass for queued rows that reference missing BullMQ jobs (auto-moves to `needs_retry` with explicit reason).
+- Extended `agenda:selfcheck` to detect queued rows that reference missing BullMQ jobs.
+- Added `agenda:smoke` end-to-end check to validate retry flow from injected `needs_retry` occurrence through active execution state.
+- Moved stale-running recovery transition into shared agenda-domain helper to reduce duplicated state-update SQL.
+- Standardized manual retry reason to machine-readable `MANUAL_RETRY` for cleaner diagnostics.
+- Reduced duplicate-queue storm conditions by tightening rescue/requeue behavior and queue bookkeeping.
+
 ## 2026-04-01 — v1.6.0
 
 ### Agenda retry + execution reliability

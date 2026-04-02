@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { Queue } from "bullmq";
 import { cleanupRunArtifacts, getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
+import { FORCE_RETRYABLE_STATUSES, RETRYABLE_STATUSES, OCCURRENCE_STATUSES } from "@/lib/agenda/constants";
+import { transitionToScheduledManualRetry } from "@/lib/agenda/domain";
 
 type Json = Record<string, unknown>;
 
@@ -88,9 +90,7 @@ export async function POST(
 
     // Allow retry from needs_retry, failed, or running by default.
     // Succeeded/cancelled/completed states require explicit force=true because this is a re-execution.
-    const retryableStatuses = forceRetry
-      ? ["needs_retry", "failed", "running", "queued", "scheduled", "succeeded", "cancelled"]
-      : ["needs_retry", "failed", "running", "queued", "scheduled"];
+    const retryableStatuses = forceRetry ? FORCE_RETRYABLE_STATUSES : RETRYABLE_STATUSES;
     if (!retryableStatuses.includes(occurrence.status)) {
       return fail(
         occurrence.status === "succeeded"
@@ -148,16 +148,21 @@ export async function POST(
     const preserveDate = body.preserveScheduledFor === true;
     const retryNow = preserveDate ? new Date(occurrence.scheduled_for) : new Date();
     if (!preserveDate) {
-      await sql`
-        update agenda_occurrences
-        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no},
-            scheduled_for = ${retryNow}, retry_requested_at = now(), last_retry_reason = 'Manual retry requested by user'
-        where id = ${occurrenceId}
-      `;
+      await transitionToScheduledManualRetry(sql, {
+        occurrenceId,
+        latestAttemptNo: maxAttempt.max_no,
+        retryNow,
+      });
     } else {
       await sql`
         update agenda_occurrences
-        set status = 'scheduled', locked_at = null, latest_attempt_no = ${maxAttempt.max_no}, retry_requested_at = now(), last_retry_reason = 'Manual retry requested by user'
+        set status = ${OCCURRENCE_STATUSES.SCHEDULED},
+            locked_at = null,
+            latest_attempt_no = ${maxAttempt.max_no},
+            retry_requested_at = now(),
+            last_retry_reason = 'MANUAL_RETRY',
+            queue_job_id = null,
+            queued_at = null
         where id = ${occurrenceId}
       `;
     }
@@ -211,8 +216,8 @@ export async function POST(
 
       await sql`
         update agenda_occurrences
-        set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
-        where id = ${occurrenceId} and status = 'scheduled'
+        set status = ${OCCURRENCE_STATUSES.QUEUED}, queue_job_id = ${queueJobId}, queued_at = now()
+        where id = ${occurrenceId} and status = ${OCCURRENCE_STATUSES.SCHEDULED}
       `;
 
       await agendaQueue.close();
@@ -222,7 +227,7 @@ export async function POST(
     }
 
     await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: forceRetry ? "force_retry" : "retry" })})`;
-    return ok({ occurrenceId, status: "scheduled", forced: forceRetry });
+    return ok({ occurrenceId, status: OCCURRENCE_STATUSES.SCHEDULED, forced: forceRetry, action: forceRetry ? "force_retry_requested" : "retry_requested" });
   } catch (err) {
     console.error("[occurrence-retry] Error:", err);
     const msg = err instanceof Error ? err.message : "Unknown error";
