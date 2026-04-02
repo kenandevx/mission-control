@@ -539,15 +539,15 @@ export function SettingsPageClient(): React.ReactNode {
         </SettingRow>
 
         <SettingRow
-          label="Max retries"
-          description="Auto-retries before trying fallback model (0–5)"
+          label="Max attempts"
+          description="Total attempts including initial before trying fallback model (1–5)"
         >
           <Input
             type="number"
-            min={0}
+            min={1}
             max={5}
             value={maxRetries}
-            onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, parseInt(e.target.value) || 1)))}
+            onChange={(e) => setMaxRetries(Math.max(1, Math.min(5, parseInt(e.target.value) || 1)))}
             className="h-9 w-20 text-center text-sm"
           />
         </SettingRow>
@@ -573,7 +573,7 @@ export function SettingsPageClient(): React.ReactNode {
         <div className="space-y-2.5">
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold shrink-0 mt-0.5">1</div>
-            <p className="text-sm text-muted-foreground">Fails → instant retry with same model, up to <span className="font-medium text-foreground">{maxRetries}×</span></p>
+            <p className="text-sm text-muted-foreground">Fails → retries with same model, up to <span className="font-medium text-foreground">{maxRetries} total attempt{maxRetries === 1 ? "" : "s"}</span></p>
           </div>
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">2</div>

@@ -29,10 +29,11 @@ export function formatDuration(startedAt: string | null | undefined, finishedAt:
   return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
 }
 
-export function LiveDuration({ startedAt, finishedAt, prefix }: { startedAt?: string | null; finishedAt?: string | null; prefix?: string }) {
+export function LiveDuration({ startedAt, finishedAt, prefix, className }: { startedAt?: string | null; finishedAt?: string | null; prefix?: string; className?: string }) {
   const isLive = !!startedAt && !finishedAt;
   const now = useNow(isLive ? 1_000 : 60_000);
   const dur = formatDuration(startedAt, finishedAt, now.getTime());
   if (!dur) return null;
+  if (className) return <span className={className}>{prefix}{dur}</span>;
   return <>{prefix}{dur}</>;
 }

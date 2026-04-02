@@ -11,8 +11,9 @@ export async function GET(): Promise<NextResponse> {
   try {
     const sql = getSql();
 
+    // Group by event — show only the most recent failed/needs_retry occurrence per event
     const occurrences = await sql`
-      SELECT
+      SELECT DISTINCT ON (ao.agenda_event_id)
         ao.id,
         ao.agenda_event_id,
         ao.scheduled_for,
@@ -32,8 +33,7 @@ export async function GET(): Promise<NextResponse> {
       FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
       WHERE ao.status IN ('failed', 'needs_retry')
-      ORDER BY ao.scheduled_for DESC
-      LIMIT 100
+      ORDER BY ao.agenda_event_id, ao.scheduled_for DESC
     `;
 
     return ok({ occurrences });

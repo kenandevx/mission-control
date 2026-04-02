@@ -17,7 +17,7 @@ export async function GET() {
           and ao.status in ('scheduled', 'queued')
       `.then(r => Number(r[0]?.c ?? 0)),
       sql`
-        select count(*) as c
+        select count(distinct agenda_event_id) as c
         from agenda_occurrences
         where status in ('failed', 'needs_retry')
       `.then(r => Number(r[0]?.c ?? 0)),

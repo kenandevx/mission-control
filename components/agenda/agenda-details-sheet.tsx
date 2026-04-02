@@ -805,7 +805,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                 )}
               </TabsContent>
 
-              {/* ── Runs ── */}
               {/* ── Output ── */}
               <TabsContent value="output" className="flex flex-col gap-3 mt-0">
                 {loadingRuns ? (
@@ -823,7 +822,20 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     <p className="text-sm text-muted-foreground">No output recorded.</p>
                   </div>
                 ) : (
-                  attemptSteps.map((step) => {
+                  // Deduplicate: group steps by step_order, show only the last one per group
+                  // (auto-retries within the same attempt insert duplicate step_order rows)
+                  (() => {
+                    const groupedByOrder = new Map<number, RunStep[]>();
+                    for (const s of attemptSteps) {
+                      const arr = groupedByOrder.get(s.step_order) ?? [];
+                      arr.push(s);
+                      groupedByOrder.set(s.step_order, arr);
+                    }
+                    const deduped = [...groupedByOrder.entries()]
+                      .sort(([a], [b]) => a - b)
+                      .map(([, group]) => ({ step: group[group.length - 1], totalAttempts: group.length }));
+                    return deduped;
+                  })().map(({ step, totalAttempts }) => {
                     // Extract the prompt/instruction from input_payload
                     let promptText: string | null = null;
                     if (step.input_payload) {
@@ -848,9 +860,16 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         data-slot="card"
                         className="bg-gradient-to-t from-primary/12 to-card shadow-xs"
                       >
-                        {/* Step header — title + status */}
+                        {/* Step header — title + status + retry count */}
                         <CardHeader>
-                          <CardTitle className="text-base font-semibold">{stepLabel}</CardTitle>
+                          <CardTitle className="text-base font-semibold flex items-center gap-2">
+                            {stepLabel}
+                            {totalAttempts > 1 && (
+                              <Badge variant="secondary" className="text-[10px] font-medium">
+                                {totalAttempts} attempt{totalAttempts === 1 ? "" : "s"}
+                              </Badge>
+                            )}
+                          </CardTitle>
                           <CardAction>
                             <ResultBadge status={step.status} />
                           </CardAction>

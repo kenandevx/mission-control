@@ -586,7 +586,7 @@ const agendaWorker = new Worker(
 
       // ── 2. Auto-retries (default 1, configurable via settings) ────────────
       let retryCount = 0;
-      while (!overallSuccess && retryCount < maxRetries) {
+      while (!overallSuccess && retryCount < maxRetries - 1) {
         retryCount++;
         console.log(`[agenda-worker] Auto-retry ${retryCount}/${maxRetries} for ${occurrenceId}...`);
         stepSummaries.length = 0;
@@ -765,6 +765,49 @@ function tryParseJson(value) {
   }
 }
 
+function extractJsonObjectFromText(value) {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const direct = tryParseJson(trimmed);
+  if (direct) return direct;
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
+
+  const candidate = trimmed.slice(firstBrace, lastBrace + 1);
+  return tryParseJson(candidate);
+}
+
+function extractTextFromParsedAgentResult(parsed) {
+  if (!parsed || typeof parsed !== "object") return "";
+
+  const payloads = parsed?.result?.payloads ?? parsed?.payloads ?? [];
+  const textParts = [];
+  if (Array.isArray(payloads)) {
+    for (const p of payloads) {
+      if (typeof p?.text === "string" && p.text.trim()) textParts.push(p.text.trim());
+    }
+  }
+
+  const joinedPayloadText = textParts.join("\n").trim();
+  if (joinedPayloadText) return joinedPayloadText;
+
+  if (typeof parsed?.result?.text === "string" && parsed.result.text.trim()) {
+    return parsed.result.text.trim();
+  }
+  if (typeof parsed?.text === "string" && parsed.text.trim()) {
+    return parsed.text.trim();
+  }
+  if (typeof parsed?.result === "string" && parsed.result.trim()) {
+    return parsed.result.trim();
+  }
+
+  return "";
+}
+
 function getStructuredCapacitySignal(err) {
   const stderr = String(err?.stderr || "");
   const stdout = String(err?.stdout || "");
@@ -866,21 +909,29 @@ async function runAgentStep({
   let success = true;
   let artifactData = null;
   let usedFallback = false;
+  let rawStdout = "";
+  let rawStderr = "";
 
   async function executeAgent(modelOverride = null) {
     const effectiveModel = modelOverride || overrideModel || null;
-    const modelArg = effectiveModel ? ["--model", effectiveModel] : [];
+    // Note: --model was removed from `openclaw agent` in 2026.4.x.
+    // Model overrides are passed via OPENCLAW_AGENT_MODEL env var as a
+    // session-scoped hint. If the gateway ignores it, the default model is used.
+    const env = { ...process.env };
+    if (effectiveModel) {
+      env.OPENCLAW_AGENT_MODEL = effectiveModel;
+      console.log(`[agenda-worker] Model override requested: ${effectiveModel} (via env hint)`);
+    }
     const args = [
       "agent",
       "--agent", effectiveAgentId,
       "--message", effectiveInstruction,
       "--json",
-      ...modelArg,
     ];
 
     return execFileAsync("openclaw", args, {
       timeout: effectiveTimeout * 1000,
-      env: process.env,
+      env,
       maxBuffer: 50 * 1024 * 1024,
     });
   }
@@ -890,8 +941,15 @@ async function runAgentStep({
     try {
       const result = await executeAgent();
       raw = result.stdout;
+      rawStdout = String(result?.stdout || "");
+      rawStderr = String(result?.stderr || "");
     } catch (primaryErr) {
-      const capacity = isCapacityConstraintError(primaryErr);
+      rawStdout = String(primaryErr?.stdout || "");
+      rawStderr = String(primaryErr?.stderr || "");
+      raw = rawStdout;
+      const parsedErrorOutput = extractJsonObjectFromText(rawStdout) || extractJsonObjectFromText(rawStderr);
+      const parsedErrorText = extractTextFromParsedAgentResult(parsedErrorOutput);
+       const capacity = isCapacityConstraintError(primaryErr);
 
       // Capacity-constrained failures (rate-limit/quota/low credits) should auto-fallback
       // when a fallback model is configured.
@@ -906,37 +964,42 @@ async function runAgentStep({
         }
       } else if (capacity.constrained) {
         throw new Error(`LLM request rejected: ${capacity.reason || "provider capacity/credit limit reached"}`);
+      } else if (parsedErrorText) {
+        output = parsedErrorText;
+        success = true;
       } else {
         throw primaryErr;
       }
-    }
+     }
 
-    const parsed = JSON.parse(raw);
-    const payloads = parsed?.result?.payloads ?? parsed?.payloads ?? [];
-
-    // Collect text from all payloads
-    const textParts = [];
-    if (Array.isArray(payloads)) {
-      for (const p of payloads) {
-        if (p.text) textParts.push(p.text);
+    if (!output) {
+      const parsed = extractJsonObjectFromText(raw);
+      if (parsed) {
+        output = extractTextFromParsedAgentResult(parsed) || JSON.stringify(parsed);
+      } else {
+        const trimmedRaw = String(raw || "").trim();
+        if (trimmedRaw) {
+          output = trimmedRaw;
+          success = true;
+        } else {
+          throw new Error("Agent did not return a usable response. This usually means the agent session produced no output — check agent logs for details.");
+        }
       }
     }
 
-    output = textParts.join("\n").trim() || (parsed?.result ?? parsed?.text ?? JSON.stringify(parsed));
-
-    // Scan artifact dir for files the agent created directly there
-    if (artifactDir) {
-      const scannedFiles = await scanArtifactDir(artifactDir);
-      if (scannedFiles.length > 0) {
-        artifactData = { files: scannedFiles };
-        console.log(`[agenda-worker] Found ${scannedFiles.length} artifact(s) in ${artifactDir}`);
-      }
-    }
-  } catch (err) {
-    success = false;
-    errorMsg = err instanceof Error ? err.message : String(err);
-    output = `Error: ${errorMsg}`;
-  }
+     // Scan artifact dir for files the agent created directly there
+     if (artifactDir) {
+       const scannedFiles = await scanArtifactDir(artifactDir);
+       if (scannedFiles.length > 0) {
+         artifactData = { files: scannedFiles };
+         console.log(`[agenda-worker] Found ${scannedFiles.length} artifact(s) in ${artifactDir}`);
+       }
+     }
+   } catch (err) {
+     success = false;
+     errorMsg = err instanceof Error ? err.message : String(err);
+     output = `Error: ${errorMsg}`;
+   }
 
   // Handle empty response
   if (success && (!output || output.trim() === "")) {
@@ -957,7 +1020,7 @@ async function runAgentStep({
         ${stepOrder},
         ${effectiveAgentId},
         ${skillKey ?? null},
-        ${sql.json({ instruction, skillKey, agentId, timeoutSeconds, usedFallback })},
+        ${sql.json({ instruction, skillKey, agentId, timeoutSeconds, usedFallback, rawStdout, rawStderr })},
         ${sql.json({ output })},
         ${artifactData ? sql.json(artifactData) : null},
         ${success ? "succeeded" : "failed"},

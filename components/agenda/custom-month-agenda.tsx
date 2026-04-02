@@ -137,6 +137,15 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
     );
   }
 
+  if (result === 'needs_retry') {
+    return (
+      <span className="relative flex shrink-0" style={{ width: size, height: size }} title="Needs Retry">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-60" style={{ animationDuration: '2.5s' }} />
+        <span className="relative inline-flex rounded-full bg-amber-500" style={{ width: size, height: size }} />
+      </span>
+    );
+  }
+
   return (
     <span
       className="relative inline-flex shrink-0"
@@ -158,6 +167,18 @@ function RunningBadge() {
         <span className="size-3 rounded-full border-[2.5px] border-indigo-500 border-t-transparent animate-spin" />
       </span>
       <span className="animate-pulse">Running</span>
+    </span>
+  );
+}
+
+function NeedsRetryBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-amber-700 dark:text-amber-300 shadow-sm ring-1 ring-amber-500/20">
+      <span className="relative inline-flex size-3 shrink-0 items-center justify-center">
+        <span className="absolute inset-0 rounded-full bg-amber-500/20 animate-ping" style={{ animationDuration: '2.5s' }} />
+        <span className="size-2 rounded-full bg-amber-500" />
+      </span>
+      <span className="animate-pulse" style={{ animationDuration: '2.5s' }}>Retry</span>
     </span>
   );
 }
@@ -207,7 +228,8 @@ function EventPill({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95",
-        event.latestResult === "running" ? "shadow-[0_0_0_1px_rgba(99,102,241,0.18),0_8px_24px_rgba(99,102,241,0.18)] ring-1 ring-indigo-400/20" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-indigo-400/20" : "",
+        event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
         backgroundColor: bg,
@@ -245,23 +267,22 @@ function EventPill({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[9px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
             </span>
+          ) : event.latestResult === "needs_retry" ? (
+            <NeedsRetryBadge />
           ) : (
             <span
               className="text-[8px] font-bold uppercase tracking-wider leading-none"
               style={{
                 color: event.latestResult === "succeeded" ? "#16a34a"
-                  : event.latestResult === "needs_retry" ? "#d97706"
                   : event.latestResult === "failed" ? "#dc2626"
                   : undefined,
                 opacity: 0.85,
               }}
             >
-              {event.latestResult === "succeeded" ? "✓ Done"
-                : event.latestResult === "needs_retry" ? "⚠ Retry"
-                : "✗ Failed"}
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
+              {event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " className="text-[8px] font-bold tabular-nums" />
             </span>
           )
         )}
@@ -292,7 +313,8 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95",
-        event.latestResult === "running" ? "shadow-[0_0_0_1px_rgba(99,102,241,0.18),0_12px_28px_rgba(99,102,241,0.22)] ring-1 ring-indigo-400/25" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-indigo-400/25" : "",
+        event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
         backgroundColor: bg,
@@ -327,23 +349,22 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
             </span>
+          ) : event.latestResult === "needs_retry" ? (
+            <NeedsRetryBadge />
           ) : (
             <span
               className="text-[9px] font-bold uppercase tracking-wider leading-none"
               style={{
                 color: event.latestResult === "succeeded" ? "#16a34a"
-                  : event.latestResult === "needs_retry" ? "#d97706"
                   : event.latestResult === "failed" ? "#dc2626"
                   : undefined,
                 opacity: 0.8,
               }}
             >
-              {event.latestResult === "succeeded" ? "✓ Done"
-                : event.latestResult === "needs_retry" ? "⚠ Retry"
-                : "✗ Failed"}
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " />
+              {event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " className="text-[9px] font-bold tabular-nums" />
             </span>
           )
         )}
@@ -512,28 +533,26 @@ function DayCell({
                           )}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
                             evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-amber-500/10">
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-indigo-500/10">
                                 <RunningBadge />
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
                               </span>
+                            ) : evt.latestResult === "needs_retry" ? (
+                              <NeedsRetryBadge />
                             ) : (
                               <span
                                 className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
                                 style={{
                                   color: evt.latestResult === "succeeded" ? "#16a34a"
-                                    : evt.latestResult === "needs_retry" ? "#d97706"
                                     : evt.latestResult === "failed" ? "#dc2626"
                                     : undefined,
                                   backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)"
-                                    : evt.latestResult === "needs_retry" ? "rgba(217,119,6,0.1)"
                                     : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)"
                                     : undefined,
                                 }}
                               >
-                                {evt.latestResult === "succeeded" ? "✓ Done"
-                                  : evt.latestResult === "needs_retry" ? "⚠ Retry"
-                                  : "✗ Failed"}
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix=" · " />
+                                {evt.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix=" · " className="text-[9px] font-bold tabular-nums" />
                               </span>
                             )
                           )}
