@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         await mkdir(artifactsRoot, { recursive: true });
 
         if (existsSync(mcServices)) {
-          for (const svc of ["task-worker", "bridge-logger", "agenda-scheduler", "agenda-worker"]) {
+          for (const svc of ["bridge-logger", "agenda-scheduler", "agenda-worker"]) {
             await execFileAsync("bash", [mcServices, "restart", svc], { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
           }
         }

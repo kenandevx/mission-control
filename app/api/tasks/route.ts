@@ -327,36 +327,12 @@ export async function POST(request: Request) {
         returning *
       `;
       const updated = rows[0];
-      if (updated?.id && before) {
-        if (before.execution_state !== updated.execution_state) {
-          await logTaskAudit(sql, wid, {
-            event: 'Execution updated',
-            details: `State: ${before.execution_state} → ${updated.execution_state}`,
-            level: 'info',
-            ticketId: updated.id,
-          });
-          // Notify workers that this ticket is ready
-          const newState = updated.execution_state;
-          if (newState === 'queued' || newState === 'ready_to_execute') {
-            await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
-          }
-        }
-        if (before.column_id !== updated.column_id) {
-          // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
-          await logTaskAudit(sql, wid, {
-            event: 'Moved column',
-            details: 'Column changed.',
-            level: 'info',
-          });
-        }
-        if (before.plan_approved !== updated.plan_approved) {
-          await logTaskAudit(sql, wid, {
-            event: 'Plan approval updated',
-            details: `Plan approved: ${before.plan_approved ? 'yes' : 'no'} → ${updated.plan_approved ? 'yes' : 'no'}`,
-            level: updated.plan_approved ? 'success' : 'warning',
-            ticketId: updated.id,
-          });
-        }
+      if (updated?.id && before && before.column_id !== updated.column_id) {
+        await logTaskAudit(sql, wid, {
+          event: 'Moved column',
+          details: 'Column changed.',
+          level: 'info',
+        });
       }
       return ok({ ticket: updated });
     }
@@ -434,7 +410,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "attachFileFromPath") {
-      // Attach a local file by its path (used by task-worker for agent-created files)
+      // Attach a local file by its path
       const ticketId = String(body.ticketId || "");
       const filePath = String(body.filePath || "");
       if (!ticketId || !filePath) return fail("Ticket id and file path are required.");
@@ -687,21 +663,6 @@ export async function POST(request: Request) {
         level: "info",
       });
       return ok({ workerSettings });
-    }
-
-    if (action === "listFailedTickets") {
-      const rows = await sql`
-        SELECT t.*, b.name as board_name,
-          (SELECT ta.details FROM ticket_activity ta
-           WHERE ta.ticket_id = t.id AND ta.event = 'Failed'
-           ORDER BY ta.occurred_at DESC LIMIT 1) as last_error
-        FROM tickets t
-        JOIN boards b ON b.id = t.board_id
-        WHERE t.workspace_id = ${wid}
-          AND t.execution_state IN ('failed', 'needs_retry', 'expired')
-        ORDER BY t.updated_at DESC
-      `;
-      return ok({ tickets: rows });
     }
 
     return fail(`Unsupported action: ${action}`);

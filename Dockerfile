@@ -12,7 +12,7 @@ RUN npm run build
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-# Install OpenClaw CLI globally for task-worker
+# Install OpenClaw CLI globally for runtime integrations
 RUN npm install -g openclaw
 # Create non-root user with fixed UID/GID for volume compatibility
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 -G nodejs

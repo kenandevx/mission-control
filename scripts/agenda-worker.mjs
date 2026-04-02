@@ -67,7 +67,7 @@ async function writeHeartbeat(status = "running", lastError = null) {
 }
 
 
-// ── Telegram chat ID discovery (same as task-worker) ──────────────────────────
+// ── Telegram chat ID discovery ───────────────────────────────────────────────
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || resolve(process.env.HOME || "/home/clawdbot", ".openclaw");
 
 let _cachedChatId = null;

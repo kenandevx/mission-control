@@ -80,7 +80,7 @@ export async function cleanupRunArtifacts(dir) {
 
 /**
  * Legacy: write request/response/meta to artifact dir.
- * Kept for backward compat with task-worker. Agenda worker no longer uses this.
+ * Kept for backward compatibility.
  */
 export async function writeRunArtifacts({ dir, requestText, responseText, meta }) {
   const { writeFile } = await import("node:fs/promises");

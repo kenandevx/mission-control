@@ -40,7 +40,7 @@ async function readPidFile(service: string): Promise<number | null> {
 export async function GET(): Promise<NextResponse> {
   try {
     const sql = getSql();
-    const ALL_SERVICES = ["task-worker", "gateway-sync", "bridge-logger", "agenda-scheduler", "agenda-worker", "nextjs"];
+    const ALL_SERVICES = ["gateway-sync", "bridge-logger", "agenda-scheduler", "agenda-worker", "nextjs"];
 
     // Get service_health rows
     const rows = await sql`SELECT * FROM service_health ORDER BY name ASC`;
@@ -93,7 +93,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (!service) return fail("Service name is required");
 
-    const validServices = ["task-worker", "gateway-sync", "bridge-logger", "agenda-scheduler", "agenda-worker", "nextjs"];
+    const validServices = ["gateway-sync", "bridge-logger", "agenda-scheduler", "agenda-worker", "nextjs"];
     if (!validServices.includes(service)) return fail(`Invalid service: ${service}`);
 
     if (action === "logs") {

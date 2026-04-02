@@ -59,7 +59,6 @@ Open **http://localhost:3000**
 | `npm run db:setup` | Run DB migrations + seed |
 | `npm run db:reset` | Wipe and recreate DB schema |
 | `npm run db:migrate` | Run pending migrations |
-| `npm run worker:tasks` | Run task-worker standalone |
 | `npm run agenda:selfcheck` | Agenda health self-check (schema, queue, locks, failed-latest count + missing queue jobs) |
 | `npm run agenda:smoke` | End-to-end agenda retry smoke test (create needs_retry test occurrence, retry, verify state) |
 | `npm run bridge:logger` | Run bridge-logger standalone |
@@ -96,7 +95,6 @@ All services run natively on the host, managed by `scripts/mc-services.sh`. Dock
 
 | Service | Script | Purpose |
 |---|---|---|
-| **task-worker** | `task-worker.mjs` | Legacy board-ticket execution worker (boards are now manual-ticket mode) |
 | **bridge-logger** | `bridge-logger.mjs` | Watches OpenClaw gateway websocket, ingests agent logs → DB, auto-discovers agents |
 | **gateway-sync** | `gateway-sync.mjs` | One-shot: imports agents + sessions from gateway on startup, then exits |
 | **agenda-scheduler** | `agenda-scheduler.mjs` | Expands RRULE occurrences, enqueues due agenda jobs |
@@ -109,7 +107,6 @@ bash scripts/mc-services.sh start                # Start all services
 bash scripts/mc-services.sh stop                 # Stop all services
 bash scripts/mc-services.sh restart              # Restart all
 bash scripts/mc-services.sh restart agenda-worker # Restart single service
-bash scripts/mc-services.sh start task-worker    # Start single service
 bash scripts/mc-services.sh stop nextjs          # Stop single service
 ```
 
@@ -123,7 +120,7 @@ Agent data (name, model, emoji, status) is read from each agent's `IDENTITY.md` 
 
 ### Telegram Notifications
 
-The task-worker and agenda-worker send Telegram notifications for lifecycle events (start, completion, failure, retry, long-running alerts). Chat ID is discovered from OpenClaw's session files — no manual config needed.
+The agenda-worker sends Telegram notifications for lifecycle events (start, completion, failure, retry, long-running alerts). Chat ID is discovered from OpenClaw's session files — no manual config needed.
 
 ## Key Features
 
@@ -212,44 +209,9 @@ Boards now run in **manual Trello-style ticketing mode**.
 
 #### What Happens When...
 
-**Ticket execution fails and cleanup runs:**
-1. All retries exhausted (including fallback model if set)
-2. Worker runs 3-phase cleanup: Qdrant memories → session truncation → file deletion
-3. Agent's main session file truncated to pre-execution state (agent has no memory of the failed run)
-4. Memory entries created during the run are deleted from Qdrant
-5. Files created during the run (in allowed paths) are deleted
-6. Cleanup details saved to `tickets.cleanup_details` jsonb column
-7. Status set to `needs_retry` → Telegram alert → user decides
+**Boards mode reminder:** boards are manual-ticket only (no ticket worker/execution/retry pipeline).
 
-**Ticket stuck as "executing" for >15 min (stale recovery):**
-1. Task worker runs `recoverStaleTickets()` every 5 minutes
-2. Finds tickets with `execution_state = 'executing'` and `updated_at` older than 15 min
-3. Sets them to `needs_retry` + writes activity log entry
-4. Sends Telegram alert for each: "Stuck executing >15min — retry manually"
-5. Also cleans up stale agent execution locks (>20 min old)
-
-**Two tickets for same agent queued simultaneously (per-agent lock):**
-1. First ticket acquires per-agent execution lock (`agent_execution_locks` table)
-2. Second ticket sees lock is held → re-queued via BullMQ with 30s delay (not failed)
-3. After first ticket completes → lock released in finally block → second ticket picks up
-4. No concurrent execution on the same agent, no context pollution
-
-**Cleanup crashes mid-way for a ticket:**
-1. `cleanup_status` was set to `'pending'` on the ticket before cleanup started
-2. On worker restart, `recoverPendingCleanups()` finds tickets with `cleanup_status = 'pending'`
-3. Re-runs cleanup (all operations are idempotent — safe to repeat)
-4. Session truncation: if already truncated, file size ≤ offset → no-op
-5. Qdrant delete: deleting non-existent points is a no-op
-6. File delete: missing files are silently skipped
-
-**Agent session snapshot/restore on ticket failure:**
-1. Before execution, worker snapshots the agent's session file byte offset
-2. Snapshot saved to `tickets.session_snapshots` jsonb column (survives worker crash)
-3. On failure: session file truncated back to snapshot offset → agent has zero memory of failed attempt
-4. JSONL session files are append-only, so truncation cleanly removes only appended messages
-5. Only affects the agent's main session — Telegram sessions are separate files, never touched
-
-**Event or ticket fails:**
+**Event fails:**
 1. Worker auto-retries instantly (up to `max_retries` times, default 1)
 2. If still failing and fallback model is configured → tries once with fallback
 3. If that also fails → status = `needs_retry`, Telegram alert, user decides
@@ -464,7 +426,7 @@ Phase 3: File Deletion
 ### Service Health Monitoring
 - All workers report heartbeats to the `service_health` table every 30 seconds
 - **Services tab** in the Logs page with per-service status cards, PID monitoring, start/stop/restart controls, and log viewer
-- **Per-service management**: `mc-services start agenda-worker`, `mc-services restart task-worker`, etc.
+- **Per-service management**: `mc-services start agenda-worker`, `mc-services restart bridge-logger`, etc.
 - Notification provider polls for service status changes
 - API endpoint (`/api/services`) for service management and log access
 
@@ -628,7 +590,6 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 | `scripts/db-setup.mjs` | DB migrations, seed, reset commands |
 | `scripts/gateway-sync.mjs` | One-shot gateway import |
 | `scripts/bridge-logger.mjs` | Persistent log ingestion daemon |
-| `scripts/task-worker.mjs` | BullMQ ticket execution worker |
 | `scripts/agenda-scheduler.mjs` | RRULE expansion + job enqueue |
 | `scripts/agenda-worker.mjs` | Agenda job execution + artifact capture |
 

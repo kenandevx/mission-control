@@ -29,7 +29,7 @@ if [ ! -d .git ]; then
 fi
 
 warn "This will:"
-echo "  1. Stop all host services (task-worker, gateway-sync, bridge-logger)"
+echo "  1. Stop all host services (gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, nextjs)"
 echo "  2. Stop and remove all Docker containers"
 echo "  3. Remove Docker volumes (including all database data)"
 echo "  4. Keep your .env file"

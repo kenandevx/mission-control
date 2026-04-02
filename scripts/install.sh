@@ -262,7 +262,7 @@ step "Building production Next.js ..."
 env -u NODE_ENV NODE_ENV=production npm run build 2>&1 | tail -5
 
 # ── mc-services: start host-level daemons ───────────────────
-step "Starting all services (task-worker, gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, Next.js) ..."
+step "Starting all services (gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, Next.js) ..."
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'
 
 # ── Convenience symlinks ────────────────────────────────────
@@ -279,7 +279,6 @@ echo "Location: $INSTALL_DIR"
 echo ""
 echo "Services running (production):"
 echo "  PostgreSQL (Docker)   — port 5432"
-echo "  task-worker (host)    — executes agent tickets"
 echo "  gateway-sync (host)   — imports openclaw sessions"
 echo "  bridge-logger (host)  — tails openclaw logs to DB"
 echo "  agenda-scheduler      — schedules agenda occurrences"

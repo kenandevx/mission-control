@@ -31,7 +31,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ── Service definitions ─────────────────────────────────────
-SERVICES="task-worker gateway-sync bridge-logger agenda-scheduler agenda-worker nextjs"
+SERVICES="gateway-sync bridge-logger agenda-scheduler agenda-worker nextjs"
 
 declare -A SERVICE_CMDS
 declare -A SERVICE_LOG_FILES
@@ -42,7 +42,6 @@ for svc in $SERVICES; do
   SERVICE_LOG_FILES[$svc]="$LOG_DIR/${svc}.log"
 done
 
-SERVICE_CMDS[task-worker]="node scripts/task-worker.mjs"
 SERVICE_CMDS[gateway-sync]="node scripts/gateway-sync.mjs"
 SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
 SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
@@ -142,9 +141,6 @@ stop_service() {
     echo "stopped"
   else
     case "$svc" in
-      task-worker)
-        pkill -f "task-worker.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
-        ;;
       gateway-sync)
         pkill -f "gateway-sync.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
         ;;

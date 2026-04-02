@@ -2,6 +2,21 @@
 
 This file tracks notable product and engineering changes so `README.md` can stay focused on overview, setup, and usage.
 
+## 2026-04-02 — v1.6.2
+
+### Boards simplification: manual Trello-style ticketing
+- Removed board-ticket agent execution controls from UI (agent/process/fallback/execution controls, retry/start/cancel/approve/reject actions).
+- Fully removed legacy board ticket worker runtime (`scripts/task-worker.mjs`) and removed task-worker from service orchestration (`mc-services`, `/api/services`, `/api/system`, install/clean flows, npm scripts).
+- Simplified board ticket forms and state models to core planning fields (title, description, checklist, attachments, labels, priority, due date, assignees).
+- Removed failed-ticket execution bucket/status chips from Boards workspace view.
+- Removed process-loading path from Boards page and dropped obsolete modal/action props.
+- Simplified `/api/tasks` board-ticket behavior to manual mode defaults (no board-ticket execution pipeline).
+- Removed obsolete `/api/tasks` execution action branches for board tickets (`approvePlan`, `rejectPlan`, `startExecution`, `retryExecution`, `retryFromNeedsRetry`) and removed `listProcesses` branch from this route.
+- Updated README sections to reflect Boards manual-ticketing mode and marked legacy approval/worker references accordingly.
+- Fixed runtime crash in `TicketDetailsModal` caused by leftover `isLocked` reference after execution-control removal.
+- Replaced modal image preview `<img>` with `next/image` for cleaner Next.js linting.
+- Cleaned type/lint issues in `hooks/use-tasks` (removed `any` usage in board hydration, stabilized memo dependencies).
+
 ## 2026-04-02 — v1.6.1
 
 ### Agenda reliability + retry hotfixes

@@ -19,8 +19,6 @@
     "bot:setup": "node scripts/openclaw-bot-setup.mjs",
     "bridge:logger": "node scripts/bridge-logger.mjs",
     "bridge:logger:check": "node --check scripts/bridge-logger.mjs",
-    "worker:tasks": "node scripts/task-worker.mjs",
-    "worker:tasks:check": "node --check scripts/task-worker.mjs",
     "agenda:selfcheck": "node scripts/agenda-selfcheck.mjs",
     "agenda:smoke": "node scripts/agenda-smoke.mjs",
     "test:worker": "node --test lib/tasks/worker-core.test.mjs",

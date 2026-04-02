@@ -2172,21 +2172,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     setSearchQuery("");
   };
 
-  const listFailedTickets = async () => {
-    try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "listFailedTickets" }),
-      });
-      const json = await res.json();
-      if (!json.ok) return [];
-      return json.tickets ?? [];
-    } catch {
-      return [];
-    }
-  };
-
   const reloadBoards = async () => {
     try {
       const res = await fetch("/api/tasks", { cache: "reload" });
@@ -2300,7 +2285,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     handleSaveDetails,
     moveColumn,
     moveTicket,
-    listFailedTickets,
     reloadBoards,
   };
 }
