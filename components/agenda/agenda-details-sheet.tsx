@@ -554,7 +554,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </DropdownMenuItem>
                       )}
                       {selectedOccurrence && selectedOccurrenceId && (() => {
-                        const canRetry = ["running", "needs_retry", "failed", "succeeded", "cancelled"].includes(selectedOccurrence.status);
+                        const canRetry = ["running", "needs_retry", "failed", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status);
                         return (
                           <>
                             <DropdownMenuSeparator />
@@ -721,7 +721,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         <div className="text-muted-foreground text-xs">
                           {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
                         </div>
-                        {["failed", "needs_retry", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
+                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
                           <Button
                             size="sm"
                             variant="outline"

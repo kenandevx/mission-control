@@ -89,8 +89,8 @@ export async function POST(
     // Allow retry from needs_retry, failed, or running by default.
     // Succeeded/cancelled/completed states require explicit force=true because this is a re-execution.
     const retryableStatuses = forceRetry
-      ? ["needs_retry", "failed", "running", "succeeded", "cancelled"]
-      : ["needs_retry", "failed", "running"];
+      ? ["needs_retry", "failed", "running", "queued", "scheduled", "succeeded", "cancelled"]
+      : ["needs_retry", "failed", "running", "queued", "scheduled"];
     if (!retryableStatuses.includes(occurrence.status)) {
       return fail(
         occurrence.status === "succeeded"

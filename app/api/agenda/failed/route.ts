@@ -11,29 +11,41 @@ export async function GET(): Promise<NextResponse> {
   try {
     const sql = getSql();
 
-    // Group by event — show only the most recent failed/needs_retry occurrence per event
+    // Show only events whose latest occurrence is currently failed/needs_retry
     const occurrences = await sql`
-      SELECT DISTINCT ON (ao.agenda_event_id)
-        ao.id,
-        ao.agenda_event_id,
-        ao.scheduled_for,
-        ao.status,
-        ao.latest_attempt_no,
-        ao.locked_at,
-        ao.created_at,
+      WITH latest_per_event AS (
+        SELECT DISTINCT ON (ao.agenda_event_id)
+          ao.id,
+          ao.agenda_event_id,
+          ao.scheduled_for,
+          ao.status,
+          ao.latest_attempt_no,
+          ao.locked_at,
+          ao.created_at
+        FROM agenda_occurrences ao
+        ORDER BY ao.agenda_event_id, ao.scheduled_for DESC, ao.created_at DESC
+      )
+      SELECT
+        l.id,
+        l.agenda_event_id,
+        l.scheduled_for,
+        l.status,
+        l.latest_attempt_no,
+        l.locked_at,
+        l.created_at,
         ae.title AS event_title,
         ae.default_agent_id,
         (
           SELECT COALESCE(ara.error_message, ara.summary)
           FROM agenda_run_attempts ara
-          WHERE ara.occurrence_id = ao.id
+          WHERE ara.occurrence_id = l.id
           ORDER BY ara.attempt_no DESC
           LIMIT 1
         ) AS last_error
-      FROM agenda_occurrences ao
-      JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-      WHERE ao.status IN ('failed', 'needs_retry')
-      ORDER BY ao.agenda_event_id, ao.scheduled_for DESC
+      FROM latest_per_event l
+      JOIN agenda_events ae ON ae.id = l.agenda_event_id
+      WHERE l.status IN ('failed', 'needs_retry')
+      ORDER BY l.scheduled_for DESC
     `;
 
     return ok({ occurrences });

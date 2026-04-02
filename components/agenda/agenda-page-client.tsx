@@ -13,6 +13,7 @@ import { AgendaDetailsSheet, type AgendaEventSummary } from "@/components/agenda
 import { CustomMonthAgenda, type AgendaCalendarEvent, type ViewMode } from "@/components/agenda/custom-month-agenda";
 import { AgendaFailedDialog } from "@/components/agenda/agenda-failed-bucket";
 import { useAgenda } from "@/hooks/use-agenda";
+import { toast } from "sonner";
 
 type Props = {
   onEditEvent?: (event: AgendaEventSummary) => void;
@@ -296,11 +297,14 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
         );
         const json = await res.json();
         if (json.ok) {
+          toast.success("Retry requested");
           setDetailsSheetOpen(false);
           void loadEvents();
+          return;
         }
+        toast.error(json.error ?? "Retry failed");
       } catch {
-        // ignore
+        toast.error("Retry failed");
       }
     },
     [selectedEvent, loadEvents]

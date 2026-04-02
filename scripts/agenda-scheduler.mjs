@@ -5,8 +5,6 @@
  * 2. Expands RRULE / one-time events over a lookahead window
  * 3. Creates missing agenda_occurrences
  * 4. Enqueues due occurrences to BullMQ
- * v2: Passes scheduledFor, executionWindowMinutes, fallbackModel in job data.
- *     Service heartbeat to service_health table.
  */
 import postgres from "postgres";
 import { Queue } from "bullmq";
@@ -28,13 +26,29 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const SERVICE_NAME = "agenda-scheduler";
 
 const sql = postgres(connectionString, { max: 5, prepare: false, idle_timeout: 20, connect_timeout: 10 });
-
 const agendaQueue = new Queue("agenda", {
   connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD },
   defaultJobOptions: { removeOnComplete: 100, removeOnFail: 200, attempts: 1 },
 });
 
-// ── Service heartbeat ─────────────────────────────────────────────────────────
+function log(level, message, meta = undefined) {
+  const ts = new Date().toISOString();
+  if (meta === undefined) {
+    console[level](`[agenda-scheduler] ${ts} — ${message}`);
+  } else {
+    console[level](`[agenda-scheduler] ${ts} — ${message}`, meta);
+  }
+}
+
+function summarizeError(err) {
+  return {
+    name: err?.name,
+    message: err?.message,
+    code: err?.code,
+    stack: err?.stack,
+  };
+}
+
 async function writeHeartbeat(status = "running", lastError = null) {
   try {
     await sql`
@@ -48,7 +62,7 @@ async function writeHeartbeat(status = "running", lastError = null) {
         updated_at = now()
     `;
   } catch (err) {
-    console.warn("[agenda-scheduler] Heartbeat write failed:", err.message);
+    log("warn", "Heartbeat write failed", summarizeError(err));
   }
 }
 
@@ -62,14 +76,32 @@ async function checkRedis() {
   }
 }
 
-/**
- * Timezone-aware RRULE expansion.
- * Keeps the local time consistent across DST boundaries.
- * e.g. 02:08 CET stays 02:08 CEST after the clock change.
- */
+let schemaCaps = {
+  queueColumns: false,
+  retryColumns: false,
+};
+
+async function detectSchemaCapabilities() {
+  try {
+    const columns = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'agenda_occurrences'
+    `;
+    const names = new Set(columns.map((c) => c.column_name));
+    schemaCaps = {
+      queueColumns: names.has("queue_job_id") && names.has("queued_at"),
+      retryColumns: names.has("latest_attempt_no") && names.has("last_retry_reason"),
+    };
+    log("log", `Schema capabilities: queueColumns=${schemaCaps.queueColumns}, retryColumns=${schemaCaps.retryColumns}`);
+  } catch (err) {
+    log("warn", "Could not detect schema capabilities; using safe fallback mode", summarizeError(err));
+    schemaCaps = { queueColumns: false, retryColumns: false };
+  }
+}
+
 function localTimeToUTC(localDateStr, localTimeStr, timezone) {
-  // Try multiple UTC offsets to find the one that renders correctly in the target timezone
-  // This handles DST gaps (e.g. 02:08 CET doesn't exist on spring-forward day)
   const targetLocal = `${localDateStr}T${localTimeStr}`;
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -87,7 +119,6 @@ function localTimeToUTC(localDateStr, localTimeStr, timezone) {
     const rendered = get(fmt.formatToParts(candidate));
     if (rendered === targetLocal) return candidate;
   }
-  // Fallback: if DST gap makes the time impossible, shift forward 1 hour (spring-forward)
   return new Date(base.getTime() - 3600000);
 }
 
@@ -108,40 +139,34 @@ async function expandOccurrences(event, from, to) {
   const rangeEnd = new Date(Math.min(to.getTime(), until.getTime()));
 
   if (!event.recurrence_rule || event.recurrence_rule === "null" || event.recurrence_rule === "none") {
-    if (startDate >= from && startDate <= to) {
-      return [startDate];
-    }
-    return [];
+    return startDate >= from && startDate <= to ? [startDate] : [];
   }
 
   try {
-    const { RRule } = await import("rrule");
+    const rruleMod = await import("rrule");
+    const RRule = rruleMod?.RRule ?? rruleMod?.default?.RRule;
+    if (!RRule) throw new Error("rrule module did not expose RRule");
+
     const tz = event.timezone || "UTC";
     const { time: localTime } = extractLocalTime(startDate, tz);
-
-    // Expand RRULE using dtstart so it knows the series anchor
     const opts = RRule.parseString(event.recurrence_rule);
     opts.dtstart = startDate;
     const rule = new RRule(opts);
     const rawDates = rule.between(from, rangeEnd, true);
 
-    // Snap local time to nearest 15-min boundary in case of drift
     const [lh, lm] = localTime.split(":").map(Number);
     const snappedMin = Math.round(lm / 15) * 15;
     const snappedH = snappedMin >= 60 ? (lh + 1) % 24 : lh;
     const snappedM = snappedMin >= 60 ? 0 : snappedMin;
     const snappedTime = `${String(snappedH).padStart(2, "0")}:${String(snappedM).padStart(2, "0")}`;
 
-    // For each expanded date, re-anchor to the snapped local time
-    // This fixes DST: 02:00 CET stays 02:00 CEST
     return rawDates.map((d) => {
       const { date: occDate } = extractLocalTime(d, tz);
       return localTimeToUTC(occDate, snappedTime, tz);
     });
   } catch (err) {
-    console.warn("[agenda-scheduler] RRULE expansion failed:", err.message);
-    if (startDate >= from && startDate <= to) return [startDate];
-    return [];
+    log("warn", `RRULE expansion failed for event=${event.id}; falling back to single start occurrence`, summarizeError(err));
+    return startDate >= from && startDate <= to ? [startDate] : [];
   }
 }
 
@@ -152,8 +177,7 @@ function getBullPriorityForScheduledAt(scheduledDate) {
 
 async function enqueueOccurrenceJob({ occurrenceId, eventId, title, freePrompt, agentId, timezone, processes, scheduledFor, executionWindowMinutes, fallbackModel }) {
   const scheduledDate = new Date(scheduledFor);
-  const diffMs = scheduledDate.getTime() - Date.now();
-  const delay = Math.max(0, diffMs);
+  const delay = Math.max(0, scheduledDate.getTime() - Date.now());
   const queueJobId = `agenda-${occurrenceId}-${randomUUID()}`;
 
   await agendaQueue.add(
@@ -179,23 +203,99 @@ async function enqueueOccurrenceJob({ occurrenceId, eventId, title, freePrompt, 
     }
   );
 
-  await sql`
-    update agenda_occurrences
-    set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
-    where id = ${occurrenceId} and status in ('scheduled', 'queued')
+  if (schemaCaps.queueColumns) {
+    await sql`
+      update agenda_occurrences
+      set status = 'queued', queue_job_id = ${queueJobId}, queued_at = now()
+      where id = ${occurrenceId} and status in ('scheduled', 'queued')
+    `;
+  } else {
+    await sql`
+      update agenda_occurrences
+      set status = 'queued'
+      where id = ${occurrenceId} and status in ('scheduled', 'queued')
+    `;
+  }
+}
+
+async function getDueOccurrences(now) {
+  if (schemaCaps.queueColumns || schemaCaps.retryColumns) {
+    return sql`
+      select
+        ao.id as occurrence_id,
+        ao.status as occurrence_status,
+        ao.scheduled_for,
+        ${schemaCaps.queueColumns ? sql`ao.queue_job_id` : sql`null::text`} as queue_job_id,
+        ${schemaCaps.queueColumns ? sql`ao.queued_at` : sql`null::timestamptz`} as queued_at,
+        ${schemaCaps.retryColumns ? sql`ao.latest_attempt_no` : sql`0::int`} as latest_attempt_no,
+        ae.id as event_id,
+        ae.title,
+        ae.free_prompt,
+        ae.default_agent_id,
+        ae.timezone,
+        ae.execution_window_minutes,
+        ae.fallback_model,
+        coalesce(
+          (select json_agg(json_build_object(
+            'process_version_id', aep.process_version_id,
+            'sort_order', aep.sort_order
+          ) order by aep.sort_order)
+          from agenda_event_processes aep
+          where aep.agenda_event_id = ae.id),
+          '[]'
+        ) as processes
+      from agenda_occurrences ao
+      join agenda_events ae on ae.id = ao.agenda_event_id
+      where ao.status in ('scheduled', 'queued')
+        and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
+        and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
+    `;
+  }
+
+  // Legacy schema mode: no queue bookkeeping columns exist.
+  // Only rescue 'scheduled' rows to avoid re-enqueue storms for already queued jobs.
+  return sql`
+    select
+      ao.id as occurrence_id,
+      ao.status as occurrence_status,
+      ao.scheduled_for,
+      null::text as queue_job_id,
+      null::timestamptz as queued_at,
+      0::int as latest_attempt_no,
+      ae.id as event_id,
+      ae.title,
+      ae.free_prompt,
+      ae.default_agent_id,
+      ae.timezone,
+      ae.execution_window_minutes,
+      ae.fallback_model,
+      coalesce(
+        (select json_agg(json_build_object(
+          'process_version_id', aep.process_version_id,
+          'sort_order', aep.sort_order
+        ) order by aep.sort_order)
+        from agenda_event_processes aep
+        where aep.agenda_event_id = ae.id),
+        '[]'
+      ) as processes
+    from agenda_occurrences ao
+    join agenda_events ae on ae.id = ao.agenda_event_id
+    where ao.status in ('scheduled')
+      and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
+      and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
   `;
 }
 
-async function run() {
+async function runCycle() {
   await checkRedis();
   if (!redisUp) {
-    console.warn("[agenda-scheduler] Redis unavailable, skipping cycle");
+    log("warn", "Redis unavailable, skipping cycle");
     return;
   }
 
   const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
   const now = new Date();
-  const from = new Date(now.getTime() - 35 * 60 * 1000); // 35-min backfill (covers previous 1-2 quarter-hour slots)
+  const from = new Date(now.getTime() - 35 * 60 * 1000);
   const to = new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
   const rows = await sql`
@@ -226,29 +326,25 @@ async function run() {
   `;
 
   let enqueued = 0;
-
   for (const event of rows) {
-    const occurrences = await expandOccurrences(event, from, to);
+    try {
+      const occurrences = await expandOccurrences(event, from, to);
+      for (const scheduledFor of occurrences) {
+        await sql`
+          insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
+          values (${event.id}, ${scheduledFor}, 'scheduled')
+          on conflict (agenda_event_id, scheduled_for) do nothing
+        `;
 
-    for (const scheduledFor of occurrences) {
-      // Insert occurrence (skip if already exists — never overwrite status)
-      await sql`
-        insert into agenda_occurrences (agenda_event_id, scheduled_for, status)
-        values (${event.id}, ${scheduledFor}, 'scheduled')
-        on conflict (agenda_event_id, scheduled_for) do nothing
-      `;
+        const [occ] = await sql`
+          select id, status from agenda_occurrences
+          where agenda_event_id = ${event.id} and scheduled_for = ${scheduledFor}
+        `;
 
-      const [occ] = await sql`
-        select id, status from agenda_occurrences
-        where agenda_event_id = ${event.id} and scheduled_for = ${scheduledFor}
-      `;
+        if (!occ || occ.status !== "scheduled") continue;
 
-      if (occ && occ.status === "scheduled") {
-        // Only enqueue jobs that are due within the next 2 minutes (scheduler runs every 60s)
         const diffMs = scheduledFor.getTime() - now.getTime();
-        const TWO_MINUTES = 2 * 60 * 1000;
-
-        if (diffMs <= TWO_MINUTES) {
+        if (diffMs <= 2 * 60 * 1000) {
           await enqueueOccurrenceJob({
             occurrenceId: occ.id,
             eventId: event.id,
@@ -263,75 +359,53 @@ async function run() {
           });
           enqueued++;
         }
-        // Future occurrences stay as 'scheduled' in DB — will be enqueued when their time comes
       }
+    } catch (err) {
+      log("error", `Event processing failed for event=${event.id}; continuing with next event`, summarizeError(err));
     }
   }
 
-  // Rescue pass: enqueue any due scheduled/queued occurrence directly from DB, even if it
-  // came from manual retry, test injection, or a draft event.
-  // Also mark stale queued/scheduled due occurrences as needs_retry once they are past the
-  // execution window without ever being picked up.
-  const dueOccurrences = await sql`
-    select
-      ao.id as occurrence_id,
-      ao.status as occurrence_status,
-      ao.scheduled_for,
-      ao.queue_job_id,
-      ao.queued_at,
-      ao.latest_attempt_no,
-      ae.id as event_id,
-      ae.title,
-      ae.free_prompt,
-      ae.default_agent_id,
-      ae.timezone,
-      ae.execution_window_minutes,
-      ae.fallback_model,
-      coalesce(
-        (select json_agg(json_build_object(
-          'process_version_id', aep.process_version_id,
-          'sort_order', aep.sort_order
-        ) order by aep.sort_order)
-        from agenda_event_processes aep
-        where aep.agenda_event_id = ae.id),
-        '[]'
-      ) as processes
-    from agenda_occurrences ao
-    join agenda_events ae on ae.id = ao.agenda_event_id
-    where ao.status in ('scheduled', 'queued')
-      and ao.scheduled_for <= ${new Date(now.getTime() + 2 * 60 * 1000)}
-      and ao.scheduled_for >= ${new Date(now.getTime() - 35 * 60 * 1000)}
-  `;
-
+  const dueOccurrences = await getDueOccurrences(now);
   let rescued = 0;
   let markedNeedsRetry = 0;
+
   for (const row of dueOccurrences) {
-    const scheduledDate = new Date(row.scheduled_for);
-    const windowMinutes = Number(row.execution_window_minutes || 30);
-    const ageMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
-
-    if (ageMinutes > windowMinutes) {
-      const reason = `Missed execution window before worker pickup — ${Math.round(ageMinutes)}min past ${windowMinutes}min limit`;
-      const attemptNo = Number(row.latest_attempt_no ?? 0) + 1;
-      await sql`
-        update agenda_occurrences
-        set status = 'needs_retry', queue_job_id = null, queued_at = null, latest_attempt_no = ${attemptNo}, last_retry_reason = ${reason}
-        where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
-      `;
-      await sql`
-        insert into agenda_run_attempts (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
-        values (${row.occurrence_id}, ${attemptNo}, ${row.queue_job_id ?? null}, 'failed', now(), now(), ${reason}, ${reason})
-      `;
-      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.occurrence_id })})`;
-      markedNeedsRetry++;
-      continue;
-    }
-
-    const queuedAt = row.queued_at ? new Date(row.queued_at) : null;
-    const staleQueued = !queuedAt || (now.getTime() - queuedAt.getTime()) > 90_000;
-    if (!staleQueued) continue;
-
     try {
+      const scheduledDate = new Date(row.scheduled_for);
+      const windowMinutes = Number(row.execution_window_minutes || 30);
+      const ageMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
+
+      if (ageMinutes > windowMinutes) {
+        const reason = `Missed execution window before worker pickup — ${Math.round(ageMinutes)}min past ${windowMinutes}min limit`;
+        const attemptNo = Number(row.latest_attempt_no ?? 0) + 1;
+
+        if (schemaCaps.queueColumns && schemaCaps.retryColumns) {
+          await sql`
+            update agenda_occurrences
+            set status = 'needs_retry', queue_job_id = null, queued_at = null, latest_attempt_no = ${attemptNo}, last_retry_reason = ${reason}
+            where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
+          `;
+        } else {
+          await sql`
+            update agenda_occurrences
+            set status = 'needs_retry'
+            where id = ${row.occurrence_id} and status in ('scheduled', 'queued')
+          `;
+        }
+
+        await sql`
+          insert into agenda_run_attempts (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
+          values (${row.occurrence_id}, ${attemptNo}, ${row.queue_job_id ?? null}, 'failed', now(), now(), ${reason}, ${reason})
+        `;
+        await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.occurrence_id })})`;
+        markedNeedsRetry++;
+        continue;
+      }
+
+      const queuedAt = row.queued_at ? new Date(row.queued_at) : null;
+      const staleQueued = !queuedAt || (now.getTime() - queuedAt.getTime()) > 90_000;
+      if (!staleQueued) continue;
+
       await enqueueOccurrenceJob({
         occurrenceId: row.occurrence_id,
         eventId: row.event_id,
@@ -347,33 +421,56 @@ async function run() {
       rescued++;
       enqueued++;
     } catch (err) {
-      console.warn(`[agenda-scheduler] Rescue enqueue failed for ${row.occurrence_id}:`, err.message);
+      log("warn", `Rescue handling failed for occurrence=${row.occurrence_id}; continuing`, summarizeError(err));
     }
   }
 
-  console.log(`[agenda-scheduler] ${new Date().toISOString()} — scanned ${rows.length} events, rescue-scanned ${dueOccurrences.length} due occurrences, rescued ${rescued}, auto-marked-needs_retry ${markedNeedsRetry}, enqueued ${enqueued} occurrences`);
+  log("log", `scanned ${rows.length} events, rescue-scanned ${dueOccurrences.length} due occurrences, rescued ${rescued}, auto-marked-needs_retry ${markedNeedsRetry}, enqueued ${enqueued} occurrences`);
 }
 
-// ── Service heartbeat on startup + every 30s ──────────────────────────────────
+let runInProgress = false;
+async function tick() {
+  if (runInProgress) {
+    log("warn", "Previous cycle still running; skipping this tick to avoid overlap");
+    return;
+  }
+  runInProgress = true;
+  try {
+    await runCycle();
+    await writeHeartbeat("running", null);
+  } catch (err) {
+    const summary = summarizeError(err);
+    log("error", "Cycle failed", summary);
+    await writeHeartbeat("degraded", `${summary.code || "ERR"}: ${summary.message || "unknown"}`);
+  } finally {
+    runInProgress = false;
+  }
+}
+
+await detectSchemaCapabilities();
 await writeHeartbeat("running");
-const heartbeatInterval = setInterval(() => writeHeartbeat("running"), 30_000);
+const heartbeatInterval = setInterval(() => { void writeHeartbeat("running"); }, 30_000);
 
 let shuttingDown = false;
-
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log("[agenda-scheduler] Shutting down...");
+  log("log", "Shutting down...");
   clearInterval(heartbeatInterval);
   await writeHeartbeat("stopped").catch(() => {});
-  await agendaQueue.close();
-  await sql.end();
+  await agendaQueue.close().catch((err) => log("warn", "agendaQueue.close failed", summarizeError(err)));
+  await sql.end({ timeout: 5 }).catch((err) => log("warn", "sql.end failed", summarizeError(err)));
   process.exit(0);
 }
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => { void shutdown(); });
+process.on("SIGINT", () => { void shutdown(); });
+process.on("unhandledRejection", (reason) => {
+  log("error", "Unhandled promise rejection", typeof reason === "object" ? summarizeError(reason) : { reason });
+});
+process.on("uncaughtException", (err) => {
+  log("error", "Uncaught exception", summarizeError(err));
+});
 
-// Run immediately then every 60s
-void run();
-setInterval(run, 60_000);
+void tick();
+setInterval(() => { void tick(); }, 60_000);

@@ -17,8 +17,16 @@ export async function GET() {
           and ao.status in ('scheduled', 'queued')
       `.then(r => Number(r[0]?.c ?? 0)),
       sql`
-        select count(distinct agenda_event_id) as c
-        from agenda_occurrences
+        with latest_per_event as (
+          select distinct on (ao.agenda_event_id)
+            ao.agenda_event_id,
+            ao.status,
+            ao.scheduled_for
+          from agenda_occurrences ao
+          order by ao.agenda_event_id, ao.scheduled_for desc, ao.created_at desc
+        )
+        select count(*) as c
+        from latest_per_event
         where status in ('failed', 'needs_retry')
       `.then(r => Number(r[0]?.c ?? 0)),
     ]);

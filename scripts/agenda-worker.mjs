@@ -50,6 +50,39 @@ async function writeHeartbeat(status = "running", lastError = null) {
   }
 }
 
+let _occurrenceSchemaSupportsQueueCols = true;
+let _occurrenceSchemaSupportsRetryCols = true;
+
+async function detectOccurrenceSchemaSupport() {
+  try {
+    const rows = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'agenda_occurrences'
+    `;
+    const names = new Set(rows.map((r) => r.column_name));
+    _occurrenceSchemaSupportsQueueCols = names.has("queue_job_id") && names.has("queued_at");
+    _occurrenceSchemaSupportsRetryCols = names.has("latest_attempt_no") && names.has("last_retry_reason");
+    console.log(`[agenda-worker] Schema capabilities: queueCols=${_occurrenceSchemaSupportsQueueCols}, retryCols=${_occurrenceSchemaSupportsRetryCols}`);
+  } catch (err) {
+    _occurrenceSchemaSupportsQueueCols = false;
+    _occurrenceSchemaSupportsRetryCols = false;
+    console.warn("[agenda-worker] Schema detection failed; falling back to legacy-safe mode:", err.message);
+  }
+}
+
+async function withLegacyOccurrenceFallback(primaryQuery, fallbackQuery, context) {
+  try {
+    return await primaryQuery();
+  } catch (err) {
+    if (err?.code === "42703") {
+      console.warn(`[agenda-worker] Legacy schema fallback (${context}):`, err.message);
+      return await fallbackQuery();
+    }
+    throw err;
+  }
+}
+
 // ── Telegram chat ID discovery (same as task-worker) ──────────────────────────
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || resolve(process.env.HOME || "/home/clawdbot", ".openclaw");
 
@@ -369,14 +402,26 @@ const agendaWorker = new Worker(
     if (diffMinutes > windowMinutes) {
       const missedWindowReason = `Missed execution window — ${Math.round(diffMinutes)}min past ${windowMinutes}min limit`;
       // Mark as needs_retry (not expired) — user can press Retry to run it now
-      await sql`UPDATE agenda_occurrences SET status = 'needs_retry', queue_job_id = null, queued_at = null, last_retry_reason = ${missedWindowReason} WHERE id = ${occurrenceId}`;
+      await withLegacyOccurrenceFallback(
+        () => sql`UPDATE agenda_occurrences SET status = 'needs_retry', queue_job_id = null, queued_at = null, last_retry_reason = ${missedWindowReason} WHERE id = ${occurrenceId}`,
+        () => sql`UPDATE agenda_occurrences SET status = 'needs_retry' WHERE id = ${occurrenceId}`,
+        "missed_window_update"
+      );
       // Create a run attempt with the reason logged
-      const missedAttemptNo = ((await sql`SELECT latest_attempt_no FROM agenda_occurrences WHERE id = ${occurrenceId}`)[0]?.latest_attempt_no ?? 0) + 1;
+      const missedAttemptNo = ((await withLegacyOccurrenceFallback(
+        () => sql`SELECT latest_attempt_no FROM agenda_occurrences WHERE id = ${occurrenceId}`,
+        () => sql`SELECT 0::int as latest_attempt_no`,
+        "read_latest_attempt_no"
+      ))[0]?.latest_attempt_no ?? 0) + 1;
       await sql`
         INSERT INTO agenda_run_attempts (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
         VALUES (${occurrenceId}, ${missedAttemptNo}, 'failed', now(), now(), ${missedWindowReason}, ${missedWindowReason})
       `;
-      await sql`UPDATE agenda_occurrences SET latest_attempt_no = ${missedAttemptNo} WHERE id = ${occurrenceId}`;
+      await withLegacyOccurrenceFallback(
+        () => sql`UPDATE agenda_occurrences SET latest_attempt_no = ${missedAttemptNo} WHERE id = ${occurrenceId}`,
+        () => sql`UPDATE agenda_occurrences SET status = status WHERE id = ${occurrenceId}`,
+        "write_latest_attempt_no_missed_window"
+      );
       console.warn(`[agenda-worker] Occurrence ${occurrenceId} needs retry (${diffMinutes.toFixed(1)}m past window of ${windowMinutes}m)`);
       await sendTelegramNotification(`⚠️ Agenda event "${title}" missed execution window (${Math.round(diffMinutes)}m late) — needs manual retry in Mission Control`, agentId || "main");
       return { skipped: true, reason: 'missed_window' };
@@ -393,28 +438,53 @@ const agendaWorker = new Worker(
       // Release any locks we did acquire
       await releaseAgentLocks(lockedAgents);
       console.log(`[agenda-worker] Agent lock contention for ${occurrenceId} (agents: ${lockFailed.join(", ")}), re-queuing with 30s delay`);
-      // Re-queue with delay
+      const lockRetryCount = Number(job.data?.lockRetryCount || 0);
+      if (lockRetryCount >= 6) {
+        const reason = "Agent remained locked after 6 retries; manual retry required";
+        await withLegacyOccurrenceFallback(
+          () => sql`UPDATE agenda_occurrences SET status = 'needs_retry', last_retry_reason = ${reason}, queue_job_id = null, queued_at = null WHERE id = ${occurrenceId}`,
+          () => sql`UPDATE agenda_occurrences SET status = 'needs_retry' WHERE id = ${occurrenceId}`,
+          "agent_lock_requeue_exhausted"
+        );
+        await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId })})`;
+        await sendTelegramNotification(`⚠️ Agenda event "${title}" could not start because agent was busy too long. Marked as needs_retry.`, agentId || "main");
+        return { skipped: true, reason: 'agent_locked_exhausted' };
+      }
+
+      // Re-queue with delay (single deterministic delayed job per occurrence)
       const { Queue } = await import("bullmq");
-      const { randomUUID } = await import("node:crypto");
-      const nextQueueJobId = `agenda-${occurrenceId}-${randomUUID()}`;
+      const nextQueueJobId = `agenda-lockretry-${occurrenceId}`;
       const requeue = new Queue("agenda", { connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD } });
-      await requeue.add("run-occurrence", { ...job.data, queueJobId: nextQueueJobId }, {
+      await requeue.add("run-occurrence", { ...job.data, queueJobId: nextQueueJobId, lockRetryCount: lockRetryCount + 1 }, {
         delay: 30000,
         jobId: nextQueueJobId,
         priority: typeof job.opts.priority === "number" ? job.opts.priority : undefined,
         removeOnComplete: false,
       });
-      await sql`UPDATE agenda_occurrences SET status = 'queued', queue_job_id = ${nextQueueJobId}, queued_at = now(), last_retry_reason = 'Waiting for agent availability' WHERE id = ${occurrenceId}`;
+      await withLegacyOccurrenceFallback(
+        () => sql`UPDATE agenda_occurrences SET status = 'queued', queue_job_id = ${nextQueueJobId}, queued_at = now(), last_retry_reason = 'Waiting for agent availability' WHERE id = ${occurrenceId}`,
+        () => sql`UPDATE agenda_occurrences SET status = 'queued' WHERE id = ${occurrenceId}`,
+        "agent_lock_requeue"
+      );
       await requeue.close();
       return { skipped: true, reason: 'agent_locked' };
     }
 
     // ── Postgres-level claim lock ─────────────────────────────────────────────
-    const [claimed] = await sql`
-      UPDATE agenda_occurrences SET status = 'running', locked_at = now(), queue_job_id = null, queued_at = null
-      WHERE id = ${occurrenceId} AND status IN ('scheduled', 'queued', 'needs_retry')
-      RETURNING id, latest_attempt_no
-    `;
+    const claimedRows = await withLegacyOccurrenceFallback(
+      () => sql`
+        UPDATE agenda_occurrences SET status = 'running', locked_at = now(), queue_job_id = null, queued_at = null
+        WHERE id = ${occurrenceId} AND status IN ('scheduled', 'queued', 'needs_retry')
+        RETURNING id, latest_attempt_no
+      `,
+      () => sql`
+        UPDATE agenda_occurrences SET status = 'running', locked_at = now()
+        WHERE id = ${occurrenceId} AND status IN ('scheduled', 'queued', 'needs_retry')
+        RETURNING id, 0::int as latest_attempt_no
+      `,
+      "claim_occurrence"
+    );
+    const [claimed] = claimedRows;
     if (!claimed) {
       await releaseAgentLocks(lockedAgents);
       console.log(`[agenda-worker] Occurrence ${occurrenceId} already claimed, skipping`);
@@ -475,7 +545,11 @@ const agendaWorker = new Worker(
           const timeoutReason = `Execution exceeded ${autoRetryMinutes} minute time limit`; 
           await sql`UPDATE agenda_run_attempts SET status = 'failed', finished_at = now(), summary = ${timeoutReason}, error_message = ${timeoutReason} WHERE id = ${runAttemptId} AND status = 'running'`;
           const [maxAtt] = await sql`SELECT coalesce(max(attempt_no), 0) as max_no FROM agenda_run_attempts WHERE occurrence_id = ${occurrenceId}`;
-          await sql`UPDATE agenda_occurrences SET status = 'needs_retry', locked_at = null, latest_attempt_no = ${maxAtt.max_no}, queue_job_id = null, queued_at = null, last_retry_reason = ${timeoutReason} WHERE id = ${occurrenceId}`;
+          await withLegacyOccurrenceFallback(
+            () => sql`UPDATE agenda_occurrences SET status = 'needs_retry', locked_at = null, latest_attempt_no = ${maxAtt.max_no}, queue_job_id = null, queued_at = null, last_retry_reason = ${timeoutReason} WHERE id = ${occurrenceId}`,
+            () => sql`UPDATE agenda_occurrences SET status = 'needs_retry', locked_at = null WHERE id = ${occurrenceId}`,
+            "auto_retry_timeout"
+          );
           await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "auto_retry", occurrenceId })})`;
           await sendTelegramNotification(
             `🔄 Auto-retry triggered for "${title}"\n\n` +
@@ -669,11 +743,19 @@ const agendaWorker = new Worker(
       `;
 
       if (overallSuccess) {
-        await sql`
-          update agenda_occurrences
-          set status = 'succeeded', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null
-          where id = ${occurrenceId} and status = 'running'
-        `;
+        await withLegacyOccurrenceFallback(
+          () => sql`
+            update agenda_occurrences
+            set status = 'succeeded', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null
+            where id = ${occurrenceId} and status = 'running'
+          `,
+          () => sql`
+            update agenda_occurrences
+            set status = 'succeeded'
+            where id = ${occurrenceId} and status = 'running'
+          `,
+          "finalize_success"
+        );
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId })})`;
         console.log(`[agenda-worker] Completed occurrence ${occurrenceId} — succeeded`);
       } else {
@@ -686,11 +768,19 @@ const agendaWorker = new Worker(
           console.error(`[agenda-worker] Cleanup failed for ${occurrenceId}:`, cleanupErr.message);
         }
 
-        await sql`
-          update agenda_occurrences
-          set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${retryReason}
-          where id = ${occurrenceId}
-        `;
+        await withLegacyOccurrenceFallback(
+          () => sql`
+            update agenda_occurrences
+            set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${retryReason}
+            where id = ${occurrenceId}
+          `,
+          () => sql`
+            update agenda_occurrences
+            set status = 'needs_retry'
+            where id = ${occurrenceId}
+          `,
+          "finalize_needs_retry"
+        );
         await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId })})`;
         console.warn(`[agenda-worker] Occurrence ${occurrenceId} needs manual retry: ${retryReason}`);
         await sendTelegramNotification(
@@ -724,11 +814,19 @@ const agendaWorker = new Worker(
       }
 
       // Fatal error → needs_retry directly
-      await sql`
-        update agenda_occurrences
-        set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${msg}
-        where id = ${occurrenceId}
-      `;
+      await withLegacyOccurrenceFallback(
+        () => sql`
+          update agenda_occurrences
+          set status = 'needs_retry', latest_attempt_no = ${attemptNo}, queue_job_id = null, queued_at = null, last_retry_reason = ${msg}
+          where id = ${occurrenceId}
+        `,
+        () => sql`
+          update agenda_occurrences
+          set status = 'needs_retry'
+          where id = ${occurrenceId}
+        `,
+        "fatal_error_needs_retry"
+      );
       await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "failed", occurrenceId })})`;
       await sendTelegramNotification(`❌ Agenda event "${title}" failed: ${msg.slice(0, 200)}`, agentId || "main");
 
@@ -1043,13 +1141,23 @@ async function runAgentStep({
 // ── Stale lock recovery ───────────────────────────────────────────────────────
 async function recoverStaleLocks() {
   try {
-    const stale = await sql`
-      update agenda_occurrences
-      set status = 'needs_retry', locked_at = null, queue_job_id = null, queued_at = null, last_retry_reason = 'Worker crashed or stalled during execution; manual retry required'
-      where status = 'running'
-        and locked_at < now() - interval '15 minutes'
-      returning id
-    `;
+    const stale = await withLegacyOccurrenceFallback(
+      () => sql`
+        update agenda_occurrences
+        set status = 'needs_retry', locked_at = null, queue_job_id = null, queued_at = null, last_retry_reason = 'Worker crashed or stalled during execution; manual retry required'
+        where status = 'running'
+          and locked_at < now() - interval '15 minutes'
+        returning id
+      `,
+      () => sql`
+        update agenda_occurrences
+        set status = 'needs_retry', locked_at = null
+        where status = 'running'
+          and locked_at < now() - interval '15 minutes'
+        returning id
+      `,
+      "stale_lock_recovery"
+    );
     if (stale.length > 0) {
       const staleIds = stale.map((r) => r.id);
       const staleReason = 'Worker crashed or stalled during execution; status set to needs_retry after stale-lock recovery';
@@ -1079,15 +1187,23 @@ async function recoverStaleLocks() {
       }
     }
 
-    // Recover stale agent execution locks (>20 minutes old)
+    // Recover stale/orphaned agent execution locks
+    // - stale by age (>5m), OR
+    // - orphaned because linked occurrence is no longer running.
     try {
       const staleLocks = await sql`
-        DELETE FROM agent_execution_locks
-        WHERE locked_at < now() - interval '20 minutes'
-        RETURNING agent_id
+        DELETE FROM agent_execution_locks ael
+        WHERE ael.locked_at < now() - interval '5 minutes'
+           OR EXISTS (
+             SELECT 1
+             FROM agenda_occurrences ao
+             WHERE ao.id = ael.occurrence_id
+               AND ao.status <> 'running'
+           )
+        RETURNING agent_id, occurrence_id
       `;
       if (staleLocks.length > 0) {
-        console.log(`[agenda-worker] Recovered ${staleLocks.length} stale agent execution lock(s): ${staleLocks.map(r => r.agent_id).join(", ")}`);
+        console.log(`[agenda-worker] Recovered ${staleLocks.length} stale/orphaned agent lock(s): ${staleLocks.map(r => `${r.agent_id}:${r.occurrence_id}`).join(", ")}`);
       }
     } catch (err) {
       console.warn("[agenda-worker] Stale agent lock recovery failed:", err.message);
@@ -1097,11 +1213,12 @@ async function recoverStaleLocks() {
   }
 }
 
-// Run recovery on startup + every 5 minutes
+// Run recovery on startup + every minute
 await mkdir("/storage/mission-control/artifacts", { recursive: true }).catch(() => {});
+await detectOccurrenceSchemaSupport();
 await recoverStaleLocks();
 await recoverPendingCleanups();
-setInterval(recoverStaleLocks, 5 * 60 * 1000);
+setInterval(recoverStaleLocks, 60 * 1000);
 
 // ── Healthcheck ───────────────────────────────────────────────────────────────
 async function checkRedis() {
