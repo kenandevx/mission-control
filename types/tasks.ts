@@ -42,14 +42,7 @@ export type Ticket = {
   dueDate: string | null;
   tags: string[];
   assigneeIds: string[];
-  assignedAgentId?: string;
-  executionMode?: TicketExecutionMode;
-  approvalState?: "none" | "pending" | "approved" | "rejected";
-  planText?: string;
-  planApproved?: boolean;
   scheduledFor?: string | null;
-  executionState?: TicketExecutionState;
-  processVersionIds?: string[];
   taskType?: TaskType;
   frequency?: Frequency;
   weekdays?: string[];
@@ -58,8 +51,6 @@ export type Ticket = {
   endDateMode?: string;
   endDate?: string | null;
   modelOverride?: string;
-  executionWindowMinutes?: number;
-  fallbackModel?: string;
   checklistDone: number;
   checklistTotal: number;
   comments: number;
@@ -150,11 +141,6 @@ export type CreateTicketForm = {
   scheduledFor: string;
   tagsText: string;
   assigneeIds: string[];
-  assignedAgentId: string;
-  executionMode: TicketExecutionMode;
-  processVersionIds: string[];
-  executionWindowMinutes: number;
-  fallbackModel: string;
 };
 
 export type TicketDetailsForm = {
@@ -167,15 +153,6 @@ export type TicketDetailsForm = {
   scheduledFor: string;
   tagsText: string;
   assigneeIds: string[];
-  assignedAgentId: string;
-  executionMode: TicketExecutionMode;
-  approvalState: "none" | "pending" | "approved" | "rejected";
-  planText: string;
-  planApproved: boolean;
-  executionState: TicketExecutionState;
-  processVersionIds: string[];
-  executionWindowMinutes: number;
-  fallbackModel: string;
   checklistDone: number;
   checklistTotal: number;
   comments: number;
@@ -327,11 +304,6 @@ export const emptyCreateForm = (statusId: string): CreateTicketForm => ({
   scheduledFor: "",
   tagsText: "",
   assigneeIds: [],
-  assignedAgentId: "",
-  executionMode: "direct",
-  processVersionIds: [],
-  executionWindowMinutes: 60,
-  fallbackModel: "",
 });
 
 const MONTH_SHORT = [

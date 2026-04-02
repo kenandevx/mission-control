@@ -26,36 +26,6 @@ function validateScheduledFor(raw: unknown, stepRaw: unknown): { iso: string | n
   return { iso: dt.toISOString(), error: null };
 }
 
-function normalizeExecutionState(params: {
-  executionMode: string;
-  requestedState: string;
-  assignedAgentId: string;
-  scheduledForIso: string | null;
-  planApproved: boolean;
-}): string {
-  const mode = params.executionMode || "direct";
-  const requested = params.requestedState || "open";
-  const hasAgent = Boolean((params.assignedAgentId || "").trim());
-
-  if (mode === "planned" && !params.planApproved) {
-    return requested === "queued" ? "awaiting_approval" : requested;
-  }
-
-  const runtimeStates = new Set(["queued", "ready_to_execute", "picked_up", "executing", "running"]);
-
-  if (!hasAgent) {
-    if (runtimeStates.has(requested)) return "open";
-    return requested;
-  }
-
-  // Assigned agent: default to immediate execution unless it is explicitly a terminal/manual state.
-  if (["done", "failed", "needs_retry", "expired", "cancelled", "awaiting_approval", "planning"].includes(requested)) {
-    return requested;
-  }
-
-  return "ready_to_execute";
-}
-
 async function workspaceId(sql: ReturnType<typeof getSql>) {
   const rows = await sql`select id from workspaces order by created_at asc limit 1`;
   return rows[0]?.id ?? null;
@@ -208,6 +178,11 @@ export async function POST(request: Request) {
     const wid = await workspaceId(sql);
     if (!wid) return fail("Workspace not found", 500);
 
+    const removedExecutionActions = new Set(["approvePlan", "rejectPlan", "startExecution", "retryExecution", "retryFromNeedsRetry"]);
+    if (removedExecutionActions.has(action)) {
+      return fail("Ticket agent execution has been removed from Boards.", 410);
+    }
+
     if (action === "createBoard") {
       const name = String(body.name || "").trim();
       const description = String(body.description || "").trim();
@@ -281,20 +256,8 @@ export async function POST(request: Request) {
       const position = Number(posRows[0]?.pos ?? 0);
       const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
       const assigneeIds = Array.isArray(body.assigneeIds) ? body.assigneeIds.map(String) : [];
-      const processVersionIds = Array.isArray(body.processVersionIds) ? body.processVersionIds.map(String) : [];
-
-      const executionMode = String(body.executionMode || "direct");
-      const assignedAgentId = String(body.assignedAgentId || "").trim();
-      const planApproved = Boolean(body.planApproved);
       const scheduled = validateScheduledFor(body.scheduledFor, body.timeStepMinutes);
       if (scheduled.error) return fail(scheduled.error);
-      const executionState = normalizeExecutionState({
-        executionMode,
-        requestedState: String(body.executionState || "open"),
-        assignedAgentId,
-        scheduledForIso: scheduled.iso,
-        planApproved,
-      });
 
       const rows = await sql`
         insert into tickets (
@@ -304,20 +267,15 @@ export async function POST(request: Request) {
           execution_window_minutes, fallback_model
         ) values (
           ${wid}, ${boardId}, ${columnId}, ${title}, ${String(body.description || "")}, ${String(body.priority || "low")}, ${body.dueDate || null},
-          ${sql.array(tags)}, ${sql.array(assigneeIds)}, ${assignedAgentId}, ${executionMode}, ${String(body.planText || "")}, ${planApproved}, ${scheduled.iso}, ${executionState},
-          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}, ${sql.array(processVersionIds)}::uuid[],
-          ${Number(body.executionWindowMinutes || 60)}, ${String(body.fallbackModel || "")}
+          ${sql.array(tags)}, ${sql.array(assigneeIds)}, '', 'direct', '', false, ${scheduled.iso}, 'open',
+          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}, ${sql.array([])}::uuid[],
+          60, ''
         )
         returning *
       `;
       const created = rows[0];
       if (created?.id) {
-        // Note: ticket_activity entry is created by the UI hook (use-tasks.ts) — only log to activity_logs/agent_logs here
         await logTaskAudit(sql, wid, { event: 'Ticket created', details: created.title || title, level: 'success' });
-        // Only notify if already queued (e.g. plan-approved ticket being re-created)
-        if (created.execution_state === 'queued' || created.execution_state === 'ready_to_execute') {
-          await sql`select pg_notify('ticket_ready', ${created.id}::text)`;
-        }
       }
       return ok({ ticket: created });
     }
@@ -327,29 +285,10 @@ export async function POST(request: Request) {
       if (!ticketId) return fail("Ticket id is required.");
       const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
       const assigneeIds = Array.isArray(body.assigneeIds) ? body.assigneeIds.map(String) : [];
-      const processVersionIds = Array.isArray(body.processVersionIds) ? body.processVersionIds.map(String) : [];
 
       const beforeRows = await sql`select * from tickets where id=${ticketId} limit 1`;
       const before = beforeRows[0];
       if (!before) return fail("Ticket not found.", 404);
-
-      // Ticket locking during execution
-      if (before && ['executing', 'running'].includes(before.execution_state)) {
-        const allowedFields = ['execution_state', 'plan_text'];
-        const editFields = Object.keys(body).filter(k => k !== 'action' && k !== 'ticketId' && body[k] !== undefined);
-        const hasUserEdits = editFields.some(f => !allowedFields.includes(f));
-        if (hasUserEdits) {
-          return fail("Cannot edit ticket while it is executing. Wait for completion or cancel first.");
-        }
-      }
-
-      const nextExecutionMode = String(body.executionMode ?? before.execution_mode ?? "direct");
-      const nextAssignedAgentId = body.assignedAgentId === undefined
-        ? String(before.assigned_agent_id || "")
-        : String(body.assignedAgentId || "").trim();
-      const nextPlanApproved = body.planApproved === undefined
-        ? Boolean(before.plan_approved)
-        : Boolean(body.planApproved);
 
       let scheduledIsoForUpdate: string | null = null;
       if (body.scheduledFor !== undefined) {
@@ -357,15 +296,6 @@ export async function POST(request: Request) {
         if (scheduled.error) return fail(scheduled.error);
         scheduledIsoForUpdate = scheduled.iso;
       }
-
-      const nextRequestedState = String(body.executionState ?? before.execution_state ?? "open");
-      const normalizedExecutionState = normalizeExecutionState({
-        executionMode: nextExecutionMode,
-        requestedState: nextRequestedState,
-        assignedAgentId: nextAssignedAgentId,
-        scheduledForIso: body.scheduledFor === undefined ? (before.scheduled_for ? new Date(before.scheduled_for).toISOString() : null) : scheduledIsoForUpdate,
-        planApproved: nextPlanApproved,
-      });
 
       const rows = await sql`
         update tickets
@@ -377,21 +307,21 @@ export async function POST(request: Request) {
           due_date = case when ${body.dueDate === undefined} then due_date else ${body.dueDate ?? null} end,
           tags = case when ${body.tags === undefined} then tags else ${sql.array(tags)} end,
           assignee_ids = case when ${body.assigneeIds === undefined} then assignee_ids else ${sql.array(assigneeIds)} end,
-          assigned_agent_id = case when ${body.assignedAgentId === undefined} then assigned_agent_id else ${nextAssignedAgentId} end,
-          process_version_ids = case when ${body.processVersionIds === undefined} then process_version_ids else ${sql.array(processVersionIds)}::uuid[] end,
-          execution_mode = ${nextExecutionMode},
-          plan_text = case when ${body.planText === undefined} then plan_text else ${body.planText ?? null} end,
-          plan_approved = ${nextPlanApproved},
-          approved_by = case when ${body.planApproved === true} then 'operator' else approved_by end,
-          approved_at = case when ${body.planApproved === true} then now() else approved_at end,
+          assigned_agent_id = '',
+          process_version_ids = ${sql.array([])}::uuid[],
+          execution_mode = 'direct',
+          plan_text = '',
+          plan_approved = false,
+          approved_by = null,
+          approved_at = null,
           scheduled_for = case when ${body.scheduledFor === undefined} then scheduled_for else ${scheduledIsoForUpdate} end,
-          execution_state = ${normalizedExecutionState},
+          execution_state = 'open',
           checklist_done = coalesce(${body.checklistDone ?? null}, checklist_done),
           checklist_total = coalesce(${body.checklistTotal ?? null}, checklist_total),
           comments_count = coalesce(${body.commentsCount ?? null}, comments_count),
           attachments_count = coalesce(${body.attachmentsCount ?? null}, attachments_count),
-          execution_window_minutes = coalesce(${body.executionWindowMinutes ?? null}, execution_window_minutes),
-          fallback_model = case when ${body.fallbackModel === undefined} then fallback_model else ${body.fallbackModel ?? ''} end,
+          execution_window_minutes = 60,
+          fallback_model = '',
           updated_at = now()
         where id = ${ticketId}
         returning *
@@ -438,65 +368,6 @@ export async function POST(request: Request) {
       // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
       await logTaskAudit(sql, wid, { event: 'Ticket deleted', details: ticketId, level: 'warning' });
       return ok();
-    }
-
-    if (action === "approvePlan") {
-      const ticketId = String(body.ticketId || "");
-      const actorId = String(body.actorId || "operator");
-      if (!ticketId) return fail("Ticket id is required.");
-
-      const updatedRows = await sql`
-        update tickets
-        set approval_state = 'approved',
-            execution_state = 'queued',
-            plan_approved = true,
-            approved_at = now(),
-            approved_by = ${actorId},
-            updated_at = now()
-        where id = ${ticketId}
-          and approval_state = 'pending'
-        returning *
-      `;
-      const updated = updatedRows[0];
-      if (!updated) return fail("Plan not in pending state or ticket not found.", 404);
-
-      await logTaskAudit(sql, wid, {
-        event: 'Plan approved',
-        details: `Approved by ${actorId}`,
-        level: 'success',
-        ticketId: updated.id,
-      });
-
-      // Notify worker
-      await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
-
-      return ok({ ticket: updated });
-    }
-
-    if (action === "rejectPlan") {
-      const ticketId = String(body.ticketId || "");
-      if (!ticketId) return fail("Ticket id is required.");
-
-      const updatedRows = await sql`
-        update tickets
-        set approval_state = 'rejected',
-            execution_state = 'draft',
-            updated_at = now()
-        where id = ${ticketId}
-          and approval_state = 'pending'
-        returning *
-      `;
-      const updated = updatedRows[0];
-      if (!updated) return fail("Plan not in pending state or ticket not found.", 404);
-
-      await logTaskAudit(sql, wid, {
-        event: 'Plan rejected',
-        details: `Rejected by operator`,
-        level: 'warning',
-        ticketId: updated.id,
-      });
-
-      return ok({ ticket: updated });
     }
 
     if (action === "moveTicket") {
@@ -816,68 +687,6 @@ export async function POST(request: Request) {
         level: "info",
       });
       return ok({ workerSettings });
-    }
-
-    if (action === "listProcesses") {
-      const rows = await sql`
-        select p.id, p.name, p.description, pv.id as version_id, pv.version_number
-        from processes p
-        left join process_versions pv on pv.process_id = p.id
-        where p.workspace_id = ${wid}
-        order by p.name, pv.version_number
-      `;
-      return ok({ rows });
-    }
-
-    if (action === "startExecution") {
-      const ticketId = String(body.ticketId || "");
-      if (!ticketId) return fail("Ticket id is required.");
-
-      const rows = await sql`select * from tickets where id=${ticketId} limit 1`;
-      const ticket = rows[0];
-      if (!ticket) return fail("Ticket not found.", 404);
-      if (!ticket.assigned_agent_id) return fail("No agent assigned to this ticket.");
-
-      await sql`update tickets set execution_state='queued', updated_at=now() where id=${ticketId}`;
-      await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
-      await logTaskAudit(sql, wid, { event: 'Execution started', details: `Queued for agent ${ticket.assigned_agent_id}`, level: 'info', ticketId });
-
-      const updated = await sql`select * from tickets where id=${ticketId} limit 1`;
-      return ok({ ticket: updated[0] });
-    }
-
-    if (action === "retryExecution") {
-      const ticketId = String(body.ticketId || "");
-      if (!ticketId) return fail("Ticket id is required.");
-
-      const rows = await sql`select * from tickets where id=${ticketId} limit 1`;
-      const ticket = rows[0];
-      if (!ticket) return fail("Ticket not found.", 404);
-      if (!ticket.assigned_agent_id) return fail("No agent assigned to this ticket.");
-
-      await sql`update tickets set execution_state='queued', updated_at=now() where id=${ticketId}`;
-      await sql`select pg_notify('ticket_ready', ${ticketId}::text)`;
-      await logTaskAudit(sql, wid, { event: 'Retry requested', details: `Re-queued for agent ${ticket.assigned_agent_id}`, level: 'warning', ticketId });
-
-      const updated = await sql`select * from tickets where id=${ticketId} limit 1`;
-      return ok({ ticket: updated[0] });
-    }
-
-    if (action === "retryFromNeedsRetry") {
-      const ticketId = String(body.ticketId || "");
-      if (!ticketId) return fail("Ticket id is required.");
-      const rows = await sql`SELECT * FROM tickets WHERE id=${ticketId} LIMIT 1`;
-      const ticket = rows[0];
-      if (!ticket) return fail("Ticket not found.", 404);
-      if (!['needs_retry', 'expired', 'failed'].includes(ticket.execution_state)) {
-        return fail("Ticket is not in a retryable state.");
-      }
-      if (!ticket.assigned_agent_id) return fail("No agent assigned.");
-      await sql`UPDATE tickets SET execution_state='queued', updated_at=now() WHERE id=${ticketId}`;
-      await sql`SELECT pg_notify('ticket_ready', ${ticketId}::text)`;
-      await logTaskAudit(sql, wid, { event: 'Manual retry', details: `Re-queued from ${ticket.execution_state}`, level: 'warning', ticketId });
-      const updated = await sql`SELECT * FROM tickets WHERE id=${ticketId} LIMIT 1`;
-      return ok({ ticket: updated[0] });
     }
 
     if (action === "listFailedTickets") {

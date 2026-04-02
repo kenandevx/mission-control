@@ -11,7 +11,6 @@ import { CreateBoardModal } from "@/components/tasks/modals/create-board-modal";
 import { CreateListModal } from "@/components/tasks/modals/create-list-modal";
 import { DiscardModal } from "@/components/tasks/modals/discard-modal";
 import { TicketDetailsModal } from "@/components/tasks/modals/ticket-details-modal";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -56,7 +55,6 @@ import {
   LayoutGridIcon,
 } from "lucide-react";
 import { BoardActivityFeed, type LiveLog } from "@/components/tasks/boards/board-activity-feed";
-import { FailedTicketsBucket } from "@/components/tasks/boards/failed-tickets-bucket";
 import { KanbanTestPanel } from "@/components/tasks/boards/kanban-test-panel";
 
 // UTC date formatting to avoid hydration mismatches
@@ -96,13 +94,6 @@ const VIEW_OPTIONS: Array<{ key: ViewMode; label: string }> = [
   { key: "grid", label: "Grid" },
 ];
 
-type ProcessOption = {
-  id: string;
-  name: string;
-  versionId: string;
-  versionNumber: number;
-};
-
 type Props = {
   initialBoardId: string | null;
   initialBoards: BoardHydration[];
@@ -138,37 +129,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
   }, []);
 
   const tasks = useTasks({ initialBoardId, initialBoards, initialAssignees: runtimeAssignees });
-  const [processes, setProcesses] = useState<ProcessOption[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/tasks", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "listProcesses" }),
-        });
-        const json = await res.json();
-        if (!cancelled && json.ok && Array.isArray(json.rows)) {
-          const opts: ProcessOption[] = [];
-          const seen = new Set<string>();
-          for (const row of json.rows) {
-            if (!row.version_id || seen.has(row.version_id)) continue;
-            seen.add(row.version_id);
-            opts.push({
-              id: row.id,
-              name: row.name,
-              versionId: row.version_id,
-              versionNumber: row.version_number ?? 1,
-            });
-          }
-          setProcesses(opts);
-        }
-      } catch { /* ignore load errors */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [boardSearch, setBoardSearch] = useState("");
@@ -217,15 +177,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
       tagsText: tasks.createForm.tagsText,
       assigneeIds: tasks.createForm.assigneeIds,
       scheduledFor: tasks.createForm.scheduledFor,
-      assignedAgentId: tasks.createForm.assignedAgentId,
-      executionMode: tasks.createForm.executionMode,
-      approvalState: "none",
-      planText: "",
-      planApproved: false,
-      executionState: "open",
-      processVersionIds: tasks.createForm.processVersionIds || [],
-      executionWindowMinutes: tasks.createForm.executionWindowMinutes ?? 60,
-      fallbackModel: tasks.createForm.fallbackModel ?? "",
       checklistDone: 0,
       checklistTotal: 0,
       comments: 0,
@@ -737,27 +688,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
 
             <div className="grid min-h-0 flex-1 gap-4 overflow-hidden px-3 py-4 sm:px-4 lg:grid-cols-[1fr_340px] lg:px-6">
               <div className="min-h-0 overflow-auto">
-                <FailedTicketsBucket
-                  onRetry={(ticketId) => tasks.retryFromNeedsRetry(ticketId)}
-                  onOpenTicket={(ticketId) => tasks.openDetailsModal(ticketId)}
-                />
-                <div className="flex flex-wrap items-center gap-1.5 pb-3">
-                  {(() => {
-                    const allTickets = Object.values(tasks.board.tickets);
-                    const queued = allTickets.filter((ticket) => ticket.executionState === "ready_to_execute").length;
-                    const running = allTickets.filter((ticket) => ticket.executionState === "executing" || ticket.executionState === "done").length;
-                    const failed = allTickets.filter((ticket) => ticket.executionState === "failed" || ticket.executionState === "needs_retry" || ticket.executionState === "expired").length;
-                    const blocked = allTickets.filter((ticket) => (ticket.executionState === "open" || ticket.executionState === "planning" || ticket.executionState === "awaiting_approval") && !ticket.assignedAgentId).length;
-                    return (
-                      <>
-                        <Badge variant="outline" className="text-[10px]">Queued: {queued}</Badge>
-                        <Badge variant="outline" className="text-[10px]">Running: {running}</Badge>
-                        <Badge variant="outline" className="text-[10px]">Failed: {failed}</Badge>
-                        <Badge variant="outline" className="text-[10px]">Blocked: {blocked}</Badge>
-                      </>
-                    );
-                  })()}
-                </div>
+                <div className="pb-3" />
 
                 <div className={cn("min-h-0 overflow-auto", tasks.view === "kanban" && "overflow-x-auto")}>
                   {tasks.view === "kanban" && (
@@ -823,8 +754,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         open={tasks.modal === "create"}
         form={createTicketForm}
         board={tasks.board}
-        assignees={tasks.assignees}
-        processes={processes}
         attachments={[]}
         attachmentsLoading={false}
         attachmentsUploading={false}
@@ -854,16 +783,11 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
             scheduledFor: patch.scheduledFor ?? prev.scheduledFor,
             tagsText: patch.tagsText ?? prev.tagsText,
             assigneeIds: patch.assigneeIds ?? prev.assigneeIds,
-            assignedAgentId: patch.assignedAgentId ?? prev.assignedAgentId,
-            executionMode: patch.executionMode ?? prev.executionMode,
-            processVersionIds: patch.processVersionIds ?? prev.processVersionIds,
           }))
         }
         onUploadAttachments={() => {}}
         onDeleteAttachment={() => {}}
         onSave={(files) => void tasks.handleCreateTicket(files ?? [])}
-        onRetryNow={() => {}}
-        onCancelExecution={() => {}}
         onCopy={() => {}}
         onDelete={() => {}}
         onClose={tasks.closeCreateModal}
@@ -910,8 +834,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               open={tasks.modal === "details"}
               form={detailsForm}
               board={tasks.board}
-              assignees={tasks.assignees}
-              processes={processes}
               attachments={tasks.detailsAttachments}
               attachmentsLoading={tasks.detailsAttachmentsLoading}
               attachmentsUploading={tasks.detailsAttachmentsUploading}
@@ -938,23 +860,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               onUploadAttachments={(files) => void tasks.uploadDetailsAttachments(files)}
               onDeleteAttachment={(attachmentId) => void tasks.deleteDetailsAttachment(attachmentId)}
               onSave={tasks.handleSaveDetails}
-              onStartExecution={() => {
-                if (detailsForm?.id) {
-                  void (async () => {
-                    await fetch("/api/tasks", {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ action: "startExecution", ticketId: detailsForm.id }),
-                    });
-                    tasks.reloadBoards();
-                    tasks.closeDetailsModal();
-                  })();
-                }
-              }}
-              onRetryNow={() => void tasks.executeDetailsControlAction("retry")}
-              onCancelExecution={() => void tasks.executeDetailsControlAction("cancel")}
-              onApprovePlan={() => { if (detailsForm?.id) { void (async () => { await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "approvePlan", ticketId: detailsForm.id, actorId: "operator" }) }); tasks.reloadBoards(); tasks.closeDetailsModal(); })(); } }}
-              onRejectPlan={() => { if (detailsForm?.id) { void (async () => { await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rejectPlan", ticketId: detailsForm.id }) }); tasks.reloadBoards(); tasks.closeDetailsModal(); })(); } }}
               onCopy={() => void tasks.handleCopyTicket(detailsForm.id)}
               onDelete={() => void tasks.handleDeleteTicket(detailsForm.id)}
               onClose={tasks.closeDetailsModal}

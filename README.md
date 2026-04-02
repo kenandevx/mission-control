@@ -1,6 +1,6 @@
 # OpenClaw Mission Control v1.6.1
 
-Local-first dashboard for OpenClaw — boards, agent scheduling, real-time logs, and execution management.
+Local-first dashboard for OpenClaw — boards, agenda planning, and real-time logs.
 
 ## Changelog
 
@@ -69,13 +69,13 @@ Open **http://localhost:3000**
 | Page | What it does |
 |---|---|
 | `/dashboard` | Stats overview — boards, tickets, events, processes, logs |
-| `/boards` | Kanban boards with drag-and-drop, live activity feed, ticket modals |
+| `/boards` | Kanban boards with drag-and-drop, live activity feed, and Trello-style ticket modals (manual ticketing only) |
 | `/agenda` | Calendar scheduler — one-time or recurring agent tasks |
 | `/processes` | Reusable step-by-step execution blueprints |
 | `/agents` | Agent status cards with model, heartbeat, detail pages |
 | `/logs` | Live log explorer, job queues, and service management |
 | `/file-manager` | File browser for `~/.openclaw/` — browse, create, rename, delete, move, copy files and folders via the UI |
-| `/approvals` | Pending plan approval queue |
+| `/approvals` | Legacy approval page (not used by Boards ticketing flow) |
 | `/settings` | Theme, notifications, agenda settings (concurrency, execution window, auto-retry, fallback model, max retries), system updates, clean reset, uninstall |
 
 ## Architecture
@@ -96,7 +96,7 @@ All services run natively on the host, managed by `scripts/mc-services.sh`. Dock
 
 | Service | Script | Purpose |
 |---|---|---|
-| **task-worker** | `task-worker.mjs` | BullMQ worker — picks up queued tickets, runs agents, auto-attaches output files |
+| **task-worker** | `task-worker.mjs` | Legacy board-ticket execution worker (boards are now manual-ticket mode) |
 | **bridge-logger** | `bridge-logger.mjs` | Watches OpenClaw gateway websocket, ingests agent logs → DB, auto-discovers agents |
 | **gateway-sync** | `gateway-sync.mjs` | One-shot: imports agents + sessions from gateway on startup, then exits |
 | **agenda-scheduler** | `agenda-scheduler.mjs` | Expands RRULE occurrences, enqueues due agenda jobs |
@@ -129,22 +129,10 @@ The task-worker and agenda-worker send Telegram notifications for lifecycle even
 
 ### Boards (Trello-style)
 - Kanban / List / Grid views with drag-and-drop
-- Two-column ticket modal: main content (title, description, checklist, attachments, comments, activity) + sidebar (agent, processes, priority, due date, labels, execution controls)
-- Assign OpenClaw agents for automated execution
-- Attach reusable processes (step-by-step blueprints)
+- Ticket modal focused on core planning data: title, description, checklist, attachments, comments, activity, list, priority, due date, and labels
 - Live activity feed with color-coded entries and relative timestamps
-- Agent output rendered as markdown in the Activity section
-- **File auto-attach**: agent-created files referenced in responses are auto-detected and attached as downloadable files
-- Execution modes: Direct (immediate) or Planned (plan → approve/reject → execute)
-- Retry with backoff (30s / 120s / 480s, up to 3 attempts)
-- **Execution windows**: configurable per-ticket window (default 60 min) — tickets that miss the window are marked `expired`
-- **Fallback models**: if primary model hits rate limits (429/quota), worker auto-retries with configured fallback model
-- **Postgres claim locks**: prevents duplicate ticket execution across workers
-- **Ticket locking**: cannot edit a ticket while it's executing
-- **Failed tickets bucket**: collapsible UI section showing failed/needs_retry/expired tickets with retry buttons
-- **Telegram notifications**: automatic alerts for needs_retry, failed, and expired tickets
-- **Confirmation dialogs**: delete and copy board actions require explicit confirmation
-- New statuses: `needs_retry` (manual intervention required after max retries), `expired` (missed execution window)
+- Confirmation dialogs for destructive actions (delete board/ticket)
+- Built for lightweight ticket tracking, not automated agent execution
 
 ### Agenda (Calendar Scheduler)
 - Month / Week / Day views with event pills
@@ -215,38 +203,12 @@ Step 4: needs_retry + Telegram alert
 | Agent | Which OpenClaw agent runs this event |
 | Model Override | Override the agent's default model for this event |
 
-#### Retry Flow (Kanban Tickets)
+#### Boards Ticketing Mode
 
-Same flow as agenda events, now with full cleanup/lock/recovery parity:
-```
-Step 1: Snapshot agent session + acquire per-agent lock
-   ↓ lock held? → re-queue with 30s delay (not failed)
-   ↓
-Step 2: Execute ticket via assigned agent
-   ↓ succeeded? → done, move to Completed ✅
-   ↓ failed?
-Step 3: Auto-retry (same model, instant, up to max_retries times)
-   ↓ succeeded? → done ✅
-   ↓ all retries failed?
-Step 4: Fallback model (if ticket has one set) → one more try
-   ↓ succeeded? → done ✅
-   ↓ failed?
-Step 5: 3-phase cleanup (Qdrant → session → files)
-   ↓
-Step 6: Set status to "needs_retry"
-        → Telegram notification sent
-        → User decides: Edit / Retry Now / Delete
-```
-
-Tickets now use the full resilience stack:
-- **DB-time execution window check** (default 60 min) — missed window → `needs_retry` (not `expired`)
-- **Postgres claim lock** — same as agenda, prevents duplicate execution
-- **Per-agent execution locks** — prevents concurrent ticket+agenda execution on same agent
-- **Session snapshots + 3-phase cleanup** — identical to agenda: Qdrant memories → session truncation → file deletion
-- **5-minute long-running alert** — Telegram notification when ticket executes >5 min
-- **Stale ticket recovery** — every 5 min, tickets stuck in `executing` >15 min → `needs_retry` + Telegram alert
-- **Crash recovery** — pending cleanups re-run on worker startup
-- **max_retries from Settings** — shared with agenda events
+Boards now run in **manual Trello-style ticketing mode**.
+- No agent execution pipeline for board tickets
+- No process/fallback/retry/approval flow in board tickets
+- Ticketing fields are focused on planning and tracking (title, description, checklist, attachments, labels, priority, due date)
 
 #### What Happens When...
 
@@ -620,7 +582,7 @@ OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/tasks` | POST | Board/ticket CRUD, execution, attachments, activity |
+| `/api/tasks` | POST | Board/ticket CRUD, attachments, comments, and activity |
 | `/api/tasks/worker-metrics` | GET | Worker health: enabled, concurrency, active executions, queued count, last tick |
 | `/api/files` | GET | Serve local files by path (for ticket attachments) |
 | `/api/file-manager/[[...path]]` | GET/POST/PUT/DELETE | File manager backend — list dirs, download/preview/serve files, create, upload (multipart), rename, move/copy, delete — scoped to `~/.openclaw/` |

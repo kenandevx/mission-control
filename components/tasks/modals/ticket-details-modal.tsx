@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import Image from "next/image";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,11 +33,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { getProviderLabel } from "@/lib/models";
-import { useModels } from "@/lib/use-models";
 import { TICKET_PRIORITY_OPTIONS } from "@/types/tasks";
 import type {
-  Assignee,
   BoardState,
   TicketActivity,
   TicketAttachment,
@@ -57,49 +55,21 @@ import {
   ListIcon,
   MoreHorizontalIcon,
   PaperclipIcon,
-  PlayIcon,
   PlusIcon,
-  RefreshCwIcon,
   SendHorizonalIcon,
   SquarePenIcon,
-  TagIcon,
   Trash2Icon,
-  UserIcon,
   XIcon,
   ZapIcon,
-  LockIcon,
-  ShieldCheckIcon,
 } from "lucide-react";
 
-function getTimezoneAbbr(timezone: string, date?: Date): string {
-  try {
-    const d = date || new Date();
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      timeZoneName: 'short',
-    }).formatToParts(d);
-    return parts.find(p => p.type === 'timeZoneName')?.value ?? '';
-  } catch {
-    return '';
-  }
-}
-
 // ── Types ────────────────────────────────────────────────────────────────────
-
-type ProcessOption = {
-  id: string;
-  name: string;
-  versionId: string;
-  versionNumber: number;
-};
 
 type Props = {
   mode?: "create" | "edit";
   open: boolean;
   form: TicketDetailsForm;
   board: BoardState;
-  assignees: Assignee[];
-  processes?: ProcessOption[];
   attachments: TicketAttachment[];
   attachmentsLoading: boolean;
   attachmentsUploading: boolean;
@@ -122,11 +92,6 @@ type Props = {
   onUploadAttachments: (files: FileList | File[] | null) => void;
   onDeleteAttachment: (attachmentId: string) => void;
   onSave: (files?: File[]) => void;
-  onRetryNow?: () => void;
-  onCancelExecution?: () => void;
-  onApprovePlan?: () => void;
-  onRejectPlan?: () => void;
-  onStartExecution?: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onClose: () => void;
@@ -134,7 +99,6 @@ type Props = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const executionLabel = (v: string) => v.replaceAll("_", " ").replace(/^\w/, (c) => c.toUpperCase());
 const formatDate = (v: string) => new Date(v).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const initials = (name: string) => {
   const p = name.trim().split(/\s+/).filter(Boolean);
@@ -211,12 +175,12 @@ function ActivityMarkdown({ text }: { text: string }) {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function TicketDetailsModal({
-  mode = "edit", open, form, board, assignees, processes = [],
-  attachments, attachmentsLoading, attachmentsUploading,
-  subtasks, subtasksLoading, subtaskDraft, onSubtaskDraftChange, onAddSubtask, onToggleSubtask, onDeleteSubtask,
-  comments, commentsLoading, commentDraft, onCommentDraftChange, onAddComment, onDeleteComment,
-  activity, activityLoading, onChange, onUploadAttachments, onDeleteAttachment,
-  onSave, onRetryNow, onCancelExecution, onApprovePlan, onRejectPlan, onStartExecution,
+  mode = "edit", open, form, board,
+  attachments,
+  subtasks, subtaskDraft, onSubtaskDraftChange, onAddSubtask, onToggleSubtask, onDeleteSubtask,
+  comments, commentDraft, onCommentDraftChange, onAddComment, onDeleteComment,
+  activity, onChange, onUploadAttachments, onDeleteAttachment,
+  onSave,
   onCopy, onDelete, onClose,
 }: Props) {
   const isEditing = mode === "edit";
@@ -225,17 +189,7 @@ export function TicketDetailsModal({
   // Auto-open activity when there are agent responses
   const hasAgentOutput = activity.some((e) => e.event === "Agent response" || e.event === "Plan generated");
   const [showActivity, setShowActivity] = useState(hasAgentOutput);
-  const models = useModels();
   const attachRef = useRef<HTMLInputElement | null>(null);
-
-  const hasAgent = Boolean(form.assignedAgentId);
-  const showStart = isEditing && hasAgent && ["open", "draft"].includes(form.executionState);
-  const showRetry = isEditing && ["failed", "needs_retry", "expired"].includes(form.executionState);
-  const showCancel = isEditing && ["executing", "planning"].includes(form.executionState);
-  const showApproval = isEditing && form.executionState === "awaiting_approval";
-  const isLocked = isEditing && ["executing", "running"].includes(form.executionState);
-
-  const removeProcess = (pvId: string) => onChange({ processVersionIds: form.processVersionIds.filter((id) => id !== pvId) });
 
   return (
     <>
@@ -270,14 +224,6 @@ export function TicketDetailsModal({
               )}
             </div>
           </DialogHeader>
-
-          {/* Execution lock banner */}
-          {isLocked && (
-            <div className="mx-6 mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
-              <LockIcon className="size-3.5 shrink-0" />
-              <span>This ticket is currently executing. Editing is disabled until execution completes or is cancelled.</span>
-            </div>
-          )}
 
           {/* Two-column Trello layout */}
           <div className="flex overflow-hidden" style={{ maxHeight: "calc(92vh - 140px)" }}>
@@ -527,46 +473,6 @@ export function TicketDetailsModal({
 
             {/* ── Sidebar (right) — Trello style ─────────────────── */}
             <div className="w-[220px] shrink-0 border-l bg-muted/10 px-4 py-4 overflow-y-auto flex flex-col gap-3">
-              {/* Agent */}
-              <div className="flex flex-col gap-1">
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Agent</Label>
-                <Select value={form.assignedAgentId || "__none__"} onValueChange={(v) => onChange({ assignedAgentId: v === "__none__" ? "" : v })}>
-                  <SelectTrigger className="h-8 text-xs w-full cursor-pointer"><SelectValue placeholder="No agent" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">No agent (manual)</SelectItem>
-                    {assignees.map((a) => <SelectItem key={a.id} value={a.id}>{a.name || a.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Processes */}
-              <div className="flex flex-col gap-1">
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Processes</Label>
-                {form.processVersionIds.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {form.processVersionIds.map((pvId) => {
-                      const p = processes.find((pr) => pr.versionId === pvId);
-                      return (
-                        <Badge key={pvId} variant="secondary" className="text-[10px] gap-1 pr-1">
-                          {p ? p.name : pvId.slice(0, 6)}
-                          <button onClick={() => removeProcess(pvId)} className="cursor-pointer"><XIcon className="size-2.5" /></button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )}
-                {processes.length > 0 && (
-                  <Select onValueChange={(v) => { if (v && !form.processVersionIds.includes(v)) onChange({ processVersionIds: [...form.processVersionIds, v] }); }}>
-                    <SelectTrigger className="h-8 text-xs w-full cursor-pointer"><SelectValue placeholder="Add process..." /></SelectTrigger>
-                    <SelectContent>
-                      {processes.filter((p) => !form.processVersionIds.includes(p.versionId)).map((p) => (
-                        <SelectItem key={p.versionId} value={p.versionId}>{p.name} v{p.versionNumber}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
               <Separator />
 
               {/* List */}
@@ -613,90 +519,6 @@ export function TicketDetailsModal({
                 />
               </div>
 
-              {/* Execution mode */}
-              <div className="flex flex-col gap-1">
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Execution</Label>
-                <Select value={form.executionMode} onValueChange={(v) => onChange({ executionMode: v as TicketDetailsForm["executionMode"] })}>
-                  <SelectTrigger className="h-8 text-xs w-full cursor-pointer"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="direct">Direct</SelectItem>
-                    <SelectItem value="planned">Planned</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Fallback model */}
-              <div className="flex flex-col gap-1">
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                  <ShieldCheckIcon className="size-3" />
-                  Fallback Model
-                </Label>
-                <Select
-                  value={form.fallbackModel || "__none__"}
-                  onValueChange={(v) => onChange({ fallbackModel: v === "__none__" ? "" : v })}
-                  disabled={isLocked}
-                >
-                  <SelectTrigger className="h-8 text-xs w-full cursor-pointer">
-                    <SelectValue placeholder="None" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {models.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        <span className="font-medium">{m.alias}</span>
-                        <span className="text-muted-foreground text-[10px] ml-1">({getProviderLabel(m.id)})</span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Execution state badge */}
-              {isEditing && (
-                <div className="flex flex-wrap gap-1">
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[9px]",
-                      form.executionState === "needs_retry" && "border-amber-500 text-amber-600 dark:text-amber-400",
-                      form.executionState === "expired" && "border-gray-400 text-gray-500",
-                      form.executionState === "failed" && "border-destructive text-destructive",
-                    )}
-                  >
-                    {executionLabel(form.executionState)}
-                  </Badge>
-                  {form.executionMode === "planned" && (
-                    <Badge variant="outline" className="text-[9px]">{form.planApproved ? "Approved" : "Pending"}</Badge>
-                  )}
-                </div>
-              )}
-
-              {/* Execution controls */}
-              {(showStart || showRetry || showCancel || showApproval) && (
-                <div className="flex flex-col gap-1.5">
-                  {showStart && (
-                    <Button size="sm" onClick={onStartExecution} className="h-7 text-[11px] gap-1 w-full cursor-pointer">
-                      <PlayIcon className="size-3" /> Start
-                    </Button>
-                  )}
-                  {showRetry && (
-                    <Button size="sm" variant="outline" onClick={onRetryNow} className="h-7 text-[11px] gap-1 w-full cursor-pointer">
-                      <RefreshCwIcon className="size-3" /> Retry
-                    </Button>
-                  )}
-                  {showCancel && (
-                    <Button size="sm" variant="outline" onClick={onCancelExecution} className="h-7 text-[11px] gap-1 w-full cursor-pointer">
-                      <XIcon className="size-3" /> Cancel
-                    </Button>
-                  )}
-                  {showApproval && (
-                    <>
-                      <Button size="sm" onClick={onApprovePlan} className="h-7 text-[11px] w-full cursor-pointer">Approve</Button>
-                      <Button size="sm" variant="destructive" onClick={onRejectPlan} className="h-7 text-[11px] w-full cursor-pointer">Reject</Button>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           </div>
 
@@ -719,7 +541,15 @@ export function TicketDetailsModal({
             <DialogDescription>Image preview</DialogDescription>
           </DialogHeader>
           {previewAtt && (
-            <img src={previewAtt.url} alt={previewAtt.name} className="max-h-[70vh] w-full object-contain rounded-md" />
+            <div className="relative h-[70vh] w-full">
+              <Image
+                src={previewAtt.url}
+                alt={previewAtt.name}
+                fill
+                unoptimized
+                className="object-contain rounded-md"
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

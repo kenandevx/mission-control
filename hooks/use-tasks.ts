@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getDataAdapter } from "@/lib/db";
 import type {
@@ -39,6 +39,41 @@ type BoardEntry = {
   createdAt?: number;
   updatedAt?: number;
   data: BoardState;
+};
+
+type RawBoard = {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  last_ticket_at?: string | null;
+};
+
+type RawColumn = {
+  id: string;
+  board_id: string;
+  title: string;
+  color_key: string | null;
+  is_default: boolean | null;
+};
+
+type RawTicket = {
+  id: string;
+  board_id: string;
+  column_id: string;
+  title: string;
+  description: string | null;
+  priority: string;
+  due_date: string | null;
+  tags: string[] | null;
+  assignee_ids: string[] | null;
+  scheduled_for: string | null;
+  checklist_done: number | null;
+  checklist_total: number | null;
+  comments_count: number | null;
+  attachments_count: number | null;
+  created_at: string;
 };
 
 type UseTasksOptions = {
@@ -101,18 +136,18 @@ const colorKeyFromTone = (tone: Column["tone"]): string | null => {
 };
 
 function hydrateBoards(
-  rawBoards: any[],
-  rawColumns: any[],
-  rawTickets: any[]
+  rawBoards: RawBoard[],
+  rawColumns: RawColumn[],
+  rawTickets: RawTicket[]
 ): BoardHydration[] {
-  const columnsByBoard = rawColumns.reduce((acc, col) => {
+  const columnsByBoard = rawColumns.reduce<Record<string, RawColumn[]>>((acc, col) => {
     (acc[col.board_id] ??= []).push(col);
     return acc;
-  }, {} as Record<string, any[]>);
-  const ticketsByBoard = rawTickets.reduce((acc, t) => {
+  }, {});
+  const ticketsByBoard = rawTickets.reduce<Record<string, RawTicket[]>>((acc, t) => {
     (acc[t.board_id] ??= []).push(t);
     return acc;
-  }, {} as Record<string, any[]>);
+  }, {});
 
   const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -171,15 +206,7 @@ function hydrateBoards(
         dueDate: t.due_date,
         tags: t.tags ?? [],
         assigneeIds: t.assignee_ids ?? [],
-        assignedAgentId: t.assigned_agent_id ?? "",
-        executionMode: (t.execution_mode as Ticket["executionMode"]) ?? "direct",
-        planText: t.plan_text ?? "",
-        planApproved: Boolean(t.plan_approved),
         scheduledFor: t.scheduled_for ? t.scheduled_for.slice(0, 10) : null,
-        executionState: (t.execution_state as Ticket["executionState"]) ?? "open",
-        processVersionIds: t.process_version_ids ?? [],
-        executionWindowMinutes: t.execution_window_minutes ?? 60,
-        fallbackModel: t.fallback_model ?? "",
         checklistDone: t.checklist_done ?? 0,
         checklistTotal: t.checklist_total ?? 0,
         comments: t.comments_count ?? 0,
@@ -229,15 +256,7 @@ const toTicket = (row: TicketRecord): Ticket => ({
   dueDate: formatDueDateInput(row.dueDate),
   tags: row.tags,
   assigneeIds: row.assigneeIds,
-  assignedAgentId: row.assignedAgentId,
-  executionMode: row.executionMode,
-  planText: row.planText ?? "",
-  planApproved: row.planApproved,
   scheduledFor: formatDueDateInput(row.scheduledFor),
-  executionState: row.executionState,
-  processVersionIds: row.processVersionIds ?? [],
-  executionWindowMinutes: row.executionWindowMinutes ?? 60,
-  fallbackModel: row.fallbackModel ?? "",
   checklistDone: row.checklistDone,
   checklistTotal: row.checklistTotal,
   comments: row.commentsCount,
@@ -480,7 +499,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     [assignees],
   );
   const validAssigneeIds = (ids: string[]) => ids.filter((id) => Boolean(assigneeById[id]));
-  const resolveAssigneeName = (id: string) => assigneeById[id]?.name ?? id;
+  const resolveAssigneeName = useCallback((id: string) => assigneeById[id]?.name ?? id, [assigneeById]);
 
   const ticketsList = useMemo(() => Object.values(board.tickets), [board.tickets]);
 
@@ -499,7 +518,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         })
         .map((ticket) => ticket.id),
     );
-  }, [assigneeById, searchQuery, ticketsList]);
+  }, [resolveAssigneeName, searchQuery, ticketsList]);
 
   const sortedFilteredTickets = useMemo(() => {
     return ticketsList
@@ -535,12 +554,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       createForm.dueDate !== createSnapshot.dueDate ||
       createForm.scheduledFor !== createSnapshot.scheduledFor ||
       !sameText(createForm.tagsText, createSnapshot.tagsText) ||
-      createForm.assigneeIds.join(",") !== createSnapshot.assigneeIds.join(",") ||
-      createForm.assignedAgentId !== createSnapshot.assignedAgentId ||
-      createForm.executionMode !== createSnapshot.executionMode ||
-      (createForm.processVersionIds?.join(",") ?? "") !== (createSnapshot.processVersionIds?.join(",") ?? "") ||
-      createForm.executionWindowMinutes !== createSnapshot.executionWindowMinutes ||
-      createForm.fallbackModel !== createSnapshot.fallbackModel,
+      createForm.assigneeIds.join(",") !== createSnapshot.assigneeIds.join(","),
     [createForm, createSnapshot],
   );
 
@@ -554,14 +568,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       detailsForm.dueDate !== detailsSnapshot.dueDate ||
       detailsForm.scheduledFor !== detailsSnapshot.scheduledFor ||
       !sameText(detailsForm.tagsText, detailsSnapshot.tagsText) ||
-      detailsForm.assigneeIds.join(",") !== detailsSnapshot.assigneeIds.join(",") ||
-      detailsForm.assignedAgentId !== detailsSnapshot.assignedAgentId ||
-      detailsForm.executionMode !== detailsSnapshot.executionMode ||
-      detailsForm.planText !== detailsSnapshot.planText ||
-      detailsForm.planApproved !== detailsSnapshot.planApproved ||
-      detailsForm.executionState !== detailsSnapshot.executionState ||
-      detailsForm.executionWindowMinutes !== detailsSnapshot.executionWindowMinutes ||
-      detailsForm.fallbackModel !== detailsSnapshot.fallbackModel
+      detailsForm.assigneeIds.join(",") !== detailsSnapshot.assigneeIds.join(",")
     );
   }, [detailsForm, detailsSnapshot]);
 
@@ -628,15 +635,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       scheduledFor: ticket.scheduledFor ?? "",
       tagsText: ticket.tags.join(", "),
       assigneeIds: validAssigneeIds(ticket.assigneeIds),
-      assignedAgentId: ticket.assignedAgentId ?? "",
-      executionMode: ticket.executionMode ?? "direct",
-      approvalState: ticket.approvalState ?? "none",
-      planText: ticket.planText ?? "",
-      planApproved: Boolean(ticket.planApproved),
-      executionState: ticket.executionState ?? "open",
-      processVersionIds: ticket.processVersionIds ?? [],
-      executionWindowMinutes: ticket.executionWindowMinutes ?? 60,
-      fallbackModel: ticket.fallbackModel ?? "",
       checklistDone: ticket.checklistDone,
       checklistTotal: ticket.checklistTotal,
       comments: ticket.comments,
@@ -1467,12 +1465,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         dueDate: createForm.dueDate || null,
         tags,
         assigneeIds,
-        assignedAgentId: createForm.assignedAgentId || assigneeIds[0] || "",
-        executionMode: createForm.executionMode,
-        planText: "",
-        planApproved: false,
         scheduledFor: createForm.scheduledFor || null,
-        executionState: "open",
         checklistDone: 0,
         checklistTotal: 0,
         comments: 0,
@@ -1507,11 +1500,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       scheduledFor: toIsoDueDate(createForm.scheduledFor),
       tags,
       assigneeIds,
-      assignedAgentId: createForm.assignedAgentId || assigneeIds[0] || "",
-      executionMode: createForm.executionMode,
-      planText: "",
-      planApproved: false,
-      processVersionIds: createForm.processVersionIds || [],
       checklistDone: 0,
       checklistTotal: 0,
       attachmentsCount: 0,
@@ -1541,12 +1529,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
           statusId: created.columnId,
           priority: created.priority,
           dueDate: formatDueDateInput(created.dueDate),
-          assignedAgentId: created.assignedAgentId,
-          executionMode: created.executionMode,
-          planText: created.planText ?? "",
-          planApproved: created.planApproved,
           scheduledFor: formatDueDateInput(created.scheduledFor),
-          executionState: created.executionState,
           checklistDone: created.checklistDone,
           checklistTotal: created.checklistTotal,
           comments: created.commentsCount,
@@ -1929,24 +1912,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         dueDate: detailsForm.dueDate || null,
         tags,
         assigneeIds,
-        assignedAgentId: detailsForm.assignedAgentId || assigneeIds[0] || "",
-        executionMode: detailsForm.executionMode,
-        planText: detailsForm.planText,
-        planApproved: detailsForm.planApproved,
         scheduledFor: detailsForm.scheduledFor || null,
-        executionState: detailsForm.executionMode === "planned"
-          ? detailsForm.planApproved
-            ? "ready_to_execute"
-            : "awaiting_approval"
-          : detailsForm.executionState === "pending"
-            ? "open"
-            : detailsForm.executionState === "queued"
-              ? "ready_to_execute"
-              : detailsForm.executionState === "picked_up" || detailsForm.executionState === "running"
-                ? "executing"
-                : detailsForm.executionState === "done"
-                  ? "executing"
-                  : detailsForm.executionState,
         checklistDone: detailsForm.checklistDone,
         checklistTotal: detailsForm.checklistTotal,
         comments: detailsForm.comments,
@@ -1980,26 +1946,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         scheduledFor: toIsoDueDate(detailsForm.scheduledFor),
         tags,
         assigneeIds,
-        assignedAgentId: detailsForm.assignedAgentId || assigneeIds[0] || "",
-        executionMode: detailsForm.executionMode,
-        planText: detailsForm.planText,
-        planApproved: detailsForm.planApproved,
-        executionWindowMinutes: detailsForm.executionWindowMinutes,
-        fallbackModel: detailsForm.fallbackModel,
-        executionState: detailsForm.executionMode === "planned"
-          ? detailsForm.planApproved
-            ? "ready_to_execute"
-            : "awaiting_approval"
-          : detailsForm.executionState === "pending"
-            ? "open"
-            : detailsForm.executionState === "queued"
-              ? "ready_to_execute"
-              : detailsForm.executionState === "picked_up" || detailsForm.executionState === "running"
-                ? "executing"
-                : detailsForm.executionState === "done"
-                  ? "executing"
-                  : detailsForm.executionState,
-        processVersionIds: detailsForm.processVersionIds,
         checklistDone: detailsForm.checklistDone,
         checklistTotal: detailsForm.checklistTotal,
         commentsCount: detailsForm.comments,
@@ -2116,94 +2062,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     }
   };
 
-  const executeDetailsControlAction = async (action: "retry" | "cancel") => {
-    if (!detailsForm) return;
-
-    const inProgressColumnId = Object.values(board.columns).find((column) => {
-      const normalized = column.title.trim().toLowerCase();
-      return normalized === "in progress" || normalized === "doing";
-    })?.id;
-
-    // For needs_retry/expired, use the dedicated retryFromNeedsRetry endpoint
-    if (action === "retry" && ['needs_retry', 'expired'].includes(detailsForm.executionState)) {
-      await retryFromNeedsRetry(detailsForm.id);
-      setDetailsForm((prev) => prev ? { ...prev, executionState: "queued" } : prev);
-      return;
-    }
-
-    const nextExecutionState: TicketDetailsForm["executionState"] =
-      action === "retry" ? "ready_to_execute" : "failed";
-    const nextStatusId =
-      action === "retry" && inProgressColumnId ? inProgressColumnId : detailsForm.statusId;
-
-    const nextForm = {
-      ...detailsForm,
-      statusId: nextStatusId,
-      executionState: nextExecutionState,
-      scheduledFor: action === "retry" ? "" : detailsForm.scheduledFor,
-    };
-
-    setDetailsForm(nextForm);
-
-    updateActiveBoard((prev) => {
-      const current = prev.tickets[detailsForm.id];
-      if (!current) return prev;
-      const nextTicket = {
-        ...current,
-        statusId: nextStatusId,
-        executionState: nextExecutionState,
-        scheduledFor: action === "retry" ? null : current.scheduledFor,
-      };
-      const nextTicketIdsByColumn = { ...prev.ticketIdsByColumn };
-      if (current.statusId !== nextStatusId) {
-        nextTicketIdsByColumn[current.statusId] = (nextTicketIdsByColumn[current.statusId] ?? []).filter(
-          (id) => id !== detailsForm.id,
-        );
-        nextTicketIdsByColumn[nextStatusId] = [detailsForm.id, ...(nextTicketIdsByColumn[nextStatusId] ?? [])];
-      }
-      return {
-        ...prev,
-        tickets: { ...prev.tickets, [detailsForm.id]: nextTicket },
-        ticketIdsByColumn: nextTicketIdsByColumn,
-      };
-    });
-
-    try {
-      if (action === "retry") {
-        // Use the dedicated retry endpoint so the worker picks it up via BullMQ
-        await fetch("/api/tasks", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "retryExecution", ticketId: detailsForm.id }),
-        });
-        await createTicketActivity(
-          detailsForm.id,
-          "Retry requested",
-          "Marked as ready to execute immediately.",
-          "warning",
-        );
-        toast.success("Ticket marked ready to execute.");
-      } else {
-        await adapter.updateTicket(detailsForm.id, {
-          columnId: nextStatusId,
-          executionState: nextExecutionState,
-          assignedAgentId: detailsForm.assignedAgentId || detailsForm.assigneeIds[0] || undefined,
-          scheduledFor: toIsoDueDate(detailsForm.scheduledFor),
-        });
-        await createTicketActivity(
-          detailsForm.id,
-          "Execution cancelled",
-          "Execution marked as failed/cancelled by operator.",
-          "warning",
-        );
-        toast.success("Ticket execution marked failed.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to apply execution action.";
-      toast.error(message);
-    }
-  };
-
   const moveColumn = (activeId: string, overId: string) => {
     const currentBoard = activeBoardRef.current;
     const order = [...currentBoard.columnOrder];
@@ -2312,33 +2170,6 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
   const clearSearch = () => {
     setSearchInput("");
     setSearchQuery("");
-  };
-
-  const retryFromNeedsRetry = async (ticketId: string) => {
-    try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "retryFromNeedsRetry", ticketId }),
-      });
-      const json = await res.json();
-      if (!json.ok) {
-        toast.error(json.error || "Failed to retry ticket.");
-        return;
-      }
-      updateActiveBoard((prev) => {
-        const ticket = prev.tickets[ticketId];
-        if (!ticket) return prev;
-        return {
-          ...prev,
-          tickets: { ...prev.tickets, [ticketId]: { ...ticket, executionState: "queued" } },
-        };
-      });
-      toast.success("Ticket re-queued for execution.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to retry ticket.";
-      toast.error(message);
-    }
   };
 
   const listFailedTickets = async () => {
@@ -2467,10 +2298,8 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     handleDeleteList,
     handleCreateList,
     handleSaveDetails,
-    executeDetailsControlAction,
     moveColumn,
     moveTicket,
-    retryFromNeedsRetry,
     listFailedTickets,
     reloadBoards,
   };
