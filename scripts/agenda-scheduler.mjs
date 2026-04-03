@@ -151,6 +151,28 @@ async function getCronRuns(cronJobId, limit = 10) {
   }
 }
 
+/** Fetch all cron job states at once — returns Map<jobId, state> */
+async function getAllCronJobStates() {
+  try {
+    const env = buildCleanEnv();
+    const result = await execFileAsync("openclaw", ["cron", "list", "--json"], {
+      timeout: 15000,
+      env,
+      maxBuffer: 5 * 1024 * 1024,
+    });
+    const raw = (result.stdout || "").trim() || (result.stderr || "").trim();
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw);
+    const map = new Map();
+    for (const job of (parsed?.jobs || [])) {
+      map.set(job.id, job.state ?? {});
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
 // ── Telegram chat ID discovery ───────────────────────────────────────────────
 let _cachedChatId = null;
 async function getTelegramChatId(agentId = "main") {
@@ -350,6 +372,9 @@ async function syncCronRunResults() {
   const [settingsRow] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
   const maxRetries = Math.max(1, Number(settingsRow?.max_retries ?? 1));
 
+  // Fetch all cron job states once (avoids one list call per occurrence)
+  const cronJobStates = await getAllCronJobStates();
+
   // Find occurrences that have a cron_job_id but are still in running/queued state
   const pending = await sql`
     SELECT ao.id as occurrence_id, ao.cron_job_id, ao.agenda_event_id,
@@ -366,7 +391,30 @@ async function syncCronRunResults() {
   for (const occ of pending) {
     try {
       const runs = await getCronRuns(occ.cron_job_id, 5);
+
+      // Detect "running" state: cron has fired (nextRunAtMs is past) but hasn't finished yet.
+      const jobState = cronJobStates.get(occ.cron_job_id) || {};
+      const nextRunAtMs = jobState?.nextRunAtMs;
+      const latestRunAtMs = runs[0]?.runAtMs || 0;
+      const cronFiredButNotSynced = nextRunAtMs && Date.now() > nextRunAtMs + 10_000 && nextRunAtMs > latestRunAtMs;
+
+      if ((runs.length === 0 || !runs[0].action) && cronFiredButNotSynced) {
+        // Cron fired but no finished entry yet → running
+        if (occ.status === "queued") {
+          await sql`UPDATE agenda_occurrences SET status = 'running', locked_at = now() WHERE id = ${occ.occurrence_id} AND status = 'queued'`;
+          await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "running", occurrenceId: occ.occurrence_id })})`;
+          console.log(`[agenda-scheduler] Occurrence ${occ.occurrence_id} → running`);
+        }
+        continue;
+      }
+
       if (runs.length === 0) continue;
+
+      if (cronFiredButNotSynced && occ.status === "queued") {
+        await sql`UPDATE agenda_occurrences SET status = 'running', locked_at = now() WHERE id = ${occ.occurrence_id} AND status = 'queued'`;
+        await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "running", occurrenceId: occ.occurrence_id })})`;
+        continue; // will sync on next cycle when finished
+      }
 
       const latest = runs[0]; // newest first
 

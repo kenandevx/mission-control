@@ -44,12 +44,13 @@ export const DOT_COLORS: Record<EventColor, string> = {
 // ── Status → color key mapping ──────────────────────────────────────────────
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:   "gray",
-  queued:      "gray",
+  scheduled:   "blue",
+  queued:      "blue",
   running:     "indigo",
   succeeded:   "green",
   failed:      "rose",
   needs_retry: "amber",
+  cancelled:   "gray",
 };
 
 export function resolveEventColorKey(event: { status?: string; latestResult?: string | null }): EventColor {
@@ -57,6 +58,8 @@ export function resolveEventColorKey(event: { status?: string; latestResult?: st
   if (event.latestResult && STATUS_COLOR_MAP[event.latestResult]) {
     return STATUS_COLOR_MAP[event.latestResult];
   }
+  // Active event with no occurrence yet (just created / scheduled) → blue
+  if (event.status === "active") return "blue";
   return "gray";
 }
 
