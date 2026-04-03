@@ -587,7 +587,20 @@ async function runCycle() {
         });
 
         if (!cronJobId) {
-          console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id}`);
+          console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id} — marking needs_retry`);
+          await sql`
+            UPDATE agenda_occurrences
+            SET status = 'needs_retry',
+                last_retry_reason = 'Cron job creation failed — check gateway logs'
+            WHERE id = ${occ.id} AND status = 'scheduled'
+          `;
+          await sql`INSERT INTO agenda_run_attempts
+            (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+            VALUES (${occ.id}, 1, 'failed', now(), now(),
+              'Failed to create cron job', 'Cron job creation failed — check gateway logs')
+            ON CONFLICT DO NOTHING
+          `;
+          await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.id })})`;
           continue;
         }
 

@@ -1,20 +1,57 @@
-# OpenClaw Mission Control v1.6.1
+# OpenClaw Mission Control v2.7
 
-Local-first dashboard for OpenClaw — boards, agenda planning, and real-time logs.
+Local-first dashboard for OpenClaw — agenda scheduling, processes, boards, and real-time logs.
+
+---
 
 ## Changelog
 
-Recent product and engineering changes now live in [`CHANGELOG.md`](./CHANGELOG.md) so this README stays focused and easier to scan.
+### v2.7 (2026-04-03)
+- Fix `cron.add INVALID_REQUEST` when scheduled time is already past — now uses `--at 30s` for immediate execution
+- Fix: when cron job creation fails, occurrence is now correctly set to `needs_retry` (was silently abandoned)
+- Fix: event status styling on calendar — `run_started_at`/`run_finished_at` now included in all event list queries
 
-Highlights from the latest work:
-- agenda retry flow hardening and worker-pickup rescue pass
-- force retry for completed occurrences
-- stronger `needs_retry` reason logging and failed-state visibility
-- per-test approval gate in the agenda test runner
-- safer `/settings` update behavior, including blocking updates while agenda runs are active
-- install / clean / update script fixes and dedicated `scripts/update.sh`
+### v2.6 (2026-04-03)
+- Rewrote agenda test suite — 15 clean focused tests, CET timezone, no mocks
 
-For the detailed running history, see [`CHANGELOG.md`](./CHANGELOG.md).
+### v2.5 (2026-04-03)
+- Fix artifact directory creation — no longer created eagerly, only when agent actually writes files
+- Artifact files (images, PDFs, etc.) now correctly displayed in Output tab with download links and image previews
+
+### v2.4 (2026-04-03)
+- Fix Output tab was empty after successful cron runs — `agenda_run_steps` now populated by scheduler
+- Fix manual retry used bare prompt — now uses stored `rendered_prompt` (includes process steps)
+- Settings "Max attempts before fallback" is now wired to actual fallback trigger logic
+- `rendered_prompt` column added to `agenda_occurrences` for retry accuracy
+
+### v2.3 (2026-04-03)
+- Remove Job Queues tab (BullMQ UI removed)
+- Remove dead Concurrency + Execution Window settings (cron handles natively)
+- Fix all stale "worker" references across tests, settings, and UI components
+
+### v2.2 (2026-04-03)
+- Fix watchdog environment sourcing — restarted services now have DATABASE_URL available
+
+### v2.1 (2026-04-03)
+- Remove BullMQ/Redis from all remaining files (routes, types, UI, install script)
+- Remove `agenda-worker` from clean reset and service list
+- `agenda-selfcheck` rewritten for cron engine
+
+### v2.0 (2026-04-03)
+**Major architecture change — BullMQ/Redis/agenda-worker replaced by OpenClaw cron engine**
+
+- `agenda-worker.mjs` removed — execution now inside the OpenClaw gateway via `openclaw cron`
+- `agenda-scheduler.mjs` rewritten — RRULE expansion → creates one-shot `openclaw cron` jobs
+- Scheduler syncs cron run results back to Postgres for the UI
+- Qdrant memory cleanup on failure via isolated session file parsing
+- Fallback model retry via `openclaw cron edit` + `cron run`
+- Gateway pairing fixed — CLI device approved in `devices/paired.json`
+- `openclaw-config.mjs` — reads gateway token from `openclaw.json` directly
+- Removed `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` from `.env`
+- Services reduced: 5 → 3 (gateway-sync, bridge-logger, agenda-scheduler, nextjs; no worker, no Redis)
+- `db/schema.sql` updated with v2 cron columns
+
+---
 
 ## Quick Start
 
@@ -22,71 +59,69 @@ For the detailed running history, see [`CHANGELOG.md`](./CHANGELOG.md).
 # Install (clone + env + DB + build — everything in one command)
 curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
 
-# Development
-npm run dev            # Start DB + all services + Next.js dev server
-npm run dev:stop       # Stop DB + services (graceful)
-npm run dev:kill       # Force-kill everything (zombie processes, stuck ports)
-
 # Production
 npm run build
-bash scripts/mc-services.sh start    # Starts all services including Next.js
+bash scripts/mc-services.sh start
+
+# Development
+npm run dev
 ```
 
 Open **http://localhost:3000**
 
+---
+
 ## Requirements
 
-| Dependency | Version |
-|---|---|
-| Node.js | 24+ |
-| Docker + Compose v2 | For PostgreSQL |
-| Redis | For BullMQ job queues (runs on host or Docker) |
-| OpenClaw | Installed with gateway running |
+| Dependency | Version | Notes |
+|---|---|---|
+| Node.js | 24+ | Required |
+| Docker + Compose v2 | Any modern | PostgreSQL only |
+| OpenClaw | 2026.4.x+ | Gateway must be running and paired |
+
+> **Redis is no longer required.** Execution is handled natively by the OpenClaw cron engine (v2+).
+
+---
 
 ## npm Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Starts Docker DB + all host services + `next dev` |
-| `npm run dev:stop` | Graceful stop of Docker DB + host services |
-| `npm run dev:kill` | **Force-kill** all MC processes, free port 3000 |
-| `npm run dev:db` | Start only Docker DB containers |
-| `npm run dev:services` | Start only host services (no Next.js dev) |
+| `npm run dev` | Start Docker DB + all host services + `next dev` |
 | `npm run build` | Production Next.js build |
-| `npm start` | Start Next.js production server only |
-| `npm run prod` | Build + start DB + all services (production) |
-| `npm run prod:stop` | Stop all services + DB |
-| `npm run db:setup` | Run DB migrations + seed |
-| `npm run db:reset` | Wipe and recreate DB schema |
-| `npm run db:migrate` | Run pending migrations |
-| `npm run agenda:selfcheck` | Agenda health self-check (schema, queue, locks, failed-latest count + missing queue jobs) |
-| `npm run agenda:smoke` | End-to-end agenda retry smoke test (create needs_retry test occurrence, retry, verify state) |
-| `npm run bridge:logger` | Run bridge-logger standalone |
+| `npm start` | Start Next.js production server |
+| `npm run agenda:selfcheck` | Check cron engine health, schema, stuck occurrences |
+| `npm run agenda:smoke` | End-to-end smoke test (create event, retry, verify state) |
+
+---
 
 ## Pages
 
 | Page | What it does |
 |---|---|
-| `/dashboard` | Stats overview — boards, tickets, events, processes, logs |
-| `/boards` | Kanban boards with drag-and-drop, live activity feed, and Trello-style ticket modals (manual ticketing only) |
-| `/agenda` | Calendar scheduler — one-time or recurring agent tasks |
+| `/dashboard` | Stats overview — events, processes, agents, logs |
+| `/agenda` | Calendar scheduler — one-time and recurring agent tasks |
 | `/processes` | Reusable step-by-step execution blueprints |
-| `/agents` | Agent status cards with model, heartbeat, detail pages |
-| `/logs` | Live log explorer, job queues, and service management |
-| `/file-manager` | File browser for `~/.openclaw/` — browse, create, rename, delete, move, copy files and folders via the UI |
-| `/approvals` | Legacy approval page (not used by Boards ticketing flow) |
-| `/settings` | Theme, notifications, agenda settings (concurrency, execution window, auto-retry, fallback model, max retries), system updates, clean reset, uninstall |
+| `/boards` | Kanban boards — manual ticket tracking |
+| `/agents` | Agent status cards, detail pages, logs |
+| `/logs` | Runtime logs + service management |
+| `/file-manager` | File browser for `~/.openclaw/` |
+| `/settings` | Theme, agenda settings, system updates, danger zone |
+
+---
 
 ## Architecture
 
 ```
 Browser (SSE) ──→ Next.js (port 3000) ──→ PostgreSQL (Docker, port 5432)
                        ↕                        ↕
-                  API Routes ←──→ pg_notify ←──→ Workers (host)
+                  API Routes ←──→ pg_notify ←──→ agenda-scheduler (host)
                                                     ↕
-                                             OpenClaw Gateway (ws://127.0.0.1:18789)
+                                          OpenClaw Gateway (ws://127.0.0.1:18789)
                                                     ↕
-                                             Agent Sessions (~/.openclaw/agents/)
+                                          openclaw cron engine (inside gateway)
+                                                    ↕
+                                          Isolated agent sessions per run
 ```
 
 ### Host Services
@@ -95,534 +130,378 @@ All services run natively on the host, managed by `scripts/mc-services.sh`. Dock
 
 | Service | Script | Purpose |
 |---|---|---|
-| **bridge-logger** | `bridge-logger.mjs` | Watches OpenClaw gateway websocket, ingests agent logs → DB, auto-discovers agents |
+| **agenda-scheduler** | `agenda-scheduler.mjs` | RRULE expansion → creates `openclaw cron` jobs, syncs results to DB |
+| **bridge-logger** | `bridge-logger.mjs` | Watches OpenClaw gateway, ingests agent logs → DB |
 | **gateway-sync** | `gateway-sync.mjs` | One-shot: imports agents + sessions from gateway on startup, then exits |
-| **agenda-scheduler** | `agenda-scheduler.mjs` | Expands RRULE occurrences, enqueues due agenda jobs |
-| **agenda-worker** | `agenda-worker.mjs` | Executes scheduled agenda jobs, captures file artifacts to `/storage/mission-control/artifacts/` |
-| **nextjs** | `npm start` | Production Next.js server (skipped with `--dev` flag) |
+| **nextjs** | `npm start` | Production Next.js server |
 
 ```bash
 bash scripts/mc-services.sh status               # Check what's running
 bash scripts/mc-services.sh start                # Start all services
 bash scripts/mc-services.sh stop                 # Stop all services
 bash scripts/mc-services.sh restart              # Restart all
-bash scripts/mc-services.sh restart agenda-worker # Restart single service
-bash scripts/mc-services.sh stop nextjs          # Stop single service
+bash scripts/mc-services.sh restart agenda-scheduler  # Restart single service
 ```
 
-### Agent Discovery
+### Execution Engine
 
-Agents appear in Mission Control through two paths:
-1. **gateway-sync** — imports all agents from the OpenClaw gateway on startup
-2. **bridge-logger** — creates agents on-the-fly when it sees new log entries from unknown agents
+Agenda events are executed by the **OpenClaw cron engine** inside the gateway process. Mission Control does not spawn agent processes directly.
 
-Agent data (name, model, emoji, status) is read from each agent's `IDENTITY.md` file in `~/.openclaw/agents/<id>/`.
+**Flow:**
+1. User creates an event in the UI → saved to Postgres
+2. `agenda-scheduler` expands RRULE → creates occurrence row → calls `openclaw cron add --at <time>`
+3. OpenClaw cron fires at the right time → runs agent in an isolated session
+4. `agenda-scheduler` polls `openclaw cron runs` → syncs result (summary, model, duration) back to Postgres
+5. UI reads from Postgres — calendar updates via SSE
 
-### Telegram Notifications
+**Benefits over v1 (BullMQ):**
+- Model override actually works (`--model` supported by cron)
+- No stdout/stderr parsing — structured JSON result
+- No gateway token issues — cron runs inside the gateway
+- No Redis dependency
+- Retry handled natively by cron (exponential backoff)
+- Isolated sessions per run — no session pollution, no cleanup needed for main session
 
-The agenda-worker sends Telegram notifications for lifecycle events (start, completion, failure, retry, long-running alerts). Chat ID is discovered from OpenClaw's session files — no manual config needed.
-
-## Key Features
-
-### Boards (Trello-style)
-- Kanban / List / Grid views with drag-and-drop
-- Ticket modal focused on core planning data: title, description, checklist, attachments, comments, activity, list, priority, due date, and labels
-- Live activity feed with color-coded entries and relative timestamps
-- Confirmation dialogs for destructive actions (delete board/ticket)
-- Built for lightweight ticket tracking, not automated agent execution
-
-### Agenda (Calendar Scheduler)
-- Month / Week / Day views with event pills
-- **Real-time updates via SSE**: PostgreSQL LISTEN/NOTIFY → Server-Sent Events (no polling)
-- **Timezone-aware rendering**: events display on the correct day in the user's timezone (CET/CEST, not GMT+1)
-- **DST-safe RRULE expansion**: recurring events keep their local time across daylight saving changes (02:08 CET stays 02:08 CEST)
-- **DB-time execution window check**: uses `SELECT now()` from Postgres, not worker's local clock — avoids clock skew
-- **Date-range-per-view**: month/week/day views each fetch their exact visible range (with ±1 day buffer for timezone edge cases)
-- Multi-step creation wizard: Type → Details → Schedule → Review
-- **Simulation on Review step**: test-run the full event (free prompt + attached processes) before creating it, with full cleanup support (files + chat history)
-- One-time (date + time) or Repeatable (daily/weekly with RRULE)
-- Free prompt and/or attached processes per event
-- Agent + model override per event
-- **Copy/duplicate events**: opens the create modal pre-filled with the original event's data
-- **Per-occurrence data isolation**: clicking a recurring event on a specific date shows only that date's schedule, runs, and output — never cross-pollinated from other dates
-- **Per-occurrence status**: each day of a recurring event shows its own run status (succeeded/running/failed), not the global latest
-- **Run duration display**: calendar pills show how long each run took (e.g., "✓ Done · 2m 15s") or how long it's been running
-- **Duration card in overview**: shows total run time with start/finish timestamps and in-progress indicator
-- **Output tab**: view agent responses with markdown rendering per run step, with step metadata (process, skill, agent, description, time)
-- **Runs → Output navigation**: clicking a run card auto-switches to the Output tab with a "View output →" hover hint
-- **Artifact capture**: agent-generated files saved to disk and downloadable from event details
-- **Cumulative step context**: each process step receives previous step outputs
-- Recurring edit scope: "Only this occurrence" or "This and all upcoming"
-- **Two-option delete for recurring events**: "Only this occurrence" / "Delete all future events"
-- **3-dot action menu**: Edit, Duplicate, Force Retry, Delete in a single dropdown (with disabled states and tooltips)
-- **Color-coded status badges**: green (active/succeeded), amber (running), red (failed/needs_retry), blue (scheduled/recurring), with Radix tooltips explaining each status
-- Stale lock recovery (occurrences stuck >15min → `needs_retry` + Telegram alert, user decides)
-- **Queue state tracking**: each occurrence carries `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason` for deterministic retry and rescue behavior
-- **Scheduler rescue pass**: the scheduler scans all due `scheduled`/`queued` occurrences directly from DB and re-enqueues stale ones or marks past-window ones `needs_retry`
-- **Now indicator**: current time line in week/day views (behind events, not overlapping)
-
-### Resilient Job Orchestration (v1.5.0)
-
-#### Retry Flow (Agenda Events)
-
-When an agenda event runs:
-
-```
-Step 1: Execute all steps (free prompt + attached processes)
-   ↓ succeeded? → done ✅
-   ↓ failed?
-Step 1.5: Cleanup failed attempt (Qdrant → session → files)
-   ↓
-Step 2: Auto-retry (clean slate, same model, instant)
-        Retries up to max_retries times (default: 1)
-   ↓ succeeded? → done ✅
-   ↓ failed? → cleanup again
-   ↓ all auto-retries failed?
-Step 3: Fallback model retry (if configured)
-   ↓ succeeded? → done ✅
-   ↓ failed? → cleanup again
-Step 4: needs_retry + Telegram alert
-        → User decides: Retry / Edit / Delete
-```
-
-**Settings (configurable in /settings):**
-| Setting | Default | What it does |
-|---|---|---|
-| Concurrency | 5 | Max parallel agenda jobs (1–10) |
-| Execution Window | 30 min | How late a job can start; past this → `needs_retry` + Telegram alert |
-| Max Retries | 1 | How many instant auto-retries before trying fallback (0 = no auto-retry) |
-| Scheduling Interval | 15 min | Time-slot grid for events (0 = free time, no enforcement) |
-
-**Per-event settings (in event modal):**
-| Setting | What it does |
-|---|---|
-| Fallback Model | Model to use after all retries fail (e.g. `openrouter/openai/gpt-5.4-mini`) |
-| Agent | Which OpenClaw agent runs this event |
-| Model Override | Override the agent's default model for this event |
-
-#### Boards Ticketing Mode
-
-Boards now run in **manual Trello-style ticketing mode**.
-- No agent execution pipeline for board tickets
-- No process/fallback/retry/approval flow in board tickets
-- Ticketing fields are focused on planning and tracking (title, description, checklist, attachments, labels, priority, due date)
-
-#### What Happens When...
-
-**Boards mode reminder:** boards are manual-ticket only (no ticket worker/execution/retry pipeline).
-
-**Event fails:**
-1. Worker auto-retries instantly (up to `max_retries` times, default 1)
-2. If still failing and fallback model is configured → tries once with fallback
-3. If that also fails → status = `needs_retry`, Telegram alert, user decides
-
-**Event is stuck / running too long (>5 min):**
-1. At 5 minutes: Telegram alert sent to your chat with event name, attempt number, start time
-2. Retry button always available — user can force-retry at any time
-3. Force-retry marks the current attempt as failed and re-queues the event
-
-**Event misses its execution window:**
-1. Worker picks up the job but notices it's past the window (default 30 min)
-2. Status set to `needs_retry` with a readable reason stored in `last_retry_reason`
-3. Telegram alert: "missed execution window — needs manual retry"
-4. User must click "Retry" in Mission Control → re-queues with fresh queue metadata
-
-**Worker crashes or restarts during execution:**
-1. Occurrence stays in "running" state with a stale lock
-2. After 15 minutes: stale lock recovery sets it to `needs_retry` + Telegram alert — never auto-re-executes
-3. User decides: Force Retry / Edit / Delete from the event details (available any time)
-4. Same behavior for tickets: stuck executions → `needs_retry` after stale lock timeout
-
-**Event fails and cleanup runs:**
-1. All retries exhausted (including fallback model if set)
-2. Worker runs 3-phase cleanup: Qdrant memories → session truncation → file deletion
-3. Agent's main session file truncated to pre-execution state (agent has no memory of the failed run)
-4. Memory entries created during the run are deleted from Qdrant
-5. Files created during the run (in allowed paths) are deleted
-6. Cleanup details logged in `agenda_run_attempts.cleanup_details`
-7. Status set to `needs_retry` → Telegram alert → user decides
-
-**Cleanup crashes mid-way (worker dies during cleanup):**
-1. `cleanup_status` was set to `'pending'` before cleanup started
-2. On worker restart, `recoverPendingCleanups()` finds pending cleanups
-3. Re-runs cleanup (all operations are idempotent — safe to repeat)
-4. Session truncation: if already truncated, file size ≤ offset → no-op
-5. Qdrant delete: deleting non-existent points is a no-op
-6. File delete: missing files are silently skipped
-
-**Same agent has two agenda events scheduled at the same time:**
-1. First job acquires per-agent execution lock
-2. Second job sees lock is held → re-queued with 30s delay (not failed)
-3. After first job completes → lock released → second job picks up
-4. No concurrent execution on the same agent, no context pollution
-
-**Two workers try to pick up the same job:**
-1. Postgres claim lock (`UPDATE ... WHERE status IN ('scheduled','queued','needs_retry')`)
-2. Only the first `UPDATE` succeeds (returns 1 row), the other gets 0 rows and skips
-3. No duplicate execution possible
-
-**User clicks "Retry" while auto-retry is already scheduled:**
-1. Manual retry changes status to `scheduled` via API
-2. Worker claim lock ensures only one execution starts
-3. No race condition — whichever pickup succeeds first runs, other skips
-
-**Primary model hits rate limit (429/quota) or credit exhausted:**
-1. Step fails — enters the standard retry flow
-2. Auto-retries with same model
-3. Then fallback model if set, then `needs_retry`
-4. If output or error contains known provider rejection messages (`LLM request rejected: Your credit balance is too low...` or `⚠️ API rate limit reached...`), the occurrence is forced to `needs_retry` with a specific reason after all retries/fallback are exhausted
-5. User must click "Retry" in Mission Control to re-queue
-
-**Database goes down during execution:**
-1. Worker can't write step results — attempt fails with DB error
-2. Occurrence set to `needs_retry` (if the catch block can still reach DB)
-3. If DB is fully unreachable — worker crashes, stale lock recovery handles it when DB comes back
-4. Never auto-re-executes — user decides when to retry
-
-**Redis goes down:**
-1. BullMQ can't enqueue or consume jobs — scheduler skips cycles, worker stalls
-2. Events stay as `scheduled` in Postgres — no data loss
-3. When Redis recovers, scheduler picks them up on next cycle
-4. If they're past the execution window → `needs_retry` (not auto-executed)
-5. User retries manually — retry resets `scheduled_for` to now, so window passes
-
-**Fallback model is the same as primary:**
-1. Not detected — worker retries with the "fallback" which is the same model
-2. Burns one retry cycle doing the same thing
-3. Recommendation: set a different model as fallback, or leave empty
-
-**Event/ticket is deleted while a retry is pending:**
-1. DB update returns 0 rows (ticket gone)
-2. Worker silently skips — no crash, no error
-3. Any timers (alert, auto-retry) clear themselves
-
-**Agent is changed while retry is pending:**
-1. Worker reads `assigned_agent_id` fresh from the job data each attempt
-2. For agenda events: agent ID is baked into the job → stays the same until re-queued
-3. For tickets: next pickup reads the latest agent from DB → uses new agent
-
-**Recurring event — one day fails, others succeed:**
-1. Each day gets its own independent occurrence with its own status
-2. Monday can be "succeeded", Tuesday "needs_retry", Wednesday "scheduled"
-3. Clicking a day shows only that day's runs — no cross-pollination
-
-**SSE connection drops (browser loses real-time updates):**
-1. EventSource auto-reconnects after 5 seconds
-2. On reconnect: full refresh of events + failed count
-3. No data loss — DB is the source of truth
-
-**Service crashes (worker, scheduler, bridge-logger):**
-1. Watchdog detects within 30s → auto-restart → service resumes
-2. In-flight jobs: occurrence stays 'running' with stale lock → after 15 min, stale recovery sets to 'needs_retry'
-3. No data loss, no auto-re-execution
-
-**OpenClaw gateway goes down during execution:**
-1. `openclaw agent` command fails → step fails → enters retry flow
-2. If gateway stays down through all retries → needs_retry
-3. Gateway coming back up doesn't affect Mission Control services — they reconnect automatically
-4. Watchdog ensures services stay alive
-
-**All services crash at once (e.g., server reboot):**
-1. `mc-services start` brings everything back
-2. Watchdog starts automatically
-3. Stale lock recovery cleans up any in-flight work
-4. Pending cleanups resume
-5. No data loss
-
-**Worker was down for hours, events piled up:**
-1. Scheduler may have created occurrences + enqueued jobs to Redis while worker was dead
-2. On restart, worker picks up all queued jobs
-3. Each job hits the execution window check (default 30 min)
-4. Jobs that are past the window → `needs_retry` immediately (NOT auto-executed)
-5. Telegram alert for each: "missed execution window"
-6. You decide: Retry (runs now) / Edit / Delete
-
-**Multiple needs_retry events, user clicks Retry on all at once:**
-1. All re-queued to Redis simultaneously with fresh timestamps
-2. Same-agent events: per-agent lock serializes them (one at a time, 30s re-queue delay)
-3. Different-agent events: run fully in parallel
-4. Each gets its own snapshot + cleanup cycle
-5. No conflicts, no data loss — they queue up and run in order
-
-**User edits an event while it's running:**
-1. Edit button shows "Edit (running)" and is disabled
-2. Tooltip explains why
-3. Must wait for completion or force-retry first
-
-**All notifications sent via Telegram:**
-| Event | Message |
-|---|---|
-| Running >5 min | ⏱️ Long-running alert with event name + attempt + duration |
-| Missed window | ⚠️ Missed execution window (Xm late) |
-| All retries exhausted | ⚠️ Needs manual retry |
-| Auto-retry triggered | 🔄 Exceeded time limit, needs manual retry |
-| Fatal error | ❌ Event failed with error message |
-
-#### Automatic Cleanup on Failure
-
-When an agenda event fails (after all retries are exhausted), the worker automatically cleans up the side effects of the failed execution. This prevents polluted agent context, stale files, and orphaned memory entries.
-
-**3-Phase Cleanup (runs in order):**
-
-```
-Phase 1: Qdrant Memory Cleanup
-  → Read session file bytes appended during execution
-  → Parse for memory_store tool results containing returned IDs
-  → Delete those memory entries from Qdrant via REST API
-  → Idempotent: safe to re-run (deleting non-existent points is a no-op)
-
-Phase 2: Session File Truncation
-  → Truncate agent's main session file back to pre-execution byte offset
-  → JSONL is append-only, so this cleanly removes only the appended messages
-  → Only affects agent:X:main session (used by the worker)
-  → Telegram messages go to a DIFFERENT session file — never affected
-
-Phase 3: File Deletion
-  → Delete files created during the failed attempt (ctime > attempt start)
-  → Only files in allowed paths: /home/clawdbot/, /storage/, /tmp/
-  → Files are checked individually — missing files are silently skipped
-```
-
-**Per-Agent Execution Locks:**
-- Before execution, the worker acquires a per-agent lock (`agent_execution_locks` table)
-- Prevents concurrent agenda tasks from running on the same agent simultaneously
-- If lock is held: job re-queued with 30s delay (no failure, no lost work)
-- Locks auto-released after execution (success or failure, in finally block)
-- Stale locks (>20 min) are force-deleted during periodic recovery
-
-**Crash Recovery:**
-- Session snapshots and cleanup status stored in `agenda_run_attempts`
-- If worker crashes mid-cleanup (`cleanup_status = 'pending'`), recovery runs on next startup
-- All cleanup operations are idempotent — safe to re-run after crash
-- Cleanup details (deleted memories, files, errors) logged in `cleanup_details` jsonb column
-
-**What gets cleaned up:**
-| Artifact | Cleaned? | Method |
-|---|---|---|
-| Agent session messages | ✅ | Session file truncation to pre-execution byte offset |
-| Qdrant memory entries | ✅ | Delete by ID via Qdrant REST API |
-| Created files | ✅ | Delete files with ctime after attempt start |
-| Artifact copies in /storage | ❌ | Preserved for debugging (artifacts are copies, not originals) |
-| DB run attempt records | ❌ | Preserved for audit trail |
-
-#### Safety mechanisms
-- **Postgres claim locks**: prevent duplicate execution across workers
-- **Stale lock recovery**: stuck occurrences (>15 min) set to `needs_retry` with Telegram alert — never auto-re-executed
-- **Service heartbeats**: workers report health every 30 seconds to `service_health` table
-- **Correct attempt numbering**: always reads max(attempt_no) from DB before creating new attempt
-- **Cumulative context**: each process step receives previous outputs for coherent multi-step execution
-
-### Live Activity Sidebar
-- Unified real-time activity feed in the global sidebar
-- Shows the last 8 events from **both** the ticket system and agenda system
-- Powered by a unified SSE endpoint (`/api/notifications/stream`) that listens on `ticket_activity` and `agenda_change` pg_notify channels
-- Each entry shows: colored level dot, event name, item title, relative timestamp
-- "Live" indicator with green/amber connection status dot
-- Entries animate in with subtle fade+slide
-- Color-coded by level: emerald (success), red (error), amber (warning), blue (info)
-- Works in both expanded and collapsed sidebar states
-- **Singleton SSE connection**: EventSource lives at module level, survives React remounts — no reconnect flicker when switching pages, entries persist across navigation
-
-### Service Health Monitoring
-- All workers report heartbeats to the `service_health` table every 30 seconds
-- **Services tab** in the Logs page with per-service status cards, PID monitoring, start/stop/restart controls, and log viewer
-- **Per-service management**: `mc-services start agenda-worker`, `mc-services restart bridge-logger`, etc.
-- Notification provider polls for service status changes
-- API endpoint (`/api/services`) for service management and log access
-
-### Service Watchdog
-- `mc-services.sh` includes a background watchdog process
-- Checks all services every 30 seconds
-- Auto-restarts any crashed service (except `gateway-sync` which is one-shot)
-- Started automatically with `mc-services start`, stopped with `mc-services stop`
-- Manual start: `mc-services watch`
-- Logs: `.runtime/logs/watchdog.log`
-- If a service repeatedly crashes, watchdog keeps restarting it — check the service log for root cause
-
-### Scheduling Interval (configurable)
-- Default: 15-minute intervals (XX:00, XX:15, XX:30, XX:45)
-- **Configurable** via `scheduling_interval_minutes` in `worker_settings` (exposed via `GET /api/agenda/settings` as `schedulingIntervalMinutes`)
-- When `> 0`: events must align to the interval, one event per slot, enforced server-side
-- When `= 0`: **free-time mode** — no alignment or slot checks, events can be scheduled at any minute
-- API accepts `timeStepMinutes` in request body to override per-request (dev/test use)
-- Agenda tests use effective timing rules: unset/invalid → 15 min; configured > 0 → configured value; free-time `0` → 1-min effective test timing for fast dev runs
-
-### Processes
-- Card grid layout with create, edit, duplicate, delete, **simulate**
-- **Delete safety**: if a process is tied to agenda events, shows a warning listing affected events; on confirm, cancels all future occurrences and deactivates the events (past runs preserved)
-- Multi-step editor wizard: Info → Steps → Review (with step validation — can't skip ahead until previous steps are valid)
-- Per-step: instruction, skill, agent, model override
-- Version tracking with labels
-- Clicking a process card opens edit with existing data pre-filled
-- **Simulation mode**: dry-run a process or agenda event before saving
-  - Available from the Review step in both the process editor and the agenda event modal
-  - Clicking "Run Simulation" opens the simulation modal and auto-starts execution
-  - Runs each step live via SSE — shows step-by-step progress with loading indicators
-  - Displays full agent output per step with markdown rendering
-  - Detects files created during simulation (path regex across agent output)
-  - Steps run with `[SIMULATION MODE]` prefix in the instruction so agents know not to make permanent changes
-  - **Full cleanup** — the "Cleanup All" button removes every trace of the simulation:
-    1. **Files**: deletes all files created during simulation (allowed paths: `/home/clawdbot/`, `/storage/`, `/tmp/`)
-    2. **Agent chat history**: restores agent session files to their exact pre-simulation state by truncating appended simulation messages (byte-offset snapshot/restore — the agent literally has no memory of the simulation)
-  - **How cleanup works internally**: before the simulation starts, the API snapshots the byte size of each involved agent's session file (JSONL, append-only). After simulation, cleanup truncates each file back to its pre-sim byte offset, surgically removing only the simulation messages while preserving all prior conversation history
-
-### Agents
-- Status cards with gradient accents, emoji avatars, pulse indicators
-- Stat cards: Total agents, Running, Responses (1h), Memory ops (1h)
-- Agent detail pages with full log history (`/agents/[agentId]`)
-
-### Settings
-- Theme: Light / Dark / System
-- **Agenda defaults**: execution window, auto-retry timeout, max retries, fallback model, concurrency, scheduling interval
-- **Scheduling interval**: time-slot grid for events (default 15 min, set to 0 for free-time mode); exposed via `GET /api/agenda/settings` as `schedulingIntervalMinutes`
-- System Updates: check for git updates, one-click update (blocked if any agenda occurrence is actively running)
-- Danger Zone: Clean Reset (type "RESET") and Uninstall (type "UNINSTALL")
-
-## Ticket Lifecycle
-
-```
-open → [start] → queued → executing → done
-open → [planned] → planning → awaiting_approval → [approve] → queued → executing → done
-                                                 → [reject] → draft
-failed → [instant retry] → executing → done
-                         → failed → [fallback model if set] → executing → done
-                                                             → needs_retry → [manual retry] → queued → ...
-```
-
-No agent assigned = manual ticket (never auto-queued).
+---
 
 ## Agenda Event Lifecycle
 
 ```
 draft → [activate] → active
-active → [scheduler] → occurrence created (scheduled)
-scheduled → [worker claims] → running → succeeded ✅
-         → [missed window] → needs_retry → [manual retry required] → ...
+active → [scheduler cycle] → occurrence created (status: scheduled)
+                           → cron job created (openclaw cron add --at <time>)
+                           → occurrence status: queued (cron_job_id set)
 
-running → succeeded ✅
-        → failed → [auto-retry 1..N times] → succeeded ✅
-                                            → [fallback model if set] → succeeded ✅
-                                                                      → [cleanup: Qdrant → session → files]
-                                                                      → needs_retry → [user: retry/edit/delete]
-        → [provider rejection: LLM credit/rate-limit] → needs_retry → [manual retry required]
-        → [>5 min] → Telegram alert (still running, user decides)
-        → [force retry] → current attempt failed → re-scheduled → running → ...
-        → [stale lock >15 min] → needs_retry → [manual retry required]
+queued → [cron fires] → agent runs in isolated session
+       → [success] → scheduler syncs → status: succeeded ✅
+                   → run_attempt + run_step written to DB (output visible in UI)
+       → [failure] → cron retries automatically (exponential backoff)
+                   → [all retries exhausted] → scheduler detects
+                     → [fallback model set + not tried yet]
+                       → openclaw cron edit <id> --model <fallback>
+                       → openclaw cron run <id>
+                       → [success] → status: succeeded ✅
+                       → [failure] → Qdrant cleanup → status: needs_retry + Telegram alert
+                     → [no fallback] → Qdrant cleanup → status: needs_retry + Telegram alert
+
+needs_retry → [user clicks Retry] → cron run triggered → queued → ...
+           → [user clicks Dismiss] → status: cancelled
+           → [user edits + retries] → new cron job created → queued → ...
+
+[cron job creation fails] → status: needs_retry (immediately, with reason logged)
 ```
 
-**Queue state tracking**: occurrences carry `queue_job_id`, `queued_at`, and `retry_requested_at` so the scheduler can reliably rescue stale queued jobs. BullMQ priority is bounded (1–2097152) to ensure all jobs are sortable.
+### Occurrence Status Reference
 
-**Manual retry required**: `needs_retry` occurrences require explicit user action. Clicking Retry in Mission Control re-queues the occurrence and clears stale queue metadata.
+| Status | Meaning |
+|---|---|
+| `scheduled` | Occurrence created, cron job not yet assigned |
+| `queued` | Cron job created and assigned (`cron_job_id` set) |
+| `running` | Cron job has fired and agent is executing (detected via poll) |
+| `succeeded` | Run completed successfully, output synced to DB |
+| `needs_retry` | All retries exhausted or cron job creation failed — user action required |
+| `failed` | Terminal failure (rarely used directly; cron handles retries internally) |
+| `cancelled` | Dismissed by user |
 
-Recurring events: each date gets its own independent occurrence (unique `occurrence.id`) and run history. The parent `event.id` is shared across the series, but each day's execution, status, and output are fully isolated. The UI shows the occurrence ID (not the event ID) for recurring events. Editing "only this occurrence" creates an override without affecting other dates.
+---
 
-## File Serving
+## Retry Flow
 
-Agent-created files are served via `/api/files?path=<absolute-path>`. Allowed directories:
-- `/home/clawdbot/.openclaw/workspace`
-- `/home/clawdbot/.openclaw`
-- `/storage`
-- `/tmp`
+```
+Cron fires → agent runs in isolated session
+  ↓ success → done ✅
 
-Agenda artifacts are served via `/api/agenda/artifacts/[stepId]/[filename]`.
+  ↓ failure → cron auto-retries (up to 3 times with backoff: 1min, 2min, 5min)
+    ↓ all cron retries exhausted → scheduler detects finished+error
+
+    ↓ [attempt count < max_attempts setting AND fallback model set]
+      → retry once with fallback model via cron edit + run
+      ↓ success → done ✅
+      ↓ failure → Qdrant cleanup → needs_retry + Telegram alert
+
+    ↓ [no fallback OR max_attempts reached]
+      → Qdrant cleanup → needs_retry + Telegram alert
+      → User: Retry / Edit / Delete in Mission Control
+```
+
+**Settings (configurable in /settings → Agenda):**
+
+| Setting | Default | What it does |
+|---|---|---|
+| Max attempts before fallback | 1 | After this many failures, switch to the per-event fallback model |
+| Default fallback model | — | Global fallback; per-event setting overrides this |
+| Scheduling interval | 15 min | Time-slot grid (0 = free time, no enforcement) |
+| Sidebar Activity Count | 8 | Recent entries shown in sidebar |
+
+**Per-event settings (in event modal):**
+
+| Setting | What it does |
+|---|---|
+| Fallback model | Model to use after primary retries exhausted |
+| Agent | Which OpenClaw agent runs this event |
+| Model override | Override agent's default model for this event |
+
+---
+
+## Failure Cleanup
+
+When a cron run fails and all retries are exhausted, the scheduler cleans up side effects:
+
+```
+Phase 1: Qdrant Memory Cleanup
+  → Read isolated session file for the failed cron run
+  → Find memory_store tool result IDs
+  → Delete those memory entries from Qdrant via REST API
+  → Idempotent: safe to re-run
+
+(Session truncation not needed — cron uses isolated sessions, not main session)
+(File cleanup: agent is told to write to a specific artifact dir; if nothing there, nothing to clean)
+```
+
+**What gets cleaned:**
+
+| Artifact | Cleaned? | Method |
+|---|---|---|
+| Qdrant memory entries | ✅ | Delete by ID via Qdrant REST API |
+| Artifact dir | ✅ | Removed on failure via `cleanupRunArtifacts` |
+| Isolated session file | Left (auto-expires via cron session retention) | n/a |
+| DB run attempt records | ❌ | Preserved for audit trail |
+
+---
+
+## Artifact Files
+
+When an agent writes files during an event run, they appear in the event's **Output tab**:
+
+- Any file type: images, PDFs, text, CSV, JSON, etc.
+- Download button for every file
+- Inline image preview for image files
+- Served via `/api/agenda/artifacts/[stepId]/[filename]`
+
+**How it works:**
+1. The rendered prompt tells the agent: *"If you create files, save them to `runtime-artifacts/agenda/<eventId>/occurrences/<occId>/artifacts`"*
+2. After the cron run, the scheduler scans that directory
+3. Found files → stored in `artifact_payload` on the run step
+4. UI reads `artifact_payload` and renders download links
+
+---
+
+## Processes
+
+Reusable multi-step instruction templates that can be attached to agenda events.
+
+- Multi-step editor: Info → Steps → Review
+- Per-step: instruction, skill, agent, model override
+- Version tracking with labels
+- **Simulation mode**: dry-run before creating — runs each step live via SSE, shows output per step
+- **Simulation cleanup**: restores agent session files to pre-sim state by byte-offset truncation
+
+When a process is attached to an agenda event, all steps are composed into a single unified prompt by `prompt-renderer.mjs` and sent to the agent as one turn.
+
+---
+
+## Calendar Status Styling
+
+Event pills on the calendar are color-coded by the latest occurrence status:
+
+| Status | Color | Calendar pill |
+|---|---|---|
+| `scheduled` / `queued` | Gray | Event title only |
+| `running` | Indigo + pulse | ● Running + live duration |
+| `succeeded` | Green | ✓ Done + duration |
+| `needs_retry` | Amber | ⚠ Needs Retry badge |
+| `failed` | Rose | ✗ Failed |
+| `draft` | Gray, muted | Italic/muted style |
+
+Duration shown as: `✓ Done · 2m 15s` or `● Running · 0m 43s`
+
+---
+
+## What Happens When...
+
+**Cron job creation fails (e.g. timestamp in past):**
+Occurrence immediately set to `needs_retry` with reason logged. No silent abandonment.
+
+**Event fires but agent fails:**
+Cron retries automatically (up to 3 times). After exhaustion, scheduler detects failure, runs Qdrant cleanup, tries fallback model if configured, then marks `needs_retry` + Telegram alert.
+
+**User clicks Retry on a needs_retry occurrence:**
+If the occurrence has an existing cron job → `openclaw cron run <id>` (immediate).
+If not → creates a new one-shot cron job using the stored `rendered_prompt` (includes process steps).
+
+**Scheduler is down for a period:**
+Occurrences stay in `scheduled` state in Postgres. When scheduler restarts, it catches up and creates cron jobs for any upcoming occurrences within the 48h window. Past occurrences are detected by the `scheduledFor` → `now` comparison and scheduled for immediate execution.
+
+**Gateway is down:**
+Cron job creation (`openclaw cron add`) fails → occurrence set to `needs_retry`. User retries when gateway is back.
+
+**Recurring event — one occurrence fails:**
+Each occurrence is independent. Monday `needs_retry`, Tuesday `scheduled` — no cross-contamination.
+
+**User edits a recurring event:**
+- "Only this occurrence" → creates an occurrence override, does not affect other dates
+- "This and future" → splits the series; old series ends, new series starts from split date
+- "Delete all future" → soft-deletes recurring event (status → draft), cancels future occurrences
+
+**SSE connection drops:**
+EventSource auto-reconnects after 5 seconds. Full event refresh on reconnect.
+
+**All services crash:**
+`mc-services start` brings everything back. Watchdog auto-restarts on future crashes.
+
+---
+
+## Telegram Notifications
+
+The scheduler sends Telegram notifications for lifecycle events. Chat ID is auto-discovered from OpenClaw session files — no manual configuration.
+
+| Event | Message |
+|---|---|
+| All retries exhausted | ⚠️ Needs manual retry + reason |
+| Fallback model retry | 🔄 Retrying with fallback model |
+| Cron job creation failed | (caught and set to needs_retry) |
+
+---
+
+## Services
+
+### Service Watchdog
+
+`mc-services.sh` includes a background watchdog:
+- Checks all services every 30 seconds
+- Auto-restarts crashed services (except `gateway-sync` which is one-shot)
+- Re-sources `.env` before restarting so services have DATABASE_URL etc.
+- Logs: `.runtime/logs/watchdog.log`
+
+```bash
+bash scripts/mc-services.sh watch    # Start watchdog manually
+```
+
+### Gateway Sync
+
+One-shot script that runs on start, imports agents + sessions from the OpenClaw gateway, then exits. This is normal — "STOPPED" in status output is expected after first run.
+
+---
 
 ## Environment
 
 Key env vars in `.env`:
 
-| Variable | Description | Default |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | Required |
-| `POSTGRES_PASSWORD` | DB password (used by Docker) | Required |
-| `REDIS_HOST` | Redis host | `127.0.0.1` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | none |
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (required) |
+| `POSTGRES_PASSWORD` | DB password used by Docker (required) |
+| `OPENCLAW_DATABASE_URL` | Alias for `DATABASE_URL` used by scheduler |
 
-OpenClaw config is auto-discovered from `~/.openclaw/openclaw.json`. No OpenClaw-specific env vars needed.
+> **Do not set `OPENCLAW_GATEWAY_URL` or `OPENCLAW_GATEWAY_TOKEN` in `.env`.**
+> Gateway config is auto-discovered from `~/.openclaw/openclaw.json`. Setting these env vars overrides auto-discovery and causes auth failures.
+
+---
 
 ## API Routes
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/tasks` | POST | Board/ticket CRUD, attachments, comments, and activity |
-| `/api/tasks/worker-metrics` | GET | Worker health: enabled, concurrency, active executions, queued count, last tick |
-| `/api/files` | GET | Serve local files by path (for ticket attachments) |
-| `/api/file-manager/[[...path]]` | GET/POST/PUT/DELETE | File manager backend — list dirs, download/preview/serve files, create, upload (multipart), rename, move/copy, delete — scoped to `~/.openclaw/` |
-| `/api/agenda/events` | GET/POST | Agenda event CRUD; test-only helpers: inject needs_retry occurrence, inject succeeded PDF run, check file exists |
-| `/api/agenda/events/stream` | GET | SSE stream for real-time agenda updates (pg_notify) |
+| `/api/agenda/events` | GET/POST | Agenda event CRUD + test helpers |
+| `/api/agenda/events/stream` | GET | SSE stream for real-time calendar updates |
 | `/api/agenda/events/[id]` | GET/PATCH/DELETE | Single event operations |
-| `/api/agenda/events/[id]/occurrences/[occId]` | POST/DELETE | Retry (manual or force-retry) / dismiss an occurrence |
-| `/api/agenda/events/[id]/occurrences/[occId]/runs` | GET | Run attempts + steps for an occurrence |
+| `/api/agenda/events/[id]/occurrences/[occId]` | POST/DELETE | Manual retry / dismiss occurrence |
+| `/api/agenda/events/[id]/occurrences/[occId]/runs` | GET | Run attempts + steps (for Output tab) |
 | `/api/agenda/artifacts/[stepId]/[filename]` | GET | Download agent-generated artifacts |
-| `/api/agenda/failed` | GET | Failed/needs_retry/expired occurrences with last error reason |
-| `/api/agenda/settings` | GET | Agenda settings: execution window, auto-retry timeout, max retries, concurrency, fallback model, scheduling interval |
-| `/api/agenda/stats` | GET | Agenda statistics (counts by status, queue depth) |
-| `/api/agenda/debug/run-steps` | GET | Run steps + latest attempt status for a given occurrence (for test harness) |
-| `/api/agenda/debug/render-template` | POST | Render the unified task message template without executing |
+| `/api/agenda/failed` | GET | Failed/needs_retry occurrences |
+| `/api/agenda/settings` | GET | Agenda settings (max retries, fallback model, scheduling interval) |
+| `/api/agenda/stats` | GET | Occurrence counts by status |
+| `/api/agenda/debug/run-steps` | GET | Run steps for an occurrence (test harness) |
+| `/api/agenda/debug/render-template` | POST | Render unified task message without executing |
 | `/api/processes` | GET/POST | Process CRUD |
-| `/api/processes/[id]` | GET/PATCH/DELETE | Single process operations |
-| `/api/processes/simulate` | POST | SSE stream — simulate a process step-by-step (snapshots session state before run) |
-| `/api/processes/simulate/cleanup` | POST | Full cleanup: delete files + restore agent sessions to pre-sim state |
-| `/api/services` | GET/POST | Service health monitoring, management, log tailing |
-| `/api/queues` | GET/POST | BullMQ queue inspection + per-job actions (remove, retry, promote) |
+| `/api/processes/[id]` | GET/PATCH/DELETE | Single process |
+| `/api/processes/simulate` | POST | SSE — simulate process step-by-step |
+| `/api/processes/simulate/cleanup` | POST | Cleanup sim files + restore agent sessions |
+| `/api/queues` | GET | Cron engine stats (occurrence counts by status) |
+| `/api/services` | GET/POST | Service health, start/stop/restart, log tailing |
 | `/api/models` | GET | Model list from OpenClaw config |
-| `/api/agents` | GET | Agent discovery (reads from DB + runtime) |
+| `/api/agents` | GET | Agent discovery |
 | `/api/agent/logs` | GET | Agent log entries |
-| `/api/agent/logs/stream` | GET | SSE stream (agent logs) |
-| `/api/skills` | GET | Workspace skills list |
-| `/api/system` | POST | System management: check updates, update, clean reset, uninstall |
-| `/api/notifications` | GET | SSE stream — unified ticket + agenda activity for sidebar |
-| `/api/notifications/recent` | GET | Last N activity entries (configurable via `sidebar_activity_count` setting) |
-| `/api/notifications/stream` | GET | Alias for `/api/notifications` (unified SSE stream) |
-| `/api/events` | GET | SSE stream (ticket activity, worker ticks) |
-| `/api/setup` | GET/POST | Setup status and initial configuration (bridge email, setup completed) |
+| `/api/agent/logs/stream` | GET | SSE — live agent logs |
+| `/api/tasks` | GET/POST | Board/ticket CRUD |
+| `/api/tasks/worker-metrics` | GET | Ticket worker health |
+| `/api/files` | GET | Serve local files by path |
+| `/api/file-manager/[[...path]]` | GET/POST/PUT/DELETE | File manager backend |
+| `/api/system` | POST | Check updates, update, clean reset, uninstall |
+| `/api/notifications/recent` | GET | Last N activity entries for sidebar |
+| `/api/notifications/stream` | GET | SSE — unified ticket + agenda activity |
+| `/api/events` | GET | SSE — ticket activity + worker ticks |
+| `/api/setup` | GET/POST | Initial setup status |
 
-## Scripts Reference
-
-| Script | Purpose |
-|---|---|
-| `scripts/mc-services.sh` | Service supervisor — start/stop/restart/status for all host daemons |
-| `scripts/install.sh` | Full install: clone, .env setup, Docker DB, npm install, build |
-| `scripts/clean.sh` | Wipe DB + Docker volumes, rebuild from scratch |
-| `scripts/uninstall.sh` | Stop everything, remove Docker volumes, remove project |
-| `scripts/dev.sh` | Dev mode with Ctrl+C trap cleanup |
-| `scripts/db-init.sh` | Run by Docker db-init container to apply schema |
-| `scripts/db-setup.mjs` | DB migrations, seed, reset commands |
-| `scripts/gateway-sync.mjs` | One-shot gateway import |
-| `scripts/bridge-logger.mjs` | Persistent log ingestion daemon |
-| `scripts/agenda-scheduler.mjs` | RRULE expansion + job enqueue |
-| `scripts/agenda-worker.mjs` | Agenda job execution + artifact capture |
-
-## Troubleshooting
-
-| Issue | Fix |
-|---|---|
-| Port 3000 stuck after closing terminal | `npm run dev:kill` |
-| DB connection refused | `docker compose up -d db` or `npm run dev:db` |
-| Password auth failed | Check `POSTGRES_PASSWORD` in `.env` matches `DATABASE_URL` |
-| Agents not showing | Ensure OpenClaw gateway is running; try hard refresh |
-| Worker can't reach gateway | Set `gateway.bind: "lan"` in `openclaw.json` |
-| Occurrence stuck as "running" | Use Force Retry button in event details (3-dot menu) |
-| Events on wrong calendar day | Timezone edge case — fixed with ±1 day RRULE buffer (v1.4.0) |
-| All recurring days show same status | Fixed in v1.4.0 — per-occurrence status matching |
-| Duplicate attempt numbers | Fixed in v1.4.0 — retry reads max(attempt_no) from DB |
-| Agenda output tab crashes | Fixed in v1.2.1 — `output_payload` jsonb handling |
-| Ticket file attachments missing | Worker auto-attaches files from agent response (v1.2.1+) |
-| Zombie processes after Ctrl+C | `npm run dev:kill` cleans up everything |
-| Double scrollbar on agenda page | Fixed in v1.4.0 — controlled max-height on time grids |
-| Tooltips not showing | Fixed in v1.4.0 — uses Radix Tooltip instead of native title attribute |
-| Services all stopped | `mc-services start` — watchdog auto-restarts on future crashes |
-| Cleanup status stuck as 'pending' | Worker restart triggers `recoverPendingCleanups()` automatically |
-| Agent lock stuck | Stale lock recovery runs every 5 min, force-deletes locks >20 min old |
-| docker volume rm mission-control_pgdata -> use this if install failed |
+---
 
 ## Database
 
 Schema managed by `scripts/db-init.sh` (Docker) and `scripts/db-setup.mjs` (Node).
 
-Key tables: `workspaces`, `boards`, `columns`, `tickets`, `ticket_attachments`, `ticket_subtasks`, `ticket_comments`, `ticket_activity`, `agents`, `agent_logs`, `agenda_events`, `agenda_occurrences` (includes `queue_job_id`, `queued_at`, `retry_requested_at`, `last_retry_reason`), `agenda_run_attempts`, `agenda_run_steps`, `processes`, `process_versions`, `process_steps`, `worker_settings`, `service_health`, `agent_execution_locks`, `app_settings`.
+Key tables:
 
-Reset everything: `npm run db:reset` or `bash scripts/clean.sh`.
+| Table | Purpose |
+|---|---|
+| `agenda_events` | Event definitions (title, prompt, recurrence, agent, model) |
+| `agenda_occurrences` | One row per scheduled occurrence; carries `cron_job_id`, `rendered_prompt`, `status`, `fallback_attempted` |
+| `agenda_run_attempts` | One row per cron run attempt (synced from `openclaw cron runs`) |
+| `agenda_run_steps` | Agent output per attempt — drives the Output tab and artifact display |
+| `agenda_event_processes` | Links events to process versions |
+| `processes` / `process_versions` / `process_steps` | Reusable step templates |
+| `worker_settings` | Agenda config: max_retries, fallback model, scheduling interval, sidebar activity count |
+| `service_health` | Heartbeats from scheduler and bridge-logger |
+| `agents` / `agent_logs` | Agent status and log entries |
+| `boards` / `columns` / `tickets` | Kanban ticket system |
+| `app_settings` | Gateway token cache + setup status |
+
+Reset everything:
+```bash
+npm run db:reset
+# or
+bash scripts/clean.sh
+```
+
+---
+
+## Scripts Reference
+
+| Script | Purpose |
+|---|---|
+| `scripts/mc-services.sh` | Service supervisor — start/stop/restart/status/watch |
+| `scripts/install.sh` | Full install: clone, .env, Docker DB, npm install, build |
+| `scripts/update.sh` | Pull latest, npm install, schema apply, rebuild, restart |
+| `scripts/clean.sh` | Wipe DB + Docker volumes, rebuild from scratch |
+| `scripts/dev.sh` | Dev mode with Ctrl+C trap cleanup |
+| `scripts/db-init.sh` | Run by Docker db-init container to apply schema |
+| `scripts/db-setup.mjs` | DB migrations, seed, reset |
+| `scripts/gateway-sync.mjs` | One-shot gateway import |
+| `scripts/bridge-logger.mjs` | Persistent log ingestion daemon |
+| `scripts/agenda-scheduler.mjs` | RRULE expansion + cron job creation + result sync |
+| `scripts/agenda-selfcheck.mjs` | Health check for cron engine (schema, gateway, stuck occurrences) |
+| `scripts/openclaw-config.mjs` | Reads gateway token from `openclaw.json` (shared helper) |
+| `scripts/prompt-renderer.mjs` | Renders unified task message from event + process steps |
+| `scripts/runtime-artifacts.mjs` | Artifact dir management (scan, cleanup) |
+
+---
+
+## Troubleshooting
+
+| Issue | Fix |
+|---|---|
+| `cron.add: schedule.at is in the past` | Fixed in v2.7 — scheduler now uses `--at 30s` for past timestamps |
+| `pairing required` when running `openclaw cron` | Run `openclaw doctor --fix` or approve pending CLI device in `~/.openclaw/devices/` |
+| Occurrence stuck in `scheduled` (no cron_job_id) | Check scheduler logs: `.runtime/logs/agenda-scheduler.log`; restart scheduler |
+| Output tab empty after run | Check `agenda_run_steps` table; verify scheduler is running v2.4+ |
+| Calendar event colors not showing | Fixed in v2.7 — `run_started_at`/`run_finished_at` now in all event queries |
+| Gateway-sync shows STOPPED | Normal — it's a one-shot script that exits after syncing |
+| Services all stopped | `set -a && source .env && set +a && bash scripts/mc-services.sh start` |
+| Watchdog restarts services but they fail | Usually missing DATABASE_URL in watchdog env; fixed in v2.2 |
+| DB connection refused | `docker compose up -d db` |
+| Port 3000 stuck | `pkill -f next-server` |
+| Artifacts not appearing in Output tab | Agent must write files to the path shown in the prompt; check scheduler is v2.5+ |
+
+---
 
 ## License
 

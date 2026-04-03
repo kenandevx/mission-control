@@ -269,13 +269,19 @@ export async function GET(request: Request) {
     const eventIds = events.map((e: Record<string, unknown>) => e.id).filter(Boolean);
     if (eventIds.length > 0) {
       const occRows = await sql`
-        select distinct on (agenda_event_id)
-          agenda_event_id, status as latest_occurrence_status
-        from agenda_occurrences
-        where agenda_event_id = ANY(${eventIds as string[]})
-          and status <> 'cancelled'
-        order by agenda_event_id,
-          case status
+        select distinct on (ao.agenda_event_id)
+          ao.agenda_event_id,
+          ao.status as latest_occurrence_status,
+          ara.started_at as run_started_at,
+          ara.finished_at as run_finished_at
+        from agenda_occurrences ao
+        left join agenda_run_attempts ara
+          on ara.occurrence_id = ao.id
+          and ara.attempt_no = ao.latest_attempt_no
+        where ao.agenda_event_id = ANY(${eventIds as string[]})
+          and ao.status <> 'cancelled'
+        order by ao.agenda_event_id,
+          case ao.status
             when 'running'     then 1
             when 'needs_retry' then 2
             when 'failed'      then 3
@@ -284,12 +290,19 @@ export async function GET(request: Request) {
             when 'scheduled'   then 6
             else 7
           end,
-          scheduled_for desc
+          ao.scheduled_for desc
       `;
-      const statusMap = new Map<string, string>();
-      for (const r of occRows) statusMap.set(r.agenda_event_id, r.latest_occurrence_status);
+      const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null }>();
+      for (const r of occRows) statusMap.set(r.agenda_event_id, {
+        status: r.latest_occurrence_status,
+        run_started_at: r.run_started_at ?? null,
+        run_finished_at: r.run_finished_at ?? null,
+      });
       for (const e of events) {
-        (e as Record<string, unknown>).latest_occurrence_status = statusMap.get((e as Record<string, unknown>).id as string) ?? null;
+        const info = statusMap.get((e as Record<string, unknown>).id as string);
+        (e as Record<string, unknown>).latest_occurrence_status = info?.status ?? null;
+        (e as Record<string, unknown>).run_started_at = info?.run_started_at ?? null;
+        (e as Record<string, unknown>).run_finished_at = info?.run_finished_at ?? null;
       }
     }
 
