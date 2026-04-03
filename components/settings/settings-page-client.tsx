@@ -140,8 +140,7 @@ export function SettingsPageClient(): React.ReactNode {
   const [notifSound, setNotifSound] = useState(true);
 
   // Agenda settings
-  const [agendaConcurrency, setAgendaConcurrency] = useState(5);
-  const [defaultExecWindow, setDefaultExecWindow] = useState(30);
+  // agendaConcurrency and defaultExecWindow removed in v2 — cron handles these natively
   const [autoRetryAfterMinutes, setAutoRetryAfterMinutes] = useState(0);
   const [agendaSettingsLoading, setAgendaSettingsLoading] = useState(false);
   const [defaultFallbackModel, setDefaultFallbackModel] = useState("");
@@ -192,8 +191,6 @@ export function SettingsPageClient(): React.ReactNode {
         });
         const json = await res.json();
         if (json.ok && json.workerSettings) {
-          setAgendaConcurrency(json.workerSettings.agendaConcurrency ?? 5);
-          setDefaultExecWindow(json.workerSettings.defaultExecutionWindowMinutes ?? 30);
           setAutoRetryAfterMinutes(json.workerSettings.autoRetryAfterMinutes ?? 0);
           setDefaultFallbackModel(json.workerSettings.defaultFallbackModel ?? "");
           setMaxRetries(json.workerSettings.maxRetries ?? 1);
@@ -289,8 +286,6 @@ export function SettingsPageClient(): React.ReactNode {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "updateWorkerSettings",
-          agendaConcurrency,
-          defaultExecutionWindowMinutes: defaultExecWindow,
           maxRetries,
           sidebarActivityCount,
           instanceName,
@@ -504,43 +499,12 @@ export function SettingsPageClient(): React.ReactNode {
 
   const renderAgenda = (): React.ReactNode => (
     <section>
-      <SectionHeading title="Agenda" description="Configure the scheduling worker behavior." />
+      <SectionHeading title="Agenda" description="Configure event scheduling and retry behavior. Execution is handled natively by the OpenClaw cron engine." />
 
       <div className="rounded-xl border bg-card divide-y">
         <SettingRow
-          label="Concurrency"
-          description="Maximum parallel jobs (1–10)"
-        >
-          <Input
-            type="number"
-            min={1}
-            max={10}
-            value={agendaConcurrency}
-            onChange={(e) => setAgendaConcurrency(Math.max(1, Math.min(10, parseInt(e.target.value) || 5)))}
-            className="h-9 w-20 text-center text-sm"
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Execution window"
-          description="How late a job can start before it's marked needs_retry"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              min={1}
-              max={1440}
-              value={defaultExecWindow}
-              onChange={(e) => setDefaultExecWindow(Math.max(1, Math.min(1440, parseInt(e.target.value) || 30)))}
-              className="h-9 w-20 text-center text-sm"
-            />
-            <span className="text-sm text-muted-foreground">min</span>
-          </div>
-        </SettingRow>
-
-        <SettingRow
           label="Max attempts"
-          description="Total attempts including initial before trying fallback model (1–5)"
+          description="Total attempts (via cron retry) before trying the fallback model (1–5)"
         >
           <Input
             type="number"

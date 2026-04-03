@@ -265,7 +265,7 @@ export function AgendaTestPanel() {
               <IconBug className="size-5 text-primary shrink-0" />
               <div>
                 <h2 className="text-base font-bold">Agenda Integration Tests</h2>
-                <p className="text-xs text-muted-foreground">Dev-mode only — tests real DB + Redis</p>
+                <p className="text-xs text-muted-foreground">Dev-mode only — tests real DB + cron engine</p>
               </div>
             </div>
             <div className="flex items-center gap-2">

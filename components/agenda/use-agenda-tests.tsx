@@ -106,7 +106,7 @@ export function useAgendaTests(tests: TestDefinition[]) {
   const resetTestEvents = useCallback(async (): Promise<number> => {
     let deleted = 0;
 
-    // Delete all agenda events (hard delete cleans DB + BullMQ)
+    // Delete all agenda events (hard delete cleans DB + cancels cron jobs)
     const list = await apiGet("/api/agenda/events") as { events?: Array<{ id?: string }> };
     for (const event of (list.events ?? [])) {
       const id = String(event?.id ?? "").trim();

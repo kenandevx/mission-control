@@ -423,7 +423,7 @@ export const AGENDA_TESTS: TestDefinition[] = [
   // 8 ────────────────────────────────────────────────────────────────────────
   {
     id: "worker-heartbeat",
-    name: "Worker heartbeat / SSE connectivity",
+    name: "Scheduler heartbeat / SSE connectivity",
     description: "Verify SSE connects successfully — confirms Next.js server and PostgreSQL LISTEN are operational.",
     run: async (ctx) => {
       const startedAt = Date.now();
@@ -436,10 +436,10 @@ export const AGENDA_TESTS: TestDefinition[] = [
           es.onerror = () => { clearTimeout(timeout); try { es.close(); } catch {} resolve(false); };
         });
         log(`SSE: ${ok ? "connected" : "failed"}`);
-        if (ok) return makeResult("worker-heartbeat", "Worker heartbeat / SSE connectivity", startedAt, true, "Worker heartbeat verified via SSE", []);
-        return makeResult("worker-heartbeat", "Worker heartbeat / SSE connectivity", startedAt, false, "SSE connection failed", []);
+        if (ok) return makeResult("worker-heartbeat", "Scheduler heartbeat / SSE connectivity", startedAt, true, "SSE heartbeat verified — scheduler and DB operational", []);
+        return makeResult("worker-heartbeat", "Scheduler heartbeat / SSE connectivity", startedAt, false, "SSE connection failed", []);
       } catch (err) {
-        return makeResult("worker-heartbeat", "Worker heartbeat / SSE connectivity", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
+        return makeResult("worker-heartbeat", "Scheduler heartbeat / SSE connectivity", startedAt, false, `Exception: ${err instanceof Error ? err.message : String(err)}`, []);
       }
     },
   },
@@ -1233,7 +1233,7 @@ export const AGENDA_TESTS: TestDefinition[] = [
   {
     id: "one-minute-stop-workers-observe",
     name: "Missed execution window → needs_retry",
-    description: "Inject a past occurrence outside its 1-min execution window, enqueue it with the real window, worker detects the miss.",
+    description: "Inject a past occurrence and retry it — cron scheduler should detect it as stale and mark needs_retry.",
     run: async (ctx) => {
       const startedAt = Date.now();
       const log = (m: string) => { ctx.log("one-minute-stop-workers-observe", m); };
@@ -1288,11 +1288,9 @@ export const AGENDA_TESTS: TestDefinition[] = [
         if (!retry.ok) {
           return makeResult(NAME, LABEL, startedAt, false, `Retry enqueue failed: ${retry.error ?? "unknown"}`, []);
         }
-        log("Enqueued with executionWindowMinutes=1");
+        log("Enqueued for cron retry");
 
-        // 4. Poll for worker pickup + needs_retry (up to 30s).
-        // If it stays scheduled with no attempt/steps, that's a harness/service pickup issue,
-        // not proof that missed-window logic is broken.
+        // 4. Poll for scheduler sync + needs_retry (up to 30s).
         let finalStatus = "scheduled";
         let sawAttempt = false;
         let latestAttemptStatus = "none";
@@ -1319,11 +1317,11 @@ export const AGENDA_TESTS: TestDefinition[] = [
         }
 
         if (finalStatus === "needs_retry") {
-          return makeResult(NAME, LABEL, startedAt, true, "Worker correctly detected missed execution window and set needs_retry", []);
+          return makeResult(NAME, LABEL, startedAt, true, "Scheduler correctly detected stale occurrence and set needs_retry", []);
         }
 
         if (!sawAttempt && finalStatus === "scheduled") {
-          return makeResult(NAME, LABEL, startedAt, false, "Worker never picked up the queued occurrence; this was a harness/service pickup failure, not a real missed-window result", []);
+          return makeResult(NAME, LABEL, startedAt, false, "Scheduler did not pick up the occurrence; check scheduler logs", []);
         }
 
         return makeResult(NAME, LABEL, startedAt, false, `Expected needs_retry, got status=${finalStatus}, attempt=${latestAttemptStatus}`, []);
@@ -2308,7 +2306,7 @@ export const AGENDA_TESTS: TestDefinition[] = [
   {
     id: "user-path-not-in-artifact-dir",
     name: "User-specified path stays outside artifact dir",
-    description: "When the prompt says to save a file at a specific path, it should NOT appear in artifact_payload (worker only scans its own dir).",
+    description: "When the prompt says to save a file at a specific path, it should NOT appear in artifact_payload (only files in the designated artifact dir are tracked).",
     run: async (ctx) => {
       const startedAt = Date.now();
       const log = (m: string) => { ctx.log("user-path-not-in-artifact-dir", m); };

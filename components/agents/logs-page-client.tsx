@@ -5,10 +5,9 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ClearLogsButton } from "@/components/agents/clear-logs-button";
 import { LogsExplorer } from "@/components/agents/logs-explorer";
 import { LogsLiveRefresh } from "@/components/agents/logs-live-refresh";
-import { QueueManager } from "@/components/agents/queue-manager";
 import { ServiceManager } from "@/components/agents/service-manager";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollTextIcon, LayersIcon, ServerIcon } from "lucide-react";
+import { ScrollTextIcon, ServerIcon } from "lucide-react";
 import type { Agent, AgentLog } from "@/types/agents";
 
 type PageInfo = {
@@ -95,10 +94,6 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
               <ScrollTextIcon className="size-3.5" />
               Runtime Logs
             </TabsTrigger>
-            <TabsTrigger value="queues" className="gap-1.5 cursor-pointer">
-              <LayersIcon className="size-3.5" />
-              Job Queues
-            </TabsTrigger>
             <TabsTrigger value="services" className="gap-1.5 cursor-pointer">
               <ServerIcon className="size-3.5" />
               Services
@@ -115,10 +110,6 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
               initialNowIso={initialNowIso}
               onPageChange={onPageChange}
             />
-          </TabsContent>
-
-          <TabsContent value="queues" className="mt-4">
-            <QueueManager />
           </TabsContent>
 
           <TabsContent value="services" className="mt-4">

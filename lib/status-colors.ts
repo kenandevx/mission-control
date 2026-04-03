@@ -71,7 +71,7 @@ export const STATUS_BADGE_MAP: Record<string, { label: string; className: string
   failed:       { label: "✗ Failed",       className: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400", tooltip: "The run failed — check output for errors" },
   running:      { label: "● Running",      className: "border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", tooltip: "Currently executing" },
   pending:      { label: "Pending",        className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Waiting to be picked up" },
-  queued:       { label: "Queued",         className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "In the execution queue" },
+  queued:       { label: "Queued",         className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled in cron engine, waiting to run" },
   scheduled:    { label: "Scheduled",      className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled for future execution" },
   needs_retry:  { label: "⚠ Needs Retry",  className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "All retries exhausted — needs manual retry" },
 };
