@@ -20,7 +20,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
-import { getRunArtifactDir, ensureArtifactDir, cleanupRunArtifacts } from "./runtime-artifacts.mjs";
+import { getRunArtifactDir, ensureArtifactDir, cleanupRunArtifacts, scanArtifactDir } from "./runtime-artifacts.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -278,7 +278,8 @@ async function renderPromptForEvent(event) {
     }
   }
 
-  // Use a temp artifact dir path (the actual dir is created at run time by cron)
+  // Build artifact dir path WITHOUT creating it.
+  // It only gets created if the agent actually writes files to it.
   const artifactDir = getRunArtifactDir({
     kind: "agenda",
     entityId: event.id,
@@ -388,13 +389,26 @@ async function syncCronRunResults() {
           `;
           // Insert a run step so the Output tab shows the agent's response
           if (insertedAttempt?.id) {
+            // Scan for artifacts the agent may have written
+            const stableArtifactDir = getRunArtifactDir({
+              kind: "agenda",
+              entityId: occ.agenda_event_id,
+              occurrenceId: occ.occurrence_id,
+              runId: "artifacts",
+            });
+            const scannedFiles = await scanArtifactDir(stableArtifactDir);
+            const artifactData = scannedFiles.length > 0 ? { files: scannedFiles } : null;
+            if (scannedFiles.length > 0) {
+              console.log(`[agenda-scheduler] Found ${scannedFiles.length} artifact(s) for occurrence ${occ.occurrence_id}`);
+            }
             await sql`
               INSERT INTO agenda_run_steps
-                (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at)
+                (run_attempt_id, step_order, agent_id, input_payload, output_payload, artifact_payload, status, started_at, finished_at)
               VALUES
                 (${insertedAttempt.id}, 0, ${occ.default_agent_id || 'main'},
                  ${sql.json({ instruction: String(occ.rendered_prompt || '(Prompt stored in cron job)').slice(0, 2000), cronJobId: occ.cron_job_id })},
                  ${sql.json({ output: String(latest.summary || '').trim() })},
+                 ${artifactData ? sql.json(artifactData) : null},
                  'succeeded',
                  ${new Date(latest.runAtMs || Date.now())},
                  ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))})
@@ -543,8 +557,19 @@ async function runCycle() {
         // Render the prompt
         const message = await renderPromptForEvent(event);
 
-        // Store the rendered prompt on the occurrence so retry can reuse it
-        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
+        // Store the rendered prompt. Replace the random artifact dir path in the prompt
+        // with a stable occurrence-scoped path so the agent always writes to the same place.
+        const stableArtifactDir = getRunArtifactDir({
+          kind: "agenda",
+          entityId: event.id,
+          occurrenceId: occ.id,
+          runId: "artifacts",
+        });
+        const stableMessage = message.replace(
+          /runtime-artifacts\/agenda\/[^\s]+/g,
+          `runtime-artifacts/agenda/${event.id}/occurrences/${occ.id}/artifacts`
+        );
+        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${stableMessage} WHERE id = ${occ.id}`;
 
         // Create the cron job
         const cronJobId = await createCronJob({

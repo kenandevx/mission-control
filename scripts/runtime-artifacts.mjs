@@ -30,6 +30,15 @@ export async function ensureArtifactDir(dir) {
 }
 
 /**
+ * Compute an artifact dir path WITHOUT creating it.
+ * Use this for embedding in prompts — the dir is only created if the agent
+ * actually produces artifacts (detected after the run).
+ */
+export function getRunArtifactDirPath(params) {
+  return getRunArtifactDir(params);
+}
+
+/**
  * Scan an artifact directory for files the agent created.
  * Returns an array of { name, mimeType, size, path } for each file found.
  */
