@@ -2,6 +2,65 @@
 
 This file tracks notable product and engineering changes so `README.md` can stay focused on overview, setup, and usage.
 
+## 2026-04-03 — v2.7
+
+### Agenda / scheduler reliability
+- Fix `cron.add INVALID_REQUEST` when scheduled time is already past — now uses `--at 30s` for immediate execution
+- Fix: when cron job creation fails, occurrence is now correctly set to `needs_retry` (was silently abandoned)
+- Fix: event status styling on calendar — `run_started_at`/`run_finished_at` now included in all event list queries
+
+## 2026-04-03 — v2.6
+
+### Test suite overhaul
+- Rewrote agenda test suite — 15 clean focused tests, CET timezone, no mocks
+
+## 2026-04-03 — v2.5
+
+### Artifact display fixes
+- Fix artifact directory creation — no longer created eagerly, only when agent actually writes files
+- Artifact files (images, PDFs, etc.) now correctly displayed in Output tab with download links and image previews
+
+## 2026-04-03 — v2.4
+
+### Output tab + retry accuracy
+- Fix Output tab was empty after successful cron runs — `agenda_run_steps` now populated by scheduler
+- Fix manual retry used bare prompt — now uses stored `rendered_prompt` (includes process steps)
+- Settings "Max attempts before fallback" is now wired to actual fallback trigger logic
+- `rendered_prompt` column added to `agenda_occurrences` for retry accuracy
+
+## 2026-04-03 — v2.3
+
+### Cleanup: BullMQ removal complete
+- Remove Job Queues tab (BullMQ UI removed)
+- Remove dead Concurrency + Execution Window settings (cron handles natively)
+- Fix all stale "worker" references across tests, settings, and UI components
+
+## 2026-04-03 — v2.2
+
+### Watchdog fix
+- Fix watchdog environment sourcing — restarted services now have DATABASE_URL available
+
+## 2026-04-03 — v2.1
+
+### BullMQ/Redis removal
+- Remove BullMQ/Redis from all remaining files (routes, types, UI, install script)
+- Remove `agenda-worker` from clean reset and service list
+- `agenda-selfcheck` rewritten for cron engine
+
+## 2026-04-03 — v2.0
+
+### Major architecture change — cron engine replaces BullMQ/Redis
+- `agenda-worker.mjs` removed — execution now inside the OpenClaw gateway via `openclaw cron`
+- `agenda-scheduler.mjs` rewritten — RRULE expansion → creates one-shot `openclaw cron` jobs
+- Scheduler syncs cron run results back to Postgres for the UI
+- Qdrant memory cleanup on failure via isolated session file parsing
+- Fallback model retry via `openclaw cron edit` + `cron run`
+- Gateway pairing fixed — CLI device approved in `devices/paired.json`
+- `openclaw-config.mjs` — reads gateway token from `openclaw.json` directly
+- Removed `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` from `.env`
+- Services reduced: 5 → 3 (gateway-sync, bridge-logger, agenda-scheduler, nextjs; no worker, no Redis)
+- `db/schema.sql` updated with v2 cron columns
+
 ## 2026-04-02 — v1.6.2
 
 ### Boards simplification: manual Trello-style ticketing
