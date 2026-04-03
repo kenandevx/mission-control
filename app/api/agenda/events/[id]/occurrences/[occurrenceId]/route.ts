@@ -115,6 +115,20 @@ export async function POST(
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
 
+    // Get the Telegram chat ID for delivery
+    const sessionsPath = `${process.env.HOME || '/home/clawdbot'}/.openclaw/agents/main/sessions/sessions.json`;
+    let chatId: string | undefined;
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const sessData = JSON.parse(await readFile(sessionsPath, "utf-8")) as Record<string, { deliveryContext?: { channel?: string; to?: string } }>;
+      for (const val of Object.values(sessData)) {
+        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
+          chatId = String(val.deliveryContext.to).replace(/^telegram:/, "");
+          break;
+        }
+      }
+    } catch { /* no chat ID available */ }
+
     const forceRetry = body.force === true;
     const retryableStatuses = forceRetry ? FORCE_RETRYABLE_STATUSES : RETRYABLE_STATUSES;
     if (!retryableStatuses.includes(occurrence.status)) {
@@ -153,13 +167,16 @@ export async function POST(
       // No existing cron job — create a new one-shot retry job
       // We need the rendered prompt, which the scheduler has already stored as the cron job message.
       // For now, build a simple re-run request. The scheduler will pick it up if cron creation fails.
-      const chatId = body.chatId as string | undefined;
       const overrideModel = (body.model as string) || (occurrence.model_override as string) || null;
 
       try {
+        // Use stored rendered_prompt (includes process steps) if available,
+        // otherwise fall back to free_prompt only
+        const retryMessage = (occurrence.rendered_prompt as string | null)
+          || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
         const newCronJobId = await createRetryCronJob({
           title: occurrence.title as string,
-          message: `Re-run of agenda event: ${occurrence.title}. ${occurrence.free_prompt || ""}`.trim(),
+          message: retryMessage,
           agentId: (occurrence.default_agent_id as string) || "main",
           model: overrideModel || undefined,
           chatId,

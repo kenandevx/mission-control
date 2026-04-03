@@ -470,3 +470,6 @@ ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_job_id TEXT;
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS fallback_attempted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_synced_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_agenda_occurrences_cron_job ON agenda_occurrences(cron_job_id);
+
+-- v2.1: rendered_prompt for retry accuracy
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS rendered_prompt TEXT;

@@ -341,10 +341,15 @@ async function cleanupFailedCronSession(sessionId) {
 
 // ── Sync cron run results to Postgres ────────────────────────────────────────
 async function syncCronRunResults() {
+  // Load max_retries from worker_settings (controls fallback model threshold)
+  const [settingsRow] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
+  const maxRetries = Math.max(1, Number(settingsRow?.max_retries ?? 1));
+
   // Find occurrences that have a cron_job_id but are still in running/queued state
   const pending = await sql`
     SELECT ao.id as occurrence_id, ao.cron_job_id, ao.agenda_event_id,
            ao.status, ao.latest_attempt_no, ao.fallback_attempted,
+           ao.rendered_prompt,
            ae.title, ae.fallback_model, ae.default_agent_id
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
@@ -370,7 +375,7 @@ async function syncCronRunResults() {
                 locked_at = null, cron_synced_at = now()
             WHERE id = ${occ.occurrence_id} AND status IN ('queued', 'running')
           `;
-          await sql`
+          const [insertedAttempt] = await sql`
             INSERT INTO agenda_run_attempts
               (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary)
             VALUES
@@ -379,7 +384,23 @@ async function syncCronRunResults() {
                ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))},
                ${String(latest.summary || "").slice(0, 500)})
             ON CONFLICT DO NOTHING
+            RETURNING id
           `;
+          // Insert a run step so the Output tab shows the agent's response
+          if (insertedAttempt?.id) {
+            await sql`
+              INSERT INTO agenda_run_steps
+                (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at)
+              VALUES
+                (${insertedAttempt.id}, 0, ${occ.default_agent_id || 'main'},
+                 ${sql.json({ instruction: String(occ.rendered_prompt || '(Prompt stored in cron job)').slice(0, 2000), cronJobId: occ.cron_job_id })},
+                 ${sql.json({ output: String(latest.summary || '').trim() })},
+                 'succeeded',
+                 ${new Date(latest.runAtMs || Date.now())},
+                 ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))})
+              ON CONFLICT DO NOTHING
+            `;
+          }
           await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId: occ.occurrence_id })})`;
           console.log(`[agenda-scheduler] Occurrence ${occ.occurrence_id} succeeded via cron`);
 
@@ -389,7 +410,7 @@ async function syncCronRunResults() {
           const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
 
           // Record the failed attempt
-          await sql`
+          const [failedAttempt] = await sql`
             INSERT INTO agenda_run_attempts
               (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
             VALUES
@@ -399,7 +420,24 @@ async function syncCronRunResults() {
                ${String(latest.summary || latest.error || "").slice(0, 500)},
                ${String(latest.error || "").slice(0, 500)})
             ON CONFLICT DO NOTHING
+            RETURNING id
           `;
+          // Insert a failed step for the Output tab
+          if (failedAttempt?.id) {
+            await sql`
+              INSERT INTO agenda_run_steps
+                (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at, error_message)
+              VALUES
+                (${failedAttempt.id}, 0, ${occ.default_agent_id || 'main'},
+                 ${sql.json({ instruction: String(occ.rendered_prompt || '(Prompt stored in cron job)').slice(0, 2000), cronJobId: occ.cron_job_id })},
+                 ${sql.json({ output: String(latest.error || latest.summary || '').trim() })},
+                 'failed',
+                 ${new Date(latest.runAtMs || Date.now())},
+                 ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))},
+                 ${String(latest.error || '').slice(0, 500)})
+              ON CONFLICT DO NOTHING
+            `;
+          }
 
           // Clean up Qdrant memories from the failed session
           if (latest.sessionId) {
@@ -408,8 +446,9 @@ async function syncCronRunResults() {
             );
           }
 
-          if (fallbackModel && !occ.fallback_attempted) {
-            // Retry with fallback model
+          const attemptedSoFar = Number(occ.latest_attempt_no || 0) + 1;
+          if (fallbackModel && !occ.fallback_attempted && attemptedSoFar >= maxRetries) {
+            // All primary retries exhausted — retry with fallback model
             console.log(`[agenda-scheduler] Attempting fallback model for ${occ.occurrence_id}: ${fallbackModel}`);
             try {
               await editCronJob(occ.cron_job_id, { model: fallbackModel });
@@ -503,6 +542,9 @@ async function runCycle() {
 
         // Render the prompt
         const message = await renderPromptForEvent(event);
+
+        // Store the rendered prompt on the occurrence so retry can reuse it
+        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
 
         // Create the cron job
         const cronJobId = await createCronJob({

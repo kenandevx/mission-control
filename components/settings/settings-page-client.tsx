@@ -503,8 +503,8 @@ export function SettingsPageClient(): React.ReactNode {
 
       <div className="rounded-xl border bg-card divide-y">
         <SettingRow
-          label="Max attempts"
-          description="Total attempts (via cron retry) before trying the fallback model (1–5)"
+          label="Max attempts before fallback"
+          description="After this many failed attempts, Mission Control switches to the per-event fallback model (if set). Cron handles the actual retries internally. (1–5)"
         >
           <Input
             type="number"
@@ -537,7 +537,7 @@ export function SettingsPageClient(): React.ReactNode {
         <div className="space-y-2.5">
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold shrink-0 mt-0.5">1</div>
-            <p className="text-sm text-muted-foreground">Fails → retries with same model, up to <span className="font-medium text-foreground">{maxRetries} total attempt{maxRetries === 1 ? "" : "s"}</span></p>
+            <p className="text-sm text-muted-foreground">Cron retries automatically on transient failures (rate limits, overload). After <span className="font-medium text-foreground">{maxRetries} attempt{maxRetries === 1 ? "" : "s"}</span> it escalates to step 2.</p>
           </div>
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">2</div>
