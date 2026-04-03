@@ -1,6 +1,6 @@
 export type AgentStatus = "running" | "idle" | "degraded";
 export type AgentLogLevel = "info" | "warning" | "error" | "debug";
-export type AgentLogType = "workflow" | "tool" | "memory" | "system" | "worker" | "bullmq";
+export type AgentLogType = "workflow" | "tool" | "memory" | "system" | "worker" | "cron";
 export type AgentLogEventType =
   | "chat.user_in"
   | "chat.assistant_out"

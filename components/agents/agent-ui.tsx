@@ -37,7 +37,7 @@ const typeClass: Record<AgentLogType, string> = {
   memory: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
   system: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
   worker: "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  bullmq: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+  cron: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
 };
 
 const eventTypeClass: Record<AgentLogEventType, string> = {
@@ -94,7 +94,7 @@ const typeLabel: Record<AgentLogType, string> = {
   memory: "Memory",
   system: "System",
   worker: "Worker",
-  bullmq: "BullMQ",
+  cron: "Cron",
 };
 
 const eventTypeLabel: Record<AgentLogEventType, string> = {

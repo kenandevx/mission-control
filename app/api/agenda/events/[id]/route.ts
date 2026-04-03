@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
-import { Queue } from "bullmq";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { DateTime } from "luxon";
+
+const execFileAsync = promisify(execFile);
+
+function buildCleanEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env } as NodeJS.ProcessEnv;
+  delete env.OPENCLAW_GATEWAY_URL;
+  delete env.OPENCLAW_GATEWAY_TOKEN;
+  return env;
+}
 
 type Json = Record<string, unknown>;
 
@@ -36,37 +46,25 @@ const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
 
-const REDIS_HOST = process.env.REDIS_HOST || "127.0.0.1";
-const REDIS_PORT = parseInt(process.env.REDIS_PORT || "6379", 10);
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
-
-/** Remove all BullMQ jobs related to an event's occurrences. */
+/** Cancel all cron jobs related to an event's queued occurrences. */
 async function removeQueuedJobs(sql: ReturnType<typeof getSql>, eventId: string) {
   try {
     const occurrences = await sql`
-      SELECT id FROM agenda_occurrences WHERE agenda_event_id = ${eventId}
+      SELECT id, cron_job_id FROM agenda_occurrences
+      WHERE agenda_event_id = ${eventId} AND cron_job_id IS NOT NULL
+        AND status IN ('queued', 'scheduled')
     `;
-    if (!occurrences.length) return;
-
-    const queue = new Queue("agenda", {
-      connection: { host: REDIS_HOST, port: REDIS_PORT, password: REDIS_PASSWORD },
-    });
-
-    // Get all jobs in waiting, delayed, and active states
-    const jobs = [
-      ...await queue.getJobs(["waiting", "delayed", "active", "failed"], 0, 500),
-    ];
-
-    const occIds = new Set(occurrences.map((o) => String(o.id)));
-    for (const job of jobs) {
-      if (job?.data?.occurrenceId && occIds.has(String(job.data.occurrenceId))) {
-        try { await job.remove(); } catch { /* already processing or removed */ }
-      }
+    const env = buildCleanEnv();
+    for (const occ of occurrences) {
+      if (!occ.cron_job_id) continue;
+      try {
+        await execFileAsync("openclaw", ["cron", "rm", occ.cron_job_id], {
+          timeout: 10000, env, maxBuffer: 1024 * 1024,
+        });
+      } catch { /* already deleted or not found — fine */ }
     }
-
-    await queue.close();
   } catch (err) {
-    console.warn("[event-delete] Failed to clean BullMQ jobs:", err);
+    console.warn("[event-delete] Failed to cancel cron jobs:", err);
   }
 }
 

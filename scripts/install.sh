@@ -69,47 +69,8 @@ if [ "$(printf '%s\n' "20.10.0" "$DOCKER_VERSION" | sort -V | head -n1)" != "20.
 fi
 info "Docker $DOCKER_VERSION — OK"
 
-if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
-  warn "Redis not found. BullMQ requires Redis."
-  step "Installing Redis ..."
-
-  if command -v apt-get >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo apt-get update
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server
-    else
-      err "Redis is required, but sudo is not available and the script is not running as root."
-      err "Install it manually with: apt-get install -y redis-server"
-      exit 1
-    fi
-
-    if command -v systemctl >/dev/null 2>&1; then
-      if [ "$(id -u)" -eq 0 ]; then
-        systemctl enable redis-server >/dev/null 2>&1 || true
-        systemctl start redis-server >/dev/null 2>&1 || true
-      elif command -v sudo >/dev/null 2>&1; then
-        sudo systemctl enable redis-server >/dev/null 2>&1 || true
-        sudo systemctl start redis-server >/dev/null 2>&1 || true
-      fi
-    fi
-
-    if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
-      err "Redis installation appears to have failed."
-      exit 1
-    fi
-
-    info "Redis installed — OK"
-  else
-    err "Redis is required, but automatic installation is only implemented for apt-based systems."
-    err "Please install redis-server manually and rerun the installer."
-    exit 1
-  fi
-else
-  info "Redis already installed — OK"
-fi
+# v2: Redis/BullMQ removed — execution engine now uses openclaw cron natively.
+# No Redis installation required.
 
 # ── Git transport check ─────────────────────────────────────
 step "Checking GitHub repository access ..."
@@ -172,8 +133,8 @@ API_USER=${API_USER}
 API_PASS=${API_PASS}
 DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_control
 OPENCLAW_DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_control
-OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
-OPENCLAW_GATEWAY_TOKEN=
+# OpenClaw gateway config is auto-discovered from ~/.openclaw/openclaw.json.
+# Do NOT set OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN here.
 EOF
 
   chmod 600 .env
@@ -297,7 +258,7 @@ step "Building production Next.js ..."
 env -u NODE_ENV NODE_ENV=production npm run build 2>&1 | tail -5
 
 # ── mc-services: start host-level daemons ───────────────────
-step "Starting all services (gateway-sync, bridge-logger, agenda-scheduler, agenda-worker, Next.js) ..."
+step "Starting all services (gateway-sync, bridge-logger, agenda-scheduler, Next.js) ..."
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'
 
 # ── Convenience symlinks ────────────────────────────────────
@@ -316,9 +277,11 @@ echo "Services running (production):"
 echo "  PostgreSQL (Docker)   — port 5432"
 echo "  gateway-sync (host)   — imports openclaw sessions"
 echo "  bridge-logger (host)  — tails openclaw logs to DB"
-echo "  agenda-scheduler      — schedules agenda occurrences"
-echo "  agenda-worker         — processes agenda runs"
+echo "  agenda-scheduler      — RRULE expansion + cron job sync"
 echo "  Next.js (host)        — production server, port 3000"
+echo ""
+echo "Note: Event execution is handled natively by the OpenClaw cron engine."
+echo "      No separate worker process or Redis required (v2+)."
 echo ""
 echo "Commands:"
 echo "  cd $INSTALL_DIR"

@@ -464,3 +464,9 @@ alter table worker_settings add column if not exists scheduling_interval_minutes
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_job_id TEXT;
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS fallback_attempted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_synced_at TIMESTAMPTZ;
+
+-- v2.0: cron-based execution engine (replaces BullMQ/agenda-worker)
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_job_id TEXT;
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS fallback_attempted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_synced_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_agenda_occurrences_cron_job ON agenda_occurrences(cron_job_id);
