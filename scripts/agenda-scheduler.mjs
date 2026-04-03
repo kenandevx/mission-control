@@ -469,6 +469,9 @@ async function syncCronRunResults() {
           }
           await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId: occ.occurrence_id })})`;
           console.log(`[agenda-scheduler] Occurrence ${occ.occurrence_id} succeeded via cron`);
+          // Result synced to DB — cron job no longer needed, clean it up
+          await deleteCronJob(occ.cron_job_id).catch(() => {});
+          await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
 
         } else {
           // Failed — check if we should try fallback model
@@ -532,10 +535,15 @@ async function syncCronRunResults() {
             } catch (err) {
               console.warn(`[agenda-scheduler] Fallback retry failed for ${occ.occurrence_id}:`, err.message);
               await markNeedsRetry(occ, attemptNo, latest.error || "Fallback retry failed");
+              await deleteCronJob(occ.cron_job_id).catch(() => {});
+              await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
             }
           } else {
             // All retries exhausted
             await markNeedsRetry(occ, attemptNo, latest.error || "Cron retries exhausted");
+            // Result synced — delete the cron job
+            await deleteCronJob(occ.cron_job_id).catch(() => {});
+            await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
           }
         }
       }
