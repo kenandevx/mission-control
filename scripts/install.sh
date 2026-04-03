@@ -71,7 +71,44 @@ info "Docker $DOCKER_VERSION — OK"
 
 if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
   warn "Redis not found. BullMQ requires Redis."
-  warn "Install: sudo apt install redis-server"
+  step "Installing Redis ..."
+
+  if command -v apt-get >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server
+    else
+      err "Redis is required, but sudo is not available and the script is not running as root."
+      err "Install it manually with: apt-get install -y redis-server"
+      exit 1
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+      if [ "$(id -u)" -eq 0 ]; then
+        systemctl enable redis-server >/dev/null 2>&1 || true
+        systemctl start redis-server >/dev/null 2>&1 || true
+      elif command -v sudo >/dev/null 2>&1; then
+        sudo systemctl enable redis-server >/dev/null 2>&1 || true
+        sudo systemctl start redis-server >/dev/null 2>&1 || true
+      fi
+    fi
+
+    if ! command -v redis-server >/dev/null 2>&1 && ! command -v redis-cli >/dev/null 2>&1; then
+      err "Redis installation appears to have failed."
+      exit 1
+    fi
+
+    info "Redis installed — OK"
+  else
+    err "Redis is required, but automatic installation is only implemented for apt-based systems."
+    err "Please install redis-server manually and rerun the installer."
+    exit 1
+  fi
+else
+  info "Redis already installed — OK"
 fi
 
 # ── Git transport check ─────────────────────────────────────
