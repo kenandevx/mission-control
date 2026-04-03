@@ -46,8 +46,6 @@ if [ -n "${INSTALL_DIR:-}" ]; then
   :
 elif [ -d "$HOME/.openclaw/workspace/mission-control/.git" ]; then
   INSTALL_DIR="$HOME/.openclaw/workspace/mission-control"
-elif [ -d "$(dirname "$DEFAULT_DIR")/.git" ]; then
-  INSTALL_DIR="$(dirname "$DEFAULT_DIR")"
 else
   INSTALL_DIR="$DEFAULT_DIR"
 fi
