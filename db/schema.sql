@@ -458,3 +458,9 @@ alter table worker_settings add column if not exists default_fallback_model text
 -- v1.5.1: Configurable scheduling interval (0 = free time, no slot enforcement)
 alter table worker_settings add column if not exists scheduling_interval_minutes integer not null default 15;
 
+
+-- v2.0: cron-based execution engine
+-- Replace BullMQ/worker with openclaw cron jobs
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_job_id TEXT;
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS fallback_attempted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS cron_synced_at TIMESTAMPTZ;

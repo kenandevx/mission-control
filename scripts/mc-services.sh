@@ -31,7 +31,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ── Service definitions ─────────────────────────────────────
-SERVICES="gateway-sync bridge-logger agenda-scheduler agenda-worker nextjs"
+# v2: agenda-worker removed — execution now via openclaw cron (no Redis/BullMQ needed)
+SERVICES="gateway-sync bridge-logger agenda-scheduler nextjs"
 
 declare -A SERVICE_CMDS
 declare -A SERVICE_LOG_FILES
@@ -45,7 +46,6 @@ done
 SERVICE_CMDS[gateway-sync]="node scripts/gateway-sync.mjs"
 SERVICE_CMDS[bridge-logger]="node scripts/bridge-logger.mjs"
 SERVICE_CMDS[agenda-scheduler]="node scripts/agenda-scheduler.mjs"
-SERVICE_CMDS[agenda-worker]="node scripts/agenda-worker.mjs"
 
 NEXTJS_DEV_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=development npx next dev"
 NEXTJS_PROD_CMD="cd \"$PROJECT_ROOT\" && env -u NODE_ENV NODE_ENV=production npm run start"
@@ -150,9 +150,7 @@ stop_service() {
       agenda-scheduler)
         pkill -f "agenda-scheduler.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
         ;;
-      agenda-worker)
-        pkill -f "agenda-worker.mjs" 2>/dev/null && echo "  $svc — killed via pkill" || echo "  $svc — not running"
-        ;;
+
       nextjs)
         kill_port 3000
         echo "  $svc — port 3000 cleared"

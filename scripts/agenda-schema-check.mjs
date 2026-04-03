@@ -9,17 +9,23 @@ export async function getAgendaOccurrenceColumns(sql) {
 
 export async function assertAgendaSchema(sql) {
   const columns = await getAgendaOccurrenceColumns(sql);
+
+  // v1 columns (still used)
   const required = [
-    'queue_job_id',
-    'queued_at',
     'retry_requested_at',
     'latest_attempt_no',
     'last_retry_reason',
   ];
 
-  const missing = required.filter((name) => !columns.has(name));
+  // v2 columns (cron-based engine)
+  const requiredV2 = [
+    'cron_job_id',
+    'fallback_attempted',
+  ];
+
+  const missing = [...required, ...requiredV2].filter((name) => !columns.has(name));
   if (missing.length > 0) {
-    throw new Error(`agenda_occurrences schema mismatch; missing columns: ${missing.join(', ')}`);
+    throw new Error(`agenda_occurrences schema mismatch; missing columns: ${missing.join(', ')}. Run DB migration.`);
   }
 
   return { ok: true, missing: [] };

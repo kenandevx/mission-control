@@ -25,11 +25,24 @@ function getDbUrl() {
 }
 
 async function resolveGatewayToken() {
+  // 1. Read from openclaw.json (single source of truth)
+  try {
+    const configPath = resolve(process.env.OPENCLAW_HOME || resolve(process.env.HOME || "/home/clawdbot", ".openclaw"), "openclaw.json");
+    const raw = readFileSync(configPath, "utf8");
+    const cleaned = raw.replace(/,(\s*[}\]])/g, "$1");
+    const cfg = JSON.parse(cleaned);
+    const configToken = String(cfg?.gateway?.auth?.token || "").trim();
+    if (configToken) return configToken;
+  } catch { /* fall through to other sources */ }
+
+  // 2. Env var fallback
   const envCandidates = [process.env.OPENCLAW_GATEWAY_TOKEN, process.env.OPENCLAW_GW_TOKEN, process.env.OPENCLAW_GATEWAY_API_TOKEN];
   for (const value of envCandidates) {
     const token = String(value || "").trim();
     if (token) return token;
   }
+
+  // 3. DB fallback
   const dbUrl = getDbUrl();
   if (dbUrl) {
     try {
@@ -60,9 +73,23 @@ async function ensureAppSettings(sql, gatewayToken) {
 
 function getOpenClawSessionsJson() {
   try {
-    const output = execFileSync("openclaw", ["sessions", "--all-agents", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return JSON.parse(output);
-  } catch {
+    // openclaw sessions --json writes to stdout (verified in 4.x), but capture
+    // stderr too as a safety net in case future versions change output streams.
+    const result = execFileSync("openclaw", ["sessions", "--all-agents", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    });
+    // execFileSync returns stdout when stdio[1] is 'pipe'
+    const stdout = typeof result === "string" ? result : "";
+    if (stdout.trim()) return JSON.parse(stdout);
+    return null;
+  } catch (err) {
+    // If the command failed but wrote to stderr, try parsing that
+    const stderr = String(err?.stderr || "").trim();
+    if (stderr) {
+      try { return JSON.parse(stderr); } catch { /* not JSON */ }
+    }
     return null;
   }
 }

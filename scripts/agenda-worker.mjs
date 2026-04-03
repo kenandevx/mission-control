@@ -971,18 +971,25 @@ async function runAgentStep({
   async function executeAgent(modelOverride = null) {
     const effectiveModel = modelOverride || overrideModel || null;
     // Note: --model was removed from `openclaw agent` in 2026.4.x.
-    // Model overrides are passed via OPENCLAW_AGENT_MODEL env var as a
-    // session-scoped hint. If the gateway ignores it, the default model is used.
-    const env = { ...process.env };
+    // OPENCLAW_AGENT_MODEL env var is also ignored in --local mode.
+    // Model override via CLI is a known limitation until gateway pairing is fixed.
+    // TODO: Once gateway pairing works, switch to gateway mode for model override support.
     if (effectiveModel) {
-      env.OPENCLAW_AGENT_MODEL = effectiveModel;
-      console.log(`[agenda-worker] Model override requested: ${effectiveModel} (via env hint)`);
+      console.log(`[agenda-worker] Model override requested: ${effectiveModel} (NOTE: ignored in --local mode)`);
     }
+
+    // Strip OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN from child env
+    // to prevent the CLI from attempting (and failing) gateway connection.
+    const env = { ...process.env };
+    delete env.OPENCLAW_GATEWAY_URL;
+    delete env.OPENCLAW_GATEWAY_TOKEN;
+
     const args = [
       "agent",
       "--agent", effectiveAgentId,
       "--message", effectiveInstruction,
       "--json",
+      "--local",
     ];
 
     return execFileAsync("openclaw", args, {
@@ -996,23 +1003,28 @@ async function runAgentStep({
     let raw;
     try {
       const result = await executeAgent();
-      raw = result.stdout;
       rawStdout = String(result?.stdout || "");
       rawStderr = String(result?.stderr || "");
+      // OpenClaw 4.x writes --json output to stderr, not stdout.
+      // Try stdout first for forward-compatibility, fall back to stderr.
+      raw = rawStdout.trim() ? rawStdout : rawStderr;
     } catch (primaryErr) {
       rawStdout = String(primaryErr?.stdout || "");
       rawStderr = String(primaryErr?.stderr || "");
-      raw = rawStdout;
-      const parsedErrorOutput = extractJsonObjectFromText(rawStdout) || extractJsonObjectFromText(rawStderr);
+      // Same stderr-first resolution for error paths
+      raw = rawStdout.trim() ? rawStdout : rawStderr;
+      const parsedErrorOutput = extractJsonObjectFromText(rawStderr) || extractJsonObjectFromText(rawStdout);
       const parsedErrorText = extractTextFromParsedAgentResult(parsedErrorOutput);
-       const capacity = isCapacityConstraintError(primaryErr);
+      const capacity = isCapacityConstraintError(primaryErr);
 
       // Capacity-constrained failures (rate-limit/quota/low credits) should auto-fallback
       // when a fallback model is configured.
       if (fallbackModel && capacity.constrained) {
         try {
           const fallbackResult = await executeAgent(fallbackModel);
-          raw = fallbackResult.stdout;
+          rawStdout = String(fallbackResult?.stdout || "");
+          rawStderr = String(fallbackResult?.stderr || "");
+          raw = rawStdout.trim() ? rawStdout : rawStderr;
           usedFallback = true;
         } catch (fallbackErr) {
           const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
@@ -1026,7 +1038,7 @@ async function runAgentStep({
       } else {
         throw primaryErr;
       }
-     }
+    }
 
     if (!output) {
       const parsed = extractJsonObjectFromText(raw);

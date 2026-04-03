@@ -114,17 +114,26 @@ export async function POST(request: Request): Promise<Response> {
           "--agent", agentId,
           "--message", `[SIMULATION MODE — do not make permanent changes, only show what you would do]\n\n${instruction}`,
           "--json",
+          "--local",
         ];
-        if (skillKey) args.push("--skill", skillKey);
-        if (modelOverride) args.push("--model", modelOverride);
+        // Note: --skill and --model were removed in OpenClaw 4.x.
+        // Skill context should be embedded in the instruction text.
+        // Model override requires gateway mode (not available with --local).
 
         try {
-          const { stdout } = await execFileAsync("openclaw", args, {
+          // Strip gateway env vars to prevent failed gateway connection attempts
+          const cleanEnv = { ...process.env };
+          delete cleanEnv.OPENCLAW_GATEWAY_URL;
+          delete cleanEnv.OPENCLAW_GATEWAY_TOKEN;
+
+          const result = await execFileAsync("openclaw", args, {
             timeout,
-            env: process.env,
+            env: cleanEnv,
             maxBuffer: 50 * 1024 * 1024,
           });
-          const parsed = JSON.parse(stdout);
+          // OpenClaw 4.x writes --json output to stderr, not stdout.
+          const rawOutput = (result.stdout || "").trim() ? result.stdout : (result.stderr || "");
+          const parsed = JSON.parse(rawOutput);
           const payloads = parsed?.result?.payloads ?? parsed?.payloads ?? [];
           const output = payloads
             .map((p: { text?: string }) => p.text ?? "")
