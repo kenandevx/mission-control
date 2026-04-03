@@ -192,6 +192,14 @@ WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
 WATCHDOG_SKIP="gateway-sync"
 
 run_watchdog() {
+  # Re-source .env so restarted services have DATABASE_URL etc.
+  local env_file="$PROJECT_ROOT/.env"
+  if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
   echo "[watchdog] Started (pid $$, interval ${WATCHDOG_INTERVAL}s)" >> "$WATCHDOG_LOG"
   while true; do
     sleep "$WATCHDOG_INTERVAL"
