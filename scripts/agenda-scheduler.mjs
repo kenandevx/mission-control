@@ -75,11 +75,15 @@ async function cronCmd(args, timeoutMs = 15000) {
 
 /** Create a one-shot cron job for an occurrence. Returns the cron job ID. */
 async function createCronJob({ title, message, agentId, model, scheduledFor, chatId, timeoutSeconds }) {
-  const isoTime = new Date(scheduledFor).toISOString();
+  // If the scheduled time is already past or within 30s, run immediately.
+  // Cron rejects --at timestamps in the past with INVALID_REQUEST.
+  const scheduledMs = new Date(scheduledFor).getTime();
+  const msUntil = scheduledMs - Date.now();
+  const atValue = msUntil > 30_000 ? new Date(scheduledFor).toISOString() : "30s";
   const args = [
     "add",
     "--name", `MC: ${title}`,
-    "--at", isoTime,
+    "--at", atValue,
     "--session", "isolated",
     "--message", message,
     "--agent", agentId || "main",
