@@ -42,7 +42,12 @@ export type Ticket = {
   dueDate: string | null;
   tags: string[];
   assigneeIds: string[];
+  assignedAgentId?: string;
+  executionMode?: TicketExecutionMode;
+  planText?: string;
+  planApproved?: boolean;
   scheduledFor?: string | null;
+  executionState?: TicketExecutionState;
   taskType?: TaskType;
   frequency?: Frequency;
   weekdays?: string[];

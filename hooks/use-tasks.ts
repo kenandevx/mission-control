@@ -225,7 +225,7 @@ function hydrateBoards(
       data: state,
       created_at_formatted: formatDateUTC(board.created_at),
       updated_at_formatted: formatDateUTC(board.updated_at),
-      last_ticket_at_formatted: formatDateTimeUTC(board.last_ticket_at),
+      last_ticket_at_formatted: formatDateTimeUTC(board.last_ticket_at ?? null),
     } as BoardHydration;
   });
 }
