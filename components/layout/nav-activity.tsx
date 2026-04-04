@@ -188,7 +188,8 @@ export function NavActivity(): React.ReactElement {
               No activity yet
             </p>
           ) : (
-            entries.map((entry) => {
+            // Deduplicate by id — same occurrence can appear twice from SSE + polling
+            [...new Map(entries.map((e) => [e.id, e])).values()].map((entry) => {
               const config = LEVEL_CONFIG[entry.level] || LEVEL_CONFIG.info;
               const href = entry.targetUrl || (entry.type === "agenda" ? "/agenda" : "/boards");
               return (

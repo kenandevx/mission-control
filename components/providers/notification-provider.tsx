@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
+import { normalizeAgentLogPayload } from "@/lib/agent-log-utils";
 
 // ── Notification settings (localStorage) ─────────────────────────────────────
 
@@ -180,10 +181,11 @@ export function NotificationProvider(): null {
         if (!match) return;
 
         const ticketName = row.ticket_title || "Ticket";
+        const details = row.details ? normalizeAgentLogPayload(row.details).messagePreview : "";
         const dedupeKey = `ticket-${row.id || row.ticket_id}-${row.event}`;
         notify(
           `${match.icon} ${match.title}`,
-          ticketName + (row.details ? ` — ${row.details.slice(0, 100)}` : ""),
+          ticketName + (details ? ` — ${details}` : ""),
           match.type,
           dedupeKey,
         );
@@ -200,13 +202,14 @@ export function NotificationProvider(): null {
         if (!row) return;
 
         const eventType = String(row.event_type || row.eventType || "");
-        const message = String(row.message_preview || row.message || "");
+        const rawMsg = String(row.message || "");
+        const messagePreview = normalizeAgentLogPayload(rawMsg).messagePreview;
 
         // Only notify on important agent events
         if (eventType === "system.startup") {
-          notify("🟢 Agent started", message.slice(0, 100), "info", `log-${row.id}`);
+          notify("🟢 Agent started", messagePreview, "info", `log-${row.id}`);
         } else if (eventType === "system.error") {
-          notify("🔴 System error", message.slice(0, 100), "error", `log-${row.id}`);
+          notify("🔴 System error", messagePreview, "error", `log-${row.id}`);
         }
       } catch { /* ignore */ }
     });

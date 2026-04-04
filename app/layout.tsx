@@ -121,7 +121,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeAccentBootstrap }} />
         <Providers>
           {children}
-          <Toaster />
+          <Toaster position="bottom-right" />
         </Providers>
       </body>
     </html>
