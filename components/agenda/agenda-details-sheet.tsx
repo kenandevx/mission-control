@@ -804,24 +804,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     </Card>
                   )}
 
-                  {/* Rendered Prompt preview */}
-                  {selectedOccurrence?.rendered_prompt && (
-                    <Card data-slot="card" className="col-span-2">
-                      <CardHeader>
-                        <CardDescription>Prompt sent to agent</CardDescription>
-                        <CardTitle className="text-sm font-semibold leading-snug line-clamp-2">
-                          {selectedOccurrence.rendered_prompt.length > 120
-                            ? selectedOccurrence.rendered_prompt.slice(0, 120) + "…"
-                            : selectedOccurrence.rendered_prompt}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1 text-sm">
-                        <div className="text-muted-foreground text-xs">
-                          Full prompt visible in Output tab
-                        </div>
-                      </CardFooter>
-                    </Card>
-                  )}
 
                   {/* Latest Occurrence */}
                   {selectedOccurrence && (
@@ -1064,18 +1046,22 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           )}
 
                           {/* Output */}
-                          {step.error_message ? (
+                          {step.error_message && (
                             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-sm text-red-600">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-red-700 dark:text-red-400 mb-1">Error</p>
                               {step.error_message}
                             </div>
-                          ) : step.status === "succeeded" && step.output_payload ? (
+                          )}
+                          {step.output_payload ? (
                             <>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Output</p>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                {step.status === "failed" ? "Output (failed run)" : "Output"}
+                              </p>
                               <AgentOutput outputPayload={step.output_payload} />
                             </>
-                          ) : (
+                          ) : !step.error_message ? (
                             <p className="text-sm text-muted-foreground">No output available</p>
-                          )}
+                          ) : null}
 
                           {/* Artifacts */}
                           {(() => {

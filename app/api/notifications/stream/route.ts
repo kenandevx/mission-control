@@ -24,6 +24,7 @@ function levelFromAction(action: string): string {
       return "error";
     case "running":
     case "auto_retry":
+    case "force_retry":
       return "warning";
     default:
       return "info";

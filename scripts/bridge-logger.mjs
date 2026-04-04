@@ -743,7 +743,7 @@ async function handleCronRunLine(getSql, jobId, line) {
   const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
   const succeeded = run.status === "ok";
   const errorText = String(run.error || "").slice(0, 2000);
-  const summaryText = String(run.summary || "").slice(0, 500);
+  const summaryText = String(run.summary || "").slice(0, 8000);
   const startedAt = new Date(run.runAtMs || Date.now());
   const finishedAt = new Date((run.runAtMs || Date.now()) + (run.durationMs || 0));
   const sessionKey = run.sessionKey || `agent:main:cron:${jobId}`;

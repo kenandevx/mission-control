@@ -48,10 +48,16 @@ function relativeTime(dateStr: string): string {
 
 function formatActivityEvent(entry: ActivityEntry): string {
   const raw = (entry.event || "").toLowerCase();
+  if (raw === "force_retry" || raw.includes("force_retry") || raw.includes("force retry")) return "Force Retried";
+  if (raw === "auto_retry" || raw.includes("auto_retry")) return "Auto-retrying";
+  if (raw === "needs_retry" || raw.includes("needs_retry")) return "Needs Retry";
+  if (raw === "stale_recovery" || raw.includes("stale")) return "Stale Recovery";
   if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Executing";
   if (raw.includes("queued") || raw.includes("scheduled")) return "Queued";
-  if (raw.includes("succeeded") || raw.includes("completed")) return "Completed";
-  if (raw.includes("failed") || raw.includes("needs_retry") || raw.includes("expired")) return "Failed";
+  if (raw === "succeeded" || raw.includes("succeeded") || raw.includes("completed")) return "Completed";
+  if (raw === "failed" || raw.includes("failed") || raw.includes("expired")) return "Failed";
+  if (raw === "cancelled" || raw.includes("cancelled")) return "Cancelled";
+  if (raw === "created" || raw.includes("created")) return "Created";
   return entry.event || "Activity";
 }
 
