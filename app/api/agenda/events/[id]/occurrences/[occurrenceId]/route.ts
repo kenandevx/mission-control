@@ -39,15 +39,18 @@ async function createRetryCronJob(params: {
   sessionTarget?: string;
 }): Promise<string | null> {
   const target = params.sessionTarget === "main" ? "main" : "isolated";
+  const isMain = target === "main";
   const args = [
     "cron", "add",
     "--name", `MC retry: ${params.title}`,
     "--at", "30s",
     "--session", target,
-    "--message", params.message,
+    // Main session requires --system-event; isolated sessions use --message.
+    isMain ? "--system-event" : "--message",
+    params.message,
     "--agent", params.agentId || "main",
     "--delete-after-run",
-    ...(target === "isolated" ? ["--no-deliver"] : []),
+    ...(isMain ? [] : ["--no-deliver"]),
     "--json",
   ];
   if (params.model?.trim()) args.push("--model", params.model.trim());
