@@ -77,7 +77,7 @@ function createFallbackData(dayCount: number) {
 
 export function ChartAreaInteractive({ data }: { data: ChartPoint[] }) {
   const isMobile = useIsMobile()
-  const [timeRange, setTimeRange] = React.useState("90d")
+  const [timeRange, setTimeRange] = React.useState("7d")
 
   React.useEffect(() => {
     if (isMobile) {
@@ -136,7 +136,7 @@ export function ChartAreaInteractive({ data }: { data: ChartPoint[] }) {
               size="sm"
               aria-label="Select a value"
             >
-              <SelectValue placeholder="Last 3 months" />
+              <SelectValue placeholder="Last 7 days" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
               <SelectItem value="90d" className="rounded-lg">
