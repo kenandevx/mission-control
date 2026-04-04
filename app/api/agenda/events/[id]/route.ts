@@ -3,15 +3,10 @@ import { getSql } from "@/lib/local-db";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { DateTime } from "luxon";
+import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
 
 const execFileAsync = promisify(execFile);
 
-function buildCleanEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env } as NodeJS.ProcessEnv;
-  delete env.OPENCLAW_GATEWAY_URL;
-  delete env.OPENCLAW_GATEWAY_TOKEN;
-  return env;
-}
 
 type Json = Record<string, unknown>;
 
@@ -298,6 +293,9 @@ export async function PATCH(
       : existing.recurrence_until;
     const status = body.status !== undefined ? String(body.status) : existing.status;
     const modelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
+    const sessionTarget = body.sessionTarget !== undefined
+      ? (body.sessionTarget === "main" ? "main" : "isolated")
+      : (existing.session_target ?? "isolated");
 
     // Guard: cannot revert to draft if event has any non-idle occurrences
     if (status === "draft" && existing.status !== "draft") {
@@ -367,6 +365,7 @@ export async function PATCH(
         recurrence_until = ${recurrenceUntil},
         status = ${status},
         model_override = ${modelOverrideStd},
+        session_target = ${sessionTarget},
         updated_at = now()
       where id = ${id}
     `;

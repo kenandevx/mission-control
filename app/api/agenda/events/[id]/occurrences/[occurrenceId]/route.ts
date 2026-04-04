@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { cleanupRunArtifacts, getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 import { FORCE_RETRYABLE_STATUSES, RETRYABLE_STATUSES, OCCURRENCE_STATUSES } from "@/lib/agenda/constants";
+import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,14 +19,6 @@ async function workspaceId(sql: ReturnType<typeof getSql>): Promise<string | nul
   return rows[0]?.id ?? null;
 }
 
-/** Build clean env — no gateway override vars */
-function buildCleanEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env } as NodeJS.ProcessEnv;
-  delete env.OPENCLAW_GATEWAY_URL;
-  delete env.OPENCLAW_GATEWAY_TOKEN;
-  return env;
-}
-
 /** Force-run a cron job immediately */
 async function runCronJobNow(cronJobId: string): Promise<void> {
   const env = buildCleanEnv();
@@ -36,27 +29,26 @@ async function runCronJobNow(cronJobId: string): Promise<void> {
   });
 }
 
-/** Create a new one-shot cron job for a retry with optional model override */
+/** Create a new one-shot cron job for a manual retry */
 async function createRetryCronJob(params: {
   title: string;
   message: string;
   agentId: string;
   model?: string;
-  chatId?: string;
+  sessionTarget?: string;
 }): Promise<string | null> {
+  const target = params.sessionTarget === "main" ? "main" : "isolated";
   const args = [
     "cron", "add",
     "--name", `MC retry: ${params.title}`,
     "--at", "30s",
-    "--session", "isolated",
+    "--session", target,
     "--message", params.message,
     "--agent", params.agentId || "main",
-    "--best-effort-deliver",
     "--keep-after-run",
     "--json",
   ];
   if (params.model?.trim()) args.push("--model", params.model.trim());
-  if (params.chatId) args.push("--announce", "--channel", "telegram", "--to", params.chatId);
 
   const env = buildCleanEnv();
   const result = await execFileAsync("openclaw", args, {
@@ -104,10 +96,12 @@ export async function POST(
       return ok({ occurrenceId, status: "running" });
     }
 
-    // ── Standard retry ────────────────────────────────────────────────────────
+    // ── Standard / force retry ────────────────────────────────────────────────
     const [occurrence] = await sql`
-      select ao.*, ae.workspace_id, ae.title, ae.free_prompt, ae.default_agent_id,
-             ae.timezone, ae.fallback_model, ae.model_override
+      select ao.id, ao.status, ao.cron_job_id, ao.rendered_prompt,
+             ao.latest_attempt_no, ao.fallback_attempted,
+             ae.workspace_id, ae.title, ae.free_prompt, ae.default_agent_id,
+             ae.fallback_model, ae.model_override, ae.session_target
       from agenda_occurrences ao
       join agenda_events ae on ae.id = ao.agenda_event_id
       where ao.id = ${occurrenceId} and ae.workspace_id = ${wid}
@@ -115,23 +109,9 @@ export async function POST(
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
 
-    // Get the Telegram chat ID for delivery
-    const sessionsPath = `${process.env.HOME || '/home/clawdbot'}/.openclaw/agents/main/sessions/sessions.json`;
-    let chatId: string | undefined;
-    try {
-      const { readFile } = await import("node:fs/promises");
-      const sessData = JSON.parse(await readFile(sessionsPath, "utf-8")) as Record<string, { deliveryContext?: { channel?: string; to?: string } }>;
-      for (const val of Object.values(sessData)) {
-        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
-          chatId = String(val.deliveryContext.to).replace(/^telegram:/, "");
-          break;
-        }
-      }
-    } catch { /* no chat ID available */ }
-
     const forceRetry = body.force === true;
-    const retryableStatuses = forceRetry ? FORCE_RETRYABLE_STATUSES : RETRYABLE_STATUSES;
-    if (!retryableStatuses.includes(occurrence.status)) {
+    const retryableStatuses: readonly string[] = forceRetry ? FORCE_RETRYABLE_STATUSES : RETRYABLE_STATUSES;
+    if (!retryableStatuses.includes(occurrence.status as string)) {
       return fail(
         occurrence.status === "succeeded"
           ? "This occurrence already executed successfully. Use Force Retry to run it again."
@@ -140,71 +120,93 @@ export async function POST(
       );
     }
 
-    // Clean up prior artifacts on force retry
-    if (forceRetry && ["succeeded", "cancelled"].includes(occurrence.status)) {
+    // Clean up prior artifacts on force retry of a completed occurrence
+    if (forceRetry && ["succeeded", "cancelled"].includes(occurrence.status as string)) {
       const [latestAttempt] = await sql`
         select id from agenda_run_attempts
         where occurrence_id = ${occurrenceId}
         order by attempt_no desc limit 1
       `;
       if (latestAttempt?.id) {
-        const artifactDir = getRunArtifactDir({ kind: "agenda", entityId: eventId, occurrenceId, runId: latestAttempt.id });
+        const artifactDir = getRunArtifactDir({
+          kind: "agenda",
+          entityId: eventId,
+          occurrenceId,
+          runId: latestAttempt.id as string,
+        });
         await cleanupRunArtifacts(artifactDir);
       }
     }
 
     const existingCronJobId = occurrence.cron_job_id as string | null;
 
+    // Model: explicit body override > event model_override > nothing
+    const overrideModel = (body.model as string | undefined) || (occurrence.model_override as string) || undefined;
+    const sessionTarget = (occurrence.session_target as string) || "isolated";
+
+    // Step 1: get or create a cron job for this retry
+    let cronJobId: string | null = existingCronJobId;
+
     if (existingCronJobId) {
-      // Re-run the existing cron job immediately
+      // Cron job exists — fire it immediately
       try {
         await runCronJobNow(existingCronJobId);
       } catch (err) {
-        console.warn(`[occurrence-retry] cron run failed for ${existingCronJobId}:`, err);
-        // If the cron job no longer exists, we'll create a new one below
-      }
-    } else {
-      // No existing cron job — create a new one-shot retry job
-      // We need the rendered prompt, which the scheduler has already stored as the cron job message.
-      // For now, build a simple re-run request. The scheduler will pick it up if cron creation fails.
-      const overrideModel = (body.model as string) || (occurrence.model_override as string) || null;
-
-      try {
-        // Use stored rendered_prompt (includes process steps) if available,
-        // otherwise fall back to free_prompt only
-        const retryMessage = (occurrence.rendered_prompt as string | null)
-          || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
-        const newCronJobId = await createRetryCronJob({
-          title: occurrence.title as string,
-          message: retryMessage,
-          agentId: (occurrence.default_agent_id as string) || "main",
-          model: overrideModel || undefined,
-          chatId,
-        });
-
-        if (newCronJobId) {
-          await sql`
-            update agenda_occurrences
-            set cron_job_id = ${newCronJobId}, fallback_attempted = false
-            where id = ${occurrenceId}
-          `;
-        }
-      } catch (err) {
-        console.warn(`[occurrence-retry] Failed to create retry cron job:`, err);
+        // Job no longer exists in gateway — create a fresh one
+        console.warn(`[occurrence-retry] runCronJobNow failed for ${existingCronJobId}, creating new job:`, (err as Error).message);
+        cronJobId = null;
       }
     }
 
-    // Reset occurrence status to queued
-    await sql`
+    if (!cronJobId) {
+      // No existing job (or it disappeared) — create a new one-shot job
+      const retryMessage = (occurrence.rendered_prompt as string | null)
+        || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
+
+      try {
+        cronJobId = await createRetryCronJob({
+          title: occurrence.title as string,
+          message: retryMessage,
+          agentId: (occurrence.default_agent_id as string) || "main",
+          model: overrideModel,
+          sessionTarget,
+        });
+      } catch (err) {
+        console.error(`[occurrence-retry] Failed to create retry cron job for ${occurrenceId}:`, err);
+        return fail(`Failed to create retry cron job: ${(err as Error).message}`, 500);
+      }
+
+      if (!cronJobId) {
+        return fail("Cron job creation returned no ID — check gateway logs.", 500);
+      }
+    }
+
+    // Step 2: atomically update the occurrence to queued with the cron job ID.
+    // Use a WHERE guard so we never overwrite a status that changed underneath us.
+    const guardStatuses: string[] = [...(forceRetry ? FORCE_RETRYABLE_STATUSES : RETRYABLE_STATUSES)];
+    const updated = await sql`
       update agenda_occurrences
-      set status = 'queued', locked_at = null,
+      set status = 'queued',
+          cron_job_id = ${cronJobId},
+          locked_at = null,
           retry_requested_at = now(),
           last_retry_reason = 'MANUAL_RETRY',
           fallback_attempted = false
       where id = ${occurrenceId}
+        and status = any(${sql.array(guardStatuses)})
+      returning id
     `;
 
-    await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: forceRetry ? "force_retry" : "retry", occurrenceId })})`;
+    if (updated.length === 0) {
+      // Status changed between our read and write — tell the client so they can refresh
+      return fail("Occurrence status changed before retry could be applied — please refresh.", 409);
+    }
+
+    await sql`select pg_notify('agenda_change', ${JSON.stringify({
+      action: forceRetry ? "force_retry" : "retry",
+      occurrenceId,
+    })})`;
+
     return ok({ occurrenceId, status: OCCURRENCE_STATUSES.QUEUED, forced: forceRetry });
   } catch (err) {
     console.error("[occurrence-retry] Error:", err);
@@ -230,10 +232,16 @@ export async function DELETE(
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
 
-    await sql`update agenda_occurrences set status = 'cancelled' where id = ${occurrenceId}`;
-    await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "dismiss" })})`;
+    await sql`
+      update agenda_occurrences
+      set status = 'cancelled'
+      where id = ${occurrenceId}
+        and status not in ('running')
+    `;
+    await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "dismiss", occurrenceId })})`;
     return ok({ occurrenceId, status: "cancelled" });
-  } catch {
+  } catch (err) {
+    console.error("[occurrence-dismiss] Error:", err);
     return fail("Failed to dismiss occurrence", 500);
   }
 }

@@ -79,6 +79,8 @@ function buildFormFromEvent(event: AgendaEventSummary): Partial<AgendaEventFormD
     startDateMode,
     endDateMode,
     modelOverride: event.modelOverride ?? "",
+    fallbackModel: (event as Record<string, unknown>).fallbackModel as string ?? "",
+    sessionTarget: ((event as Record<string, unknown>).sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main",
   };
 }
 
@@ -367,6 +369,8 @@ export function AgendaClientWrapper() {
         status: data.status,
         processVersionIds: data.processVersionIds,
         modelOverride: data.modelOverride || "",
+        fallbackModel: data.fallbackModel || "",
+        sessionTarget: data.sessionTarget || "isolated",
         timeStepMinutes: data.timeStepMinutes,
       };
 
@@ -418,6 +422,8 @@ export function AgendaClientWrapper() {
           status: data.status,
           processVersionIds: data.processVersionIds,
           modelOverride: data.modelOverride || "",
+          fallbackModel: data.fallbackModel || "",
+          sessionTarget: data.sessionTarget || "isolated",
           timeStepMinutes: data.timeStepMinutes,
         }),
       });

@@ -36,6 +36,7 @@ import {
   IconStack2,
   IconCpu,
   IconShieldCheck,
+  IconServer,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -73,6 +74,7 @@ export type AgendaEventFormData = {
   frequency: Frequency;
   executionWindowMinutes: number;
   fallbackModel: string;
+  sessionTarget: "isolated" | "main";
   timeStepMinutes?: number;
 };
 
@@ -203,6 +205,7 @@ const defaultForm: AgendaEventFormData = {
   frequency: "daily",
   executionWindowMinutes: 30,
   fallbackModel: "",
+  sessionTarget: "isolated",
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -256,6 +259,7 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
     endDateMode,
     executionWindowMinutes: data.executionWindowMinutes ?? 30,
     fallbackModel: data.fallbackModel ?? "",
+    sessionTarget: (data.sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main",
   };
 }
 
@@ -710,6 +714,46 @@ setAgendaTimeStepMinutes(safe);
         </Select>
       </div>
 
+      {/* Session Target */}
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+          <IconServer className="size-3.5 text-primary" />
+          Execution mode
+        </Label>
+        <Select
+          value={form.sessionTarget}
+          onValueChange={(v) => updateField("sessionTarget", v as "isolated" | "main")}
+        >
+          <SelectTrigger className="h-10 w-full cursor-pointer">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="isolated">
+              <div className="flex flex-col py-0.5">
+                <span className="font-medium">Isolated session</span>
+                <span className="text-xs text-muted-foreground">
+                  Runs in a fresh session every time — no history, no shared state. Recommended for most tasks.
+                </span>
+              </div>
+            </SelectItem>
+            <SelectItem value="main">
+              <div className="flex flex-col py-0.5">
+                <span className="font-medium">Main session</span>
+                <span className="text-xs text-muted-foreground">
+                  Runs in your persistent main session — has full memory and context. Use only for tasks that need continuity.
+                </span>
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        {form.sessionTarget === "main" && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1.5 mt-0.5">
+            <span className="mt-0.5">&#9888;</span>
+            <span>Main session shares context with your live chat. Avoid long-running or noisy tasks here.</span>
+          </p>
+        )}
+      </div>
+
       {/* Status — full width */}
       <div className="flex flex-col gap-1.5">
         <Label className="text-xs font-semibold text-foreground/80">Status</Label>
@@ -974,6 +1018,7 @@ setAgendaTimeStepMinutes(safe);
           <ReviewRow label="Timezone" value={form.timezone} />
           {/* executionWindowMinutes uses global default from settings */}
           {form.fallbackModel && <ReviewRow label="Fallback" value={models.find((m) => m.id === form.fallbackModel)?.alias || form.fallbackModel} />}
+          <ReviewRow label="Execution" value={form.sessionTarget === "main" ? "Main session" : "Isolated session"} />
 
           {/* Simulate section — only show if there's something to simulate */}
           {(form.freePrompt || form.processVersionIds.length > 0) && (

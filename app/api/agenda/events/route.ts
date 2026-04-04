@@ -334,6 +334,7 @@ export async function POST(request: Request) {
       const modelOverride = body.modelOverride ? String(body.modelOverride) : "";
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
       const fallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
+      const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
         ? body.processVersionIds.map(String)
         : [];
@@ -387,11 +388,11 @@ export async function POST(request: Request) {
         insert into agenda_events (
           workspace_id, title, free_prompt, default_agent_id,
           timezone, starts_at, ends_at, recurrence_rule, recurrence_until, status,
-          model_override, execution_window_minutes, fallback_model, created_by
+          model_override, execution_window_minutes, fallback_model, session_target, created_by
         ) values (
           ${wid}, ${title}, ${freePrompt}, ${agentId},
           ${timezone}, ${startsAt}, ${endsAt}, ${recurrenceRule}, ${recurrenceUntil}, ${status},
-          ${modelOverride}, ${executionWindowMinutes}, ${fallbackModel},
+          ${modelOverride}, ${executionWindowMinutes}, ${fallbackModel}, ${sessionTarget},
           ${body.createdBy ? String(body.createdBy) : null}
         )
         returning *
