@@ -99,28 +99,38 @@ function toRecurrenceRule(recurrence: AgendaEventFormData["recurrence"], weekday
 }
 
 function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
-  return events.map((e) => ({
-    id: e.id,
-    title: e.title,
-    start: e.starts_at,
-    end: e.ends_at || undefined,
-    allDay: false,
-    backgroundColor: e.status === "draft" ? "#6b7280" : "#3b82f6",
-    borderColor: e.status === "draft" ? "#6b7280" : "#2563eb",
-    extendedProps: {
-      freePrompt: e.free_prompt ?? "",
-      agentId: e.default_agent_id ?? "",
-      timezone: e.timezone,
-      recurrence: e.recurrence_rule ?? "none",
-      status: e.status,
-      processes: e.processes ?? [],
-      latestResult: e.latest_occurrence_status ?? null,
-      runStartedAt: e.run_started_at ?? null,
-      runFinishedAt: e.run_finished_at ?? null,
-      nextRuns: [],
-    },
-  }));
+  return events.map((e) => {
+    const latestResult = (e.latest_occurrence_status ?? null) as CalendarEventLatestResult;
+    // color_key from the event row (user-chosen palette) — cast from the API response
+    const colorKey = (e as unknown as Record<string, unknown>).color_key as string | undefined;
+    return {
+      id: e.id,
+      title: e.title,
+      start: e.starts_at,
+      end: e.ends_at || undefined,
+      allDay: false,
+      // backgroundColor is not used by CustomMonthAgenda (it derives color from resolveEventColor)
+      // but set it anyway for FullCalendar fallback rendering
+      backgroundColor: e.status === "draft" ? "#6b7280" : "#3b82f6",
+      borderColor: e.status === "draft" ? "#6b7280" : "#2563eb",
+      extendedProps: {
+        freePrompt: e.free_prompt ?? "",
+        agentId: e.default_agent_id ?? "",
+        timezone: e.timezone,
+        recurrence: e.recurrence_rule ?? "none",
+        status: e.status,
+        color: colorKey,
+        processes: e.processes ?? [],
+        latestResult,
+        runStartedAt: e.run_started_at ?? null,
+        runFinishedAt: e.run_finished_at ?? null,
+        nextRuns: [],
+      },
+    };
+  });
 }
+
+type CalendarEventLatestResult = "scheduled" | "running" | "succeeded" | "failed" | "needs_retry" | "queued" | null;
 
 export function useAgenda() {
   const [events, setEvents] = useState<AgendaEvent[]>([]);

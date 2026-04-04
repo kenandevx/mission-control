@@ -145,15 +145,21 @@ export async function GET(request: Request) {
 
         try {
           const eventStart = new Date(event.starts_at);
-          const eventDuration = event.ends_at
-            ? new Date(event.ends_at).getTime() - eventStart.getTime()
-            : 0;
 
           const rruleOptions = RRule.parseString(event.recurrence_rule);
           rruleOptions.dtstart = eventStart;
-          if (event.recurrence_until) {
-            rruleOptions.until = new Date(event.recurrence_until);
+
+          // For recurring events, ends_at = series end date (not per-occurrence duration).
+          // Use recurrence_until first, fall back to ends_at as the series cap.
+          const seriesEnd = event.recurrence_until
+            ? new Date(event.recurrence_until)
+            : event.ends_at
+              ? new Date(event.ends_at)
+              : null;
+          if (seriesEnd) {
+            rruleOptions.until = seriesEnd;
           }
+
           const rule = new RRule(rruleOptions);
 
           // Use buffered range for RRULE — then re-anchor each to original local time
@@ -165,14 +171,15 @@ export async function GET(request: Request) {
           for (const rawOcc of rawOccurrences) {
             const { date: occLocalDate } = extractLocalTime(rawOcc, tz);
             const correctedOcc = localTimeToUTC(occLocalDate, localTime, tz);
-            const endsAt = eventDuration
-              ? new Date(correctedOcc.getTime() + eventDuration).toISOString()
-              : event.ends_at;
             const { date: correctedDate } = extractLocalTime(correctedOcc, tz);
             expanded.push({
               ...event,
               starts_at: correctedOcc.toISOString(),
-              ends_at: endsAt,
+              // For recurring events, ends_at is the series end — not per-occurrence duration.
+              // Each occurrence has no individual end time (they run at the scheduled moment).
+              ends_at: null,
+              // Store the series end separately so the UI can display "until April 17" etc.
+              _seriesEndsAt: event.ends_at ?? null,
               _occurrenceDate: correctedDate,
               // Preserve the intended local time for display, even across DST gaps
               // (e.g. 02:08 CET doesn't exist on spring-forward day, but we still want to show "02:08")

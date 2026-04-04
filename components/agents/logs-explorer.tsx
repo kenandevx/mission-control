@@ -21,9 +21,10 @@ type LogsExplorerProps = {
   totalCount: number;
   initialNowIso: string;
   onPageChange: (next: number) => void;
+  initialFilterGroup?: "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error" | "agenda";
 };
 
-type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error";
+type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error" | "agenda";
 
 type NormalizedLog = {
   id: string;
@@ -636,9 +637,9 @@ function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso:
   );
 }
 
-export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, initialNowIso, onPageChange }: LogsExplorerProps) {
+export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, initialNowIso, onPageChange, initialFilterGroup = "all" }: LogsExplorerProps) {
   const [query, setQuery] = useState("");
-  const [group, setGroup] = useState<FilterGroup>("all");
+  const [group, setGroup] = useState<FilterGroup>(initialFilterGroup as FilterGroup);
   const [level, setLevel] = useState("all");
   const [channel, setChannel] = useState("all");
   const [agent, setAgent] = useState("all");

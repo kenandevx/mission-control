@@ -88,7 +88,8 @@ export async function GET(): Promise<Response> {
 
     for (const row of agendaRows) {
       entries.push({
-        id: `agenda-${row.id}`,
+        // Use occurrence_id as the stable key so SSE updates replace initial entries
+        id: `agenda-${row.occurrence_id || row.id}`,
         type: "agenda",
         title: row.title || "Unknown event",
         event: row.status || "change",

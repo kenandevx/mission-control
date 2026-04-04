@@ -7,7 +7,7 @@ import { LogsExplorer } from "@/components/agents/logs-explorer";
 import { LogsLiveRefresh } from "@/components/agents/logs-live-refresh";
 import { ServiceManager } from "@/components/agents/service-manager";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollTextIcon, ServerIcon } from "lucide-react";
+import { ScrollTextIcon, ServerIcon, CalendarClockIcon } from "lucide-react";
 import type { Agent, AgentLog } from "@/types/agents";
 
 type PageInfo = {
@@ -94,6 +94,10 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
               <ScrollTextIcon className="size-3.5" />
               Runtime Logs
             </TabsTrigger>
+            <TabsTrigger value="agenda" className="gap-1.5 cursor-pointer">
+              <CalendarClockIcon className="size-3.5" />
+              Agenda Logs
+            </TabsTrigger>
             <TabsTrigger value="services" className="gap-1.5 cursor-pointer">
               <ServerIcon className="size-3.5" />
               Services
@@ -109,6 +113,19 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
               totalCount={pageInfo.totalCount}
               initialNowIso={initialNowIso}
               onPageChange={onPageChange}
+            />
+          </TabsContent>
+
+          <TabsContent value="agenda" className="mt-4">
+            <LogsExplorer
+              agents={agents}
+              logs={logs}
+              page={pageInfo.page}
+              pageCount={pageInfo.pageCount}
+              totalCount={pageInfo.totalCount}
+              initialNowIso={initialNowIso}
+              onPageChange={onPageChange}
+              initialFilterGroup="agenda"
             />
           </TabsContent>
 

@@ -144,13 +144,16 @@ export async function GET(request: Request): Promise<Response> {
             if (!row) return;
 
             const entry: ActivityEntry = {
-              id: `agenda-${occurrenceId}-${Date.now()}`,
+              // Stable ID per occurrence so later status updates (succeeded/failed)
+              // replace the earlier "running" entry in the sidebar, not append
+              id: `agenda-${occurrenceId}`,
               type: "agenda",
               title: row.title || "Unknown event",
               event: action,
-              agent: row.agent_id || "main",
+              agent: String(row.agent_id || "main"),
               level: levelFromAction(action),
               timestamp: new Date().toISOString(),
+              targetUrl: `/agenda?event=${encodeURIComponent(String(row.agenda_event_id))}`,
             };
             send("activity", JSON.stringify(entry));
           } catch {
