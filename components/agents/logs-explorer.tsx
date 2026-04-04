@@ -47,6 +47,7 @@ type NormalizedLog = {
   // context refs
   agendaOccurrenceId: string;
   ticketId: string;
+  eventTitle: string;
 };
 
 const levelClasses: Record<string, string> = {
@@ -417,6 +418,7 @@ function normalizeLog(log: AgentLog): NormalizedLog {
     rawPayload,
     agendaOccurrenceId: pickString(row.agendaOccurrenceId, row.agenda_occurrence_id),
     ticketId,
+    eventTitle: pickString(row.eventTitle, row.event_title),
   };
 }
 
@@ -803,14 +805,18 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                       </TableCell>
                       <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
                       <TableCell className="text-sm font-medium">{log.agentName}</TableCell>
-                      <TableCell className="max-w-[160px]">
-                        {log.agendaOccurrenceId ? (
-                          <code className="text-[10px] font-mono text-primary/70 bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10 truncate block" title={log.agendaOccurrenceId}>
-                            occ:{log.agendaOccurrenceId.slice(0, 8)}
+                      <TableCell className="max-w-[180px]">
+                        {log.eventTitle ? (
+                          <span className="text-[12px] font-medium text-primary/80 truncate block" title={log.eventTitle}>
+                            {log.eventTitle}
+                          </span>
+                        ) : log.agendaOccurrenceId ? (
+                          <code className="text-[10px] font-mono text-muted-foreground/50 bg-muted/30 px-1.5 py-0.5 rounded border border-muted/20 truncate block" title={log.agendaOccurrenceId}>
+                            {log.agendaOccurrenceId.slice(0, 8)}
                           </code>
                         ) : log.ticketId ? (
                           <code className="text-[10px] font-mono text-amber-600/70 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10 truncate block" title={log.ticketId}>
-                            ticket:{log.ticketId.slice(0, 8)}
+                            {log.ticketId.slice(0, 8)}
                           </code>
                         ) : (
                           <span className="text-[10px] text-muted-foreground/30">—</span>

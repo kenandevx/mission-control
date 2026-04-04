@@ -51,8 +51,11 @@ export async function GET(request: Request) {
       rows = await sql`
         SELECT
           l.id, l.occurred_at, l.level, l.event_type, l.message, l.message_preview,
-          l.session_key, l.agenda_occurrence_id, l.raw_payload, l.runtime_agent_id
+          l.session_key, l.agenda_occurrence_id, l.raw_payload, l.runtime_agent_id,
+          ae.title as event_title
         FROM agent_logs l
+        LEFT JOIN agenda_occurrences ao ON ao.id = l.agenda_occurrence_id
+        LEFT JOIN agenda_events ae ON ae.id = ao.agenda_event_id
         WHERE l.type = 'agenda'
           AND l.agenda_occurrence_id = ${occurrenceId}::uuid
           ${levelFilter ? sql`AND l.level = ${levelFilter}` : sql``}
@@ -77,9 +80,11 @@ export async function GET(request: Request) {
         SELECT
           l.id, l.occurred_at, l.level, l.event_type, l.message, l.message_preview,
           l.session_key, l.agenda_occurrence_id, l.raw_payload, l.runtime_agent_id,
-          ao.scheduled_for, ao.status as occurrence_status
+          ao.scheduled_for, ao.status as occurrence_status,
+          ae.title as event_title
         FROM agent_logs l
         JOIN agenda_occurrences ao ON ao.id = l.agenda_occurrence_id
+        JOIN agenda_events ae ON ae.id = ao.agenda_event_id
         WHERE l.type = 'agenda'
           AND ao.agenda_event_id = ${eventId}::uuid
           ${levelFilter ? sql`AND l.level = ${levelFilter}` : sql``}
