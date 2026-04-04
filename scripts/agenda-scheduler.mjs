@@ -18,7 +18,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
-import { getRunArtifactDir } from "./runtime-artifacts.mjs";
+import { getOccurrenceArtifactDir } from "./runtime-artifacts.mjs";
 import { buildCleanEnv, getOpenClawHome } from "./openclaw-config.mjs";
 import {
   transitionOccurrenceToQueued,
@@ -277,11 +277,10 @@ async function renderPromptForEvent(event, occurrenceId) {
 
   // Build a stable, occurrence-scoped artifact path.
   // No random UUIDs — deterministic so the agent always writes to the same place.
-  const artifactDir = getRunArtifactDir({
-    kind: "agenda",
-    entityId: event.id,
+  // Path: runtime-artifacts/agenda/{eventId}/occurrences/{occurrenceId}/artifacts
+  const artifactDir = getOccurrenceArtifactDir({
+    eventId: event.id,
     occurrenceId: occurrenceId || "unknown",
-    runId: "artifacts",
   });
 
   return renderUnifiedTaskMessage({

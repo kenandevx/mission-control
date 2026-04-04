@@ -9,6 +9,7 @@ import {
   transitionOccurrenceToNeedsRetry,
   transitionOccurrenceToFailed,
 } from "./agenda-domain.mjs";
+import { getOccurrenceArtifactDir, scanArtifactDirRecursive } from "./runtime-artifacts.mjs";
 
 const WORKSPACE_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
 const STATE_DIR = path.join(WORKSPACE_ROOT, ".runtime", "bridge-logger");
@@ -812,16 +813,21 @@ async function handleCronRunLine(getSql, jobId, line) {
     `;
 
     if (attempt?.id) {
+      const artifactPayload = await scanRunArtifacts(occ.occurrence_id, occ.agenda_event_id);
       await sql`
         INSERT INTO agenda_run_steps
-          (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at)
+          (run_attempt_id, step_order, agent_id, input_payload, output_payload, artifact_payload, status, started_at, finished_at)
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
            ${sql.json({ output: summaryText })},
+           ${artifactPayload ? sql.json(artifactPayload) : null},
            'succeeded', ${startedAt}, ${finishedAt})
         ON CONFLICT DO NOTHING
       `;
+      if (artifactPayload?.files?.length) {
+        console.log(`[bridge-logger] cron ${jobId} → ${artifactPayload.files.length} artifact(s): ${artifactPayload.files.map(f=>f.name).join(', ')}`);
+      }
     }
 
     await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id })})`;
@@ -853,14 +859,16 @@ async function handleCronRunLine(getSql, jobId, line) {
     `;
 
     if (attempt?.id) {
+      const artifactPayloadFail = await scanRunArtifacts(occ.occurrence_id, occ.agenda_event_id);
       await sql`
         INSERT INTO agenda_run_steps
-          (run_attempt_id, step_order, agent_id, input_payload, output_payload, status,
+          (run_attempt_id, step_order, agent_id, input_payload, output_payload, artifact_payload, status,
            started_at, finished_at, error_message)
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
            ${sql.json({ output: errorText || summaryText })},
+           ${artifactPayloadFail ? sql.json(artifactPayloadFail) : null},
            'failed', ${startedAt}, ${finishedAt}, ${errorText})
         ON CONFLICT DO NOTHING
       `;
@@ -960,6 +968,28 @@ async function handleCronRunLine(getSql, jobId, line) {
   }
 }
 /** Send a Telegram alert for a failed occurrence. Reads chatId from app_settings. */
+/**
+ * Scan for files created by an agenda run and return { files } payload for artifact_payload.
+ * Scans the canonical occurrence artifact dir recursively.
+ * Returns null if no files found.
+ */
+async function scanRunArtifacts(occurrenceId, eventId) {
+  try {
+    const canonicalDir = getOccurrenceArtifactDir({ eventId, occurrenceId });
+    const files = await scanArtifactDirRecursive(canonicalDir, 3);
+    const seen = new Set();
+    const unique = files.filter(f => {
+      if (seen.has(f.name)) return false;
+      seen.add(f.name);
+      return true;
+    });
+    return unique.length > 0 ? { files: unique } : null;
+  } catch (err) {
+    console.warn('[bridge-logger] scanRunArtifacts error (non-fatal):', err?.message);
+    return null;
+  }
+}
+
 /**
  * Inject a short system event into the main OpenClaw session to notify
  * the main agent that an agenda task finished.

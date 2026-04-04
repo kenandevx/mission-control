@@ -39,6 +39,57 @@ export function getRunArtifactDirPath(params) {
 }
 
 /**
+ * Canonical artifact directory for an agenda occurrence.
+ * The agent is told to write output files here.
+ * bridge-logger scans this dir (plus any subdirs) after run completion.
+ * Path: runtime-artifacts/agenda/{eventId}/occurrences/{occurrenceId}/artifacts
+ */
+export function getOccurrenceArtifactDir({ eventId, occurrenceId }) {
+  return resolve(ROOT, "agenda", safe(eventId), "occurrences", safe(occurrenceId), "artifacts");
+}
+
+/**
+ * Scan all files recursively under a directory (up to 2 levels deep).
+ * Used to find files the agent created anywhere under the occurrence dir.
+ */
+export async function scanArtifactDirRecursive(dir, maxDepth = 2) {
+  const files = [];
+  async function walk(d, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try { entries = await readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await walk(resolve(d, entry.name), depth + 1);
+      } else if (entry.isFile()) {
+        const filePath = resolve(d, entry.name);
+        const fstat = await stat(filePath).catch(() => null);
+        if (!fstat) continue;
+        const ext = extname(entry.name).toLowerCase().slice(1);
+        const mimeMap = {
+          md: "text/markdown", txt: "text/plain", csv: "text/csv", json: "application/json",
+          pdf: "application/pdf", html: "text/html", xml: "text/xml", yaml: "text/yaml", yml: "text/yaml",
+          png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+          svg: "image/svg+xml", ico: "image/x-icon",
+          zip: "application/zip", tar: "application/x-tar", gz: "application/gzip",
+          js: "text/javascript", ts: "text/typescript", py: "text/x-python", sh: "text/x-shellscript",
+          doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        };
+        files.push({
+          name: entry.name,
+          mimeType: mimeMap[ext] || "application/octet-stream",
+          size: fstat.size,
+          path: filePath,
+        });
+      }
+    }
+  }
+  await walk(dir, 0);
+  return files;
+}
+
+/**
  * Scan an artifact directory for files the agent created.
  * Returns an array of { name, mimeType, size, path } for each file found.
  */

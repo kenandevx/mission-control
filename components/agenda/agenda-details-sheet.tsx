@@ -54,6 +54,7 @@ import {
   IconPencil,
   IconTrendingUp,
   IconDownload,
+  IconEye,
   IconPhoto,
   IconFile,
   IconLock,
@@ -387,8 +388,20 @@ function formatBytes(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function fileIcon(mimeType: string | undefined) {
+  if (!mimeType) return <IconFile className="size-5 text-primary" />;
+  if (mimeType.startsWith("image/")) return <IconPhoto className="size-5 text-primary" />;
+  if (mimeType === "application/pdf") return <span className="text-[11px] font-bold text-primary">PDF</span>;
+  if (mimeType.startsWith("text/")) return <span className="text-[11px] font-bold text-primary">TXT</span>;
+  return <IconFile className="size-5 text-primary" />;
+}
+
 function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[] }) {
   if (!files || files.length === 0) return null;
+
+  const previewable = files.filter(
+    (f) => f.mimeType?.startsWith("image/") || f.mimeType === "application/pdf"
+  );
 
   return (
     <div className="flex flex-col gap-2 mt-3">
@@ -396,9 +409,12 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
         <IconFile className="size-3 text-primary" />
         Artifacts ({files.length})
       </p>
+
+      {/* File list */}
       <div className="grid grid-cols-1 gap-2">
         {files.map((file) => {
           const isImage = file.mimeType?.startsWith("image/");
+          const isPdf = file.mimeType === "application/pdf";
           const downloadUrl = `/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`;
 
           return (
@@ -407,11 +423,7 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
               className="flex items-center gap-3 rounded-lg border bg-muted/20 p-3 transition-colors hover:bg-muted/40"
             >
               <div className="flex items-center justify-center size-10 rounded-lg bg-primary/10 shrink-0">
-                {isImage ? (
-                  <IconPhoto className="size-5 text-primary" />
-                ) : (
-                  <IconFile className="size-5 text-primary" />
-                )}
+                {fileIcon(file.mimeType)}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{file.name}</p>
@@ -419,32 +431,61 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
                   {file.mimeType} · {formatBytes(file.size)}
                 </p>
               </div>
-              <a
-                href={downloadUrl}
-                download={file.name}
-                className="shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs cursor-pointer">
-                  <IconDownload className="size-3" />
-                  Download
-                </Button>
-              </a>
+              <div className="flex items-center gap-2 shrink-0">
+                {(isImage || isPdf) && (
+                  <a
+                    href={downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Button size="sm" variant="ghost" className="gap-1.5 h-8 text-xs cursor-pointer">
+                      <IconEye className="size-3" />
+                      View
+                    </Button>
+                  </a>
+                )}
+                <a
+                  href={downloadUrl}
+                  download={file.name}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs cursor-pointer">
+                    <IconDownload className="size-3" />
+                    Download
+                  </Button>
+                </a>
+              </div>
             </div>
           );
         })}
       </div>
 
-      {/* Inline image preview for image artifacts */}
-      {files.filter((f) => f.mimeType?.startsWith("image/")).map((file) => (
-        <div key={`preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
-          <img
-            src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
-            alt={file.name}
-            className="max-h-[300px] w-full object-contain"
-          />
+      {/* Inline previews */}
+      {previewable.length > 0 && (
+        <div className="flex flex-col gap-2 mt-1">
+          {files.filter((f) => f.mimeType?.startsWith("image/")).map((file) => (
+            <div key={`preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
+              <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1 font-medium">{file.name}</p>
+              <img
+                src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
+                alt={file.name}
+                className="max-h-[300px] w-full object-contain"
+              />
+            </div>
+          ))}
+          {files.filter((f) => f.mimeType === "application/pdf").map((file) => (
+            <div key={`pdf-preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
+              <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1 font-medium">{file.name}</p>
+              <iframe
+                src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
+                className="w-full h-[420px]"
+                title={file.name}
+              />
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
