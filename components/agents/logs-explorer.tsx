@@ -22,6 +22,7 @@ type LogsExplorerProps = {
   initialNowIso: string;
   onPageChange: (next: number) => void;
   initialFilterGroup?: "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error" | "agenda";
+  title?: string;
 };
 
 type FilterGroup = "all" | "chat" | "tool" | "memory" | "system" | "worker" | "error" | "agenda";
@@ -43,6 +44,9 @@ type NormalizedLog = {
   sourceMessageId: string;
   memorySource: string;
   rawPayload: unknown;
+  // context refs
+  agendaOccurrenceId: string;
+  ticketId: string;
 };
 
 const levelClasses: Record<string, string> = {
@@ -385,6 +389,15 @@ function normalizeLog(log: AgentLog): NormalizedLog {
   const direction = typeof directionRaw === "string" ? directionRaw.toLowerCase() : "internal";
   const channelType = typeof channelRaw === "string" ? channelRaw.toLowerCase() : "internal";
 
+  // Extract ticket ID from rawPayload for task.event logs
+  const payload = rawPayload && typeof rawPayload === "object" ? rawPayload as Record<string, unknown> : null;
+  const ticketId = pickString(
+    payload?.ticketId,
+    payload?.ticket_id,
+    row.ticketId,
+    row.ticket_id,
+  );
+
   return {
     id: pickString(row.id) || `${Date.now()}-${Math.random()}`,
     agentId: pickString(row.agentId, row.agent_id, row.runtime_agent_id, row.runtimeAgentId, "unknown"),
@@ -402,6 +415,8 @@ function normalizeLog(log: AgentLog): NormalizedLog {
     sourceMessageId: pickString(row.sourceMessageId, row.source_message_id),
     memorySource: pickString(row.memorySource, row.memory_source),
     rawPayload,
+    agendaOccurrenceId: pickString(row.agendaOccurrenceId, row.agenda_occurrence_id),
+    ticketId,
   };
 }
 
@@ -637,7 +652,7 @@ function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso:
   );
 }
 
-export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, initialNowIso, onPageChange, initialFilterGroup = "all" }: LogsExplorerProps) {
+export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCount, initialNowIso, onPageChange, initialFilterGroup = "all", title }: LogsExplorerProps) {
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<FilterGroup>(initialFilterGroup as FilterGroup);
   const [level, setLevel] = useState("all");
@@ -692,7 +707,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
     <div className="grid gap-4 h-full">
       <Card className="h-full">
         <CardHeader>
-          <CardTitle>Runtime Logs</CardTitle>
+          <CardTitle>{title ?? (initialFilterGroup === "agenda" ? "Agenda Logs" : "Runtime Logs")}</CardTitle>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[260px] flex-1">
@@ -756,6 +771,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                   <TableHead>Event</TableHead>
                   <TableHead>Channel</TableHead>
                   <TableHead>Agent</TableHead>
+                  <TableHead>Reference</TableHead>
                   <TableHead>Preview</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -763,7 +779,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-16">
+                    <TableCell colSpan={8} className="text-center py-16">
                       <div className="flex flex-col items-center gap-2">
                         <span className="text-3xl">📭</span>
                         <span className="text-sm text-muted-foreground font-medium">No logs match your filters</span>
@@ -787,7 +803,20 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                       </TableCell>
                       <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
                       <TableCell className="text-sm font-medium">{log.agentName}</TableCell>
-                      <TableCell className="max-w-[520px]">
+                      <TableCell className="max-w-[160px]">
+                        {log.agendaOccurrenceId ? (
+                          <code className="text-[10px] font-mono text-primary/70 bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10 truncate block" title={log.agendaOccurrenceId}>
+                            occ:{log.agendaOccurrenceId.slice(0, 8)}
+                          </code>
+                        ) : log.ticketId ? (
+                          <code className="text-[10px] font-mono text-amber-600/70 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10 truncate block" title={log.ticketId}>
+                            ticket:{log.ticketId.slice(0, 8)}
+                          </code>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground/30">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[480px]">
                         <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-2">{log.messagePreview}</p>
                       </TableCell>
                       <TableCell className="text-right"><LogDetails log={log} initialNowIso={initialNowIso} /></TableCell>
