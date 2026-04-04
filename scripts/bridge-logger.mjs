@@ -845,6 +845,8 @@ async function handleCronRunLine(getSql, jobId, line) {
       rawPayload: { cronJobId: jobId, attemptNo, durationMs: run.durationMs, summary: summaryText, model: run.model || null },
     });
     console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} succeeded (attempt ${attemptNo})`);
+    // Clean up the cron job from the gateway — output is in DB, no longer needed.
+    deleteCronJobSilently(jobId).catch(() => {});
 
   } else {
     // ── Failure path ──────────────────────────────────────────────────────────
@@ -917,6 +919,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, fallbackModel, error: errorText.slice(0, 400) },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
+      deleteCronJobSilently(jobId).catch(() => {});
     } else if (occ.fallback_attempted) {
       // Fallback also failed — this is a terminal failure. Mark as 'failed' (not retryable
       // without a manual Force Retry). Alert the user.
@@ -940,6 +943,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
       }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
+      deleteCronJobSilently(jobId).catch(() => {});
     } else {
       // Retries exhausted, no fallback configured (or fallback not yet attempted via scheduler).
       // Mark needs_retry — user can manually retry or the fallback signal will kick in.
@@ -959,6 +963,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
+      deleteCronJobSilently(jobId).catch(() => {});
       notifyMainSession(occ.session_target || 'isolated', {
         title: occ.title, status: 'needs_retry', summary: errorText.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
@@ -967,7 +972,23 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
   }
 }
-/** Send a Telegram alert for a failed occurrence. Reads chatId from app_settings. */
+/**
+ * Delete a completed cron job from the gateway — silently, best-effort.
+ * Called after every run (success or failure) is synced to DB so the gateway
+ * stays clean. If --delete-after-run was already set this is a no-op (job gone).
+ */
+async function deleteCronJobSilently(jobId) {
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    await execFileAsync("openclaw", ["cron", "rm", jobId], { timeout: 10000 });
+    console.log(`[bridge-logger] cron ${jobId} deleted after run sync`);
+  } catch {
+    // Already deleted (--delete-after-run), or gateway unavailable — both fine.
+  }
+}
+
 /**
  * Scan for files created by an agenda run and return { files } payload for artifact_payload.
  * Scans the canonical occurrence artifact dir recursively.
