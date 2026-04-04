@@ -14,7 +14,8 @@
  */
 import postgres from "postgres";
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import fs from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
@@ -27,6 +28,29 @@ import {
 } from "./agenda-domain.mjs";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Returns the number of lines in the agent:main:main session file at the
+ * moment of calling. This is the injection boundary — bridge-logger uses it
+ * to scope output resolution to only the lines written during this task,
+ * preventing cross-task contamination in the shared main session.
+ * Returns null if the session file cannot be resolved or read.
+ */
+async function getMainSessionLineOffset() {
+  try {
+    const sessionsFile = path.join(getOpenClawHome(), "agents", "main", "sessions", "sessions.json");
+    const raw = fs.readFileSync(sessionsFile, "utf8");
+    const sessions = JSON.parse(raw);
+    const mainEntry = sessions["agent:main:main"];
+    if (!mainEntry?.sessionFile) return null;
+    const stat = fs.statSync(mainEntry.sessionFile);
+    const content = fs.readFileSync(mainEntry.sessionFile, "utf8");
+    const lineCount = content.split("\n").filter((l) => l.trim()).length;
+    return lineCount;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Emit a structured agenda lifecycle log to agent_logs.
@@ -540,6 +564,23 @@ async function runCycle() {
           console.warn(`[agenda-scheduler] Catch-up: occurrence ${occ.id} was scheduled ${hoursAgo}h ago — firing immediately`);
         }
 
+        // ── Session injection boundary (main session only) ───────────────────────
+        // Capture the session file's line count immediately before the cron job
+        // fires. Bridge-logger reads from this offset onwards so it only sees
+        // output from this specific task, not earlier messages in the shared
+        // agent:main:main session file. Isolated sessions have their own files
+        // so no injection boundary is needed.
+        const sessionTarget = event.session_target || "isolated";
+        if (sessionTarget === "main") {
+          const lineOffset = await getMainSessionLineOffset();
+          if (lineOffset !== null) {
+            await sql`UPDATE agenda_occurrences SET session_line_offset = ${lineOffset} WHERE id = ${occ.id}`;
+            console.log(`[agenda-scheduler] main-session line offset captured: occurrence ${occ.id} @ line ${lineOffset}`);
+          } else {
+            console.warn(`[agenda-scheduler] could not capture main-session line offset for occurrence ${occ.id} — output resolution will fall back to full-session scan`);
+          }
+        }
+
         // Create the cron job — session target from event config (default: isolated)
         const cronJobId = await createCronJob({
           title: event.title,
@@ -547,7 +588,7 @@ async function runCycle() {
           agentId: event.default_agent_id || "main",
           model: event.model_override || null,
           scheduledFor,
-          sessionTarget: event.session_target || "isolated",
+          sessionTarget,
           timeoutSeconds: null,
         });
 

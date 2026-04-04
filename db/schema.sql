@@ -497,3 +497,10 @@ END $$;
 -- v4.1: agenda correlation in agent_logs — enables agenda-specific log filtering
 ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS agenda_occurrence_id UUID;
 CREATE INDEX IF NOT EXISTS idx_agent_logs_occurrence ON agent_logs(agenda_occurrence_id) WHERE agenda_occurrence_id IS NOT NULL;
+
+-- v4.2: session-line-offset for main-session task output isolation
+-- Records the session file line count at the moment a main-session task is
+-- scheduled. Bridge-logger uses this to scope output resolution to only
+-- the lines written during this specific task, preventing cross-task
+-- contamination in shared main sessions.
+ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS session_line_offset BIGINT;

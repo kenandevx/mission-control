@@ -655,7 +655,7 @@ async function resolveSessionFile(sessionTarget, sessionId) {
  *
  * Returns the text content of the last assistant turn, or null if unreadable.
  */
-async function readLastAssistantFromSession(sessionTarget, sessionId) {
+async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset = null) {
   if (!sessionTarget) return null;
   const sessionFilePath = await resolveSessionFile(sessionTarget, sessionId);
   if (!sessionFilePath) {
@@ -665,8 +665,18 @@ async function readLastAssistantFromSession(sessionTarget, sessionId) {
   try {
     const raw = fs.readFileSync(sessionFilePath, 'utf8');
     const lines = raw.split('\n').filter(Boolean);
-    // Find the last assistant message (scan backwards for efficiency)
-    for (let i = lines.length - 1; i >= 0; i--) {
+    // Determine the starting index for the scan.
+    // fromLineOffset is the line count BEFORE the task was injected, so we start
+    // from that index (1-indexed offset → 0-indexed array access).
+    // Lines before this index belong to earlier tasks and must not be considered.
+    const startIdx = fromLineOffset != null ? Math.max(0, fromLineOffset) : 0;
+    if (startIdx >= lines.length) {
+      console.log(`[bridge-logger] readLastAssistantFromSession: fromLineOffset=${fromLineOffset} >= total lines=${lines.length} in ${path.basename(sessionFilePath)} — nothing to scan`);
+      return null;
+    }
+    // Scan from the last line backwards to find the most recent assistant message
+    // that belongs to this task's injection window.
+    for (let i = lines.length - 1; i >= startIdx; i--) {
       try {
         const parsed = JSON.parse(lines[i]);
         const role = parsed?.role ?? parsed?.message?.role ?? '';
@@ -674,12 +684,12 @@ async function readLastAssistantFromSession(sessionTarget, sessionId) {
         const content = parsed?.content ?? parsed?.message?.content ?? '';
         const text = extractContentText(content);
         if (text.trim()) {
-          console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)}`);
+          console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)} at line ${i} (SessionLineOffset=${fromLineOffset})`);
           return text.trim().slice(0, 8000);
         }
       } catch { continue; }
     }
-    console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} (${lines.length} lines)`);
+    console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} after line ${fromLineOffset} (total lines=${lines.length})`);
   } catch (err) {
     console.log(`[bridge-logger] readLastAssistantFromSession: session file error: ${err.message}`);
   }
@@ -757,13 +767,14 @@ async function readBestArtifactText(eventId, occurrenceId, maxChars = 8000) {
   return null;
 }
 
-async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurrenceId, renderedPrompt, summaryText }) {
+async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurrenceId, renderedPrompt, summaryText, fromLineOffset = null }) {
   const result = {
     output: String(summaryText || ''),
     outputSource: 'cron_summary',
     outputMeta: {
       sessionTarget: sessionTarget || null,
       sessionId: sessionId || null,
+      sessionLineOffset: fromLineOffset,
       promptEchoDetected: false,
       sessionOutputUsed: false,
       artifactUsed: false,
@@ -774,7 +785,9 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
   };
 
   if (sessionTarget === 'main') {
-    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId);
+    // Pass fromLineOffset so only messages written after the task was injected
+    // are considered. This prevents earlier tasks' output from contaminating this result.
+    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset);
     if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
       result.output = sessionOutput;
       result.outputSource = 'main_session_assistant';
@@ -783,6 +796,11 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
     }
     if (sessionOutput) {
       result.outputMeta.promptEchoDetected = true;
+    } else if (fromLineOffset == null) {
+      // No offset recorded AND no session output found — likely a pre-fix occurrence.
+      // Log a warning but still fall back to artifact/summary rather than silently
+      // returning the wrong output from an unrelated task.
+      console.warn(`[bridge-logger] resolveAgendaOutput: no session output and no fromLineOffset for occurrence ${occurrenceId} — falling back (backward-compat; this may indicate a pre-fix occurrence)`);
     }
   }
 
@@ -922,6 +940,7 @@ async function handleCronRunLine(getSql, jobId, line) {
   const occurrences = await sql`
     SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
            ao.fallback_attempted, ao.rendered_prompt, ao.status, ao.scheduled_for,
+           ao.session_line_offset,
            ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes, ae.session_target
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
@@ -1034,6 +1053,8 @@ async function handleCronRunLine(getSql, jobId, line) {
   // For main session runs, read the actual agent output from the session JSONL.
   // run.summary is the rendered prompt (input), not the agent's response.
   // The cron run JSON has no sessionId field, so we resolve the session file via sessions.json.
+  // session_line_offset scopes the scan to only lines written during this task, preventing
+  // cross-task contamination in the shared agent:main:main session file.
   const outputResolution = await resolveAgendaOutput({
     sessionTarget: occ.session_target,
     sessionId: run.sessionId || null,
@@ -1041,6 +1062,7 @@ async function handleCronRunLine(getSql, jobId, line) {
     occurrenceId: occ.occurrence_id,
     renderedPrompt: occ.rendered_prompt,
     summaryText,
+    fromLineOffset: occ.session_line_offset ?? null,
   });
   const agentOutput = outputResolution.output;
   console.log(`[bridge-logger] cron ${jobId} → output source=${outputResolution.outputSource} (${agentOutput.length} chars)`);
