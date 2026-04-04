@@ -548,13 +548,14 @@ export function FileManagerClient(): React.JSX.Element {
   const [dirSizeInfo, setDirSizeInfo] = useState<DirSizeInfo | null>(null);
   const [dirSizeLoading, setDirSizeLoading] = useState(false);
 
-  // View mode state
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("fm-view-mode") as ViewMode) || "grid";
-    }
-    return "list";
-  });
+  // View mode state — initialize as null (SSR-safe), read from localStorage after mount
+  const [viewMode, setViewMode] = useState<ViewMode | null>(null);
+
+  // Hydrate from localStorage only after mount to avoid hydration mismatch
+  useEffect(() => {
+    const saved = localStorage.getItem("fm-view-mode") as ViewMode | null;
+    setViewMode(saved || "grid");
+  }, []);
 
 
 
@@ -1259,9 +1260,9 @@ export function FileManagerClient(): React.JSX.Element {
             size="icon"
             className="h-8 w-8"
             onClick={toggleViewMode}
-            title={viewMode === "list" ? "Switch to grid view" : "Switch to list view"}
+            title={(viewMode ?? "grid") === "list" ? "Switch to grid view" : "Switch to list view"}
           >
-            {viewMode === "list" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
+            {(viewMode ?? "grid") === "list" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openCreateDialog("folder")} title="New Folder">
             <FolderPlus className="h-4 w-4" />
