@@ -20,6 +20,11 @@ import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
 import { getRunArtifactDir } from "./runtime-artifacts.mjs";
 import { buildCleanEnv, getOpenClawHome } from "./openclaw-config.mjs";
+import {
+  transitionOccurrenceToQueued,
+  transitionOccurrenceToNeedsRetry,
+  transitionStaleRunningToNeedsRetry,
+} from "./agenda-domain.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -294,28 +299,28 @@ async function runCycle() {
 
         if (!cronJobId) {
           console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id} — marking needs_retry`);
+          await transitionOccurrenceToNeedsRetry(sql, {
+            occurrenceId: occ.id,
+            reasonCode: "PROVIDER_REJECTED",
+            reasonText: "Cron job creation failed — check gateway logs",
+          });
           await sql`
-            UPDATE agenda_occurrences
-            SET status = 'needs_retry',
-                last_retry_reason = 'Cron job creation failed — check gateway logs'
-            WHERE id = ${occ.id} AND status = 'scheduled'
-          `;
-          await sql`INSERT INTO agenda_run_attempts
-            (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
-            VALUES (${occ.id}, 1, 'failed', now(), now(),
-              'Failed to create cron job', 'Cron job creation failed — check gateway logs')
+            INSERT INTO agenda_run_attempts
+              (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+            VALUES
+              (${occ.id}, 1, 'failed', now(), now(),
+               'Failed to create cron job', 'Cron job creation failed — check gateway logs')
             ON CONFLICT DO NOTHING
           `;
-          await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.id })})`;
+          await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.id })})`;
           continue;
         }
 
-        // Update occurrence with cron job ID and mark queued
-        await sql`
-          UPDATE agenda_occurrences
-          SET status = 'queued', cron_job_id = ${cronJobId}, queued_at = now()
-          WHERE id = ${occ.id} AND status = 'scheduled'
-        `;
+        // Atomically mark queued with the cron job ID
+        await transitionOccurrenceToQueued(sql, {
+          occurrenceId: occ.id,
+          cronJobId,
+        });
 
         scheduled++;
         console.log(`[agenda-scheduler] Scheduled occurrence ${occ.id} → cron job ${cronJobId}`);
@@ -323,6 +328,26 @@ async function runCycle() {
     } catch (err) {
       console.error(`[agenda-scheduler] Event processing failed for event=${event.id}:`, err.message);
     }
+  }
+
+  // ── Stale-running sweep ───────────────────────────────────────────────────────────────
+  // Occurrences stuck in 'running' past their event’s execution_window_minutes are
+  // timed out and sent to needs_retry so the user can investigate.
+  // Per-event window is respected — a 2-hour report task won’t be killed at 15 min.
+  try {
+    const stale = await transitionStaleRunningToNeedsRetry(sql, {
+      reason: "WORKER_STALLED: execution exceeded event window — check agent logs",
+      defaultMinutes: 60,
+    });
+    if (stale.length > 0) {
+      for (const row of stale) {
+        const windowLabel = row.execution_window_minutes ? `${row.execution_window_minutes}min` : "60min (default)";
+        console.warn(`[agenda-scheduler] Stale occurrence ${row.id} ("${row.title}") exceeded ${windowLabel} window → needs_retry`);
+        await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: row.id })})`;
+      }
+    }
+  } catch (err) {
+    console.warn("[agenda-scheduler] Stale-running sweep failed (non-fatal):", err.message);
   }
 
   console.log(`[agenda-scheduler] Cycle complete — ${events.length} events, ${scheduled} new cron jobs created`);
@@ -415,12 +440,11 @@ try {
     }
 
     if (cronJobId) {
-      await sql`
-        UPDATE agenda_occurrences
-        SET cron_job_id = ${cronJobId}, status = 'queued',
-            locked_at = null, last_retry_reason = ${'FALLBACK_RETRY: retrying with fallback model'}
-        WHERE id = ${occurrenceId} AND status = 'needs_retry'
-      `;
+      await transitionOccurrenceToQueued(sql, {
+        occurrenceId,
+        cronJobId,
+        reasonText: `FALLBACK_RETRY: retrying with fallback model ${fallbackModel}`,
+      });
       await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'queued', occurrenceId })})`;
       console.log(`[agenda-scheduler] Fallback cron job created for occurrence ${occurrenceId} with model ${fallbackModel}`);
     }
