@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   IconSun,
   IconMoon,
@@ -18,6 +18,8 @@ import {
   IconCloudDownload,
   IconShieldBolt,
   IconSettings,
+  IconCode,
+  IconFlask,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,7 +66,19 @@ const themeOptions: ThemeOption[] = [
   { value: "system", label: "System", icon: IconDeviceDesktop },
 ];
 
-type SectionKey = "appearance" | "general" | "notifications" | "agenda" | "updates" | "danger";
+const DEV_MODE_KEY = "mc-dev-mode";
+
+function getDevMode() {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(DEV_MODE_KEY) === "1";
+}
+function setDevMode(enabled: boolean) {
+  if (enabled) localStorage.setItem(DEV_MODE_KEY, "1");
+  else localStorage.removeItem(DEV_MODE_KEY);
+  window.dispatchEvent(new Event("mc-dev-mode-changed"));
+}
+
+type SectionKey = "appearance" | "general" | "notifications" | "agenda" | "updates" | "developer" | "danger";
 
 const BASE_NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "appearance", label: "Appearance", icon: IconPalette },
@@ -72,6 +86,7 @@ const BASE_NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentTyp
   { key: "notifications", label: "Notifications", icon: IconBell },
   { key: "agenda", label: "Agenda", icon: IconCalendarCog },
   { key: "updates", label: "Updates", icon: IconCloudDownload },
+  { key: "developer", label: "Developer", icon: IconCode },
   { key: "danger", label: "Danger Zone", icon: IconShieldBolt },
 ];
 
@@ -136,6 +151,16 @@ export function SettingsPageClient(): React.ReactNode {
   // Notification settings
   const [notifEnabled, setNotifEnabled] = useState(true);
   const [notifSound, setNotifSound] = useState(true);
+
+  // Developer mode — synced from localStorage
+  const devModeEnabled = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("mc-dev-mode-changed", cb);
+      return () => window.removeEventListener("mc-dev-mode-changed", cb);
+    },
+    () => getDevMode(),
+    () => false,
+  );
 
   // Agenda settings
   // agendaConcurrency and defaultExecWindow removed in v2 — cron handles these natively
@@ -665,12 +690,64 @@ export function SettingsPageClient(): React.ReactNode {
   // ── Section map ────────────────────────────────────────────────────────────
 
   
+  // ── Developer section ─────────────────────────────────────────────────────
+
+  const renderDeveloper = (): React.ReactNode => (
+    <section>
+      <SectionHeading
+        title="Developer"
+        description="Tools for testing and debugging Mission Control."
+      />
+      <div className="rounded-xl border bg-card divide-y divide-border/60">
+        <SettingRow
+          label="Developer mode"
+          description="Enables test panels on the Agenda and Boards pages. Stored in localStorage — toggle off to return to normal view."
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={devModeEnabled}
+            onClick={() => {
+              setDevMode(!devModeEnabled);
+              toast(devModeEnabled ? "Developer mode disabled" : "Developer mode enabled", {
+                description: devModeEnabled
+                  ? "Test panels are now hidden."
+                  : "Test panels are now visible on Agenda and Boards.",
+              });
+            }}
+            className={[
+              "relative inline-flex h-6 w-11 cursor-pointer items-center rounded-full transition-colors",
+              devModeEnabled ? "bg-primary" : "bg-input",
+            ].join(" ")}
+          >
+            <span
+              className={[
+                "inline-block size-4 rounded-full bg-white shadow-sm transition-transform",
+                devModeEnabled ? "translate-x-6" : "translate-x-1",
+              ].join(" ")}
+            />
+          </button>
+        </SettingRow>
+        {devModeEnabled && (
+          <div className="px-5 py-4 flex items-start gap-3 bg-primary/5 rounded-b-xl">
+            <IconFlask className="size-4 text-primary mt-0.5 shrink-0" />
+            <p className="text-[13px] text-muted-foreground leading-relaxed">
+              <span className="font-semibold text-foreground">Developer mode is active.</span>{" "}
+              Test panels are visible on the <strong>Agenda</strong> and <strong>Boards</strong> pages.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   const sections: Record<SectionKey, () => React.ReactNode> = {
     appearance: renderAppearance,
     general: renderGeneral,
     notifications: renderNotifications,
     agenda: renderAgenda,
     updates: renderUpdates,
+    developer: renderDeveloper,
     danger: renderDanger,
   };
 

@@ -870,6 +870,7 @@ async function handleCronRunLine(getSql, jobId, line) {
     notifyMainSession(occ.session_target || 'isolated', {
       title: occ.title, status: 'succeeded', summary: summaryText,
       occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+      sessionId: run.sessionId || null,
     }).catch(() => {});
     await emitAgendaLog(sql, {
       workspaceId: wid, agentDbId,
@@ -976,6 +977,7 @@ async function handleCronRunLine(getSql, jobId, line) {
       notifyMainSession(occ.session_target || 'isolated', {
         title: occ.title, status: 'failed', summary: errorText.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+        sessionId: run.sessionId || null,
       }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
@@ -1002,6 +1004,7 @@ async function handleCronRunLine(getSql, jobId, line) {
       notifyMainSession(occ.session_target || 'isolated', {
         title: occ.title, status: 'needs_retry', summary: errorText.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+        sessionId: run.sessionId || null,
       }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
     }
@@ -1052,7 +1055,7 @@ async function scanRunArtifacts(occurrenceId, eventId) {
  * Only fires for isolated sessions — main session runs already land in chat.
  * Non-fatal.
  */
-async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId }) {
+async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId, sessionId }) {
   // For isolated runs: inject a system event into the main session so the user
   // sees the result in chat. For main session runs: the agent runs inside the
   // main session but the output doesn't auto-deliver back to Telegram — we need
@@ -1081,7 +1084,33 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
         }
       } catch { /* no sessions file yet */ }
       if (chatId) {
-        const text = `${statusEmoji} Agenda task "${title}" ${statusLabel}${snippet}`;
+        // For main-session runs the cron `summary` field is the rendered prompt
+        // (the input), not the agent output. Read the actual last assistant reply
+        // from the main session JSONL instead.
+        let actualOutput = snippet; // fallback to summary snippet
+        if (sessionId) {
+          try {
+            const sessionFilePath = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', `${sessionId}.jsonl`);
+            const raw = fs.readFileSync(sessionFilePath, 'utf8');
+            const lines = raw.split('\n').filter(Boolean);
+            // Find the last assistant message
+            for (let i = lines.length - 1; i >= 0; i--) {
+              try {
+                const parsed = JSON.parse(lines[i]);
+                const role = parsed?.role ?? parsed?.message?.role ?? '';
+                if (role !== 'assistant') continue;
+                const content = parsed?.content ?? parsed?.message?.content ?? '';
+                const text = typeof content === 'string' ? content
+                  : Array.isArray(content) ? content.map(c => typeof c === 'string' ? c : c?.text ?? '').join('') : '';
+                if (text.trim()) {
+                  actualOutput = `\n\n${text.trim().slice(0, 600)}${text.length > 600 ? '\u2026' : ''}`;
+                  break;
+                }
+              } catch { continue; }
+            }
+          } catch { /* session file unreadable — use summary fallback */ }
+        }
+        const text = `${statusEmoji} Agenda task "${title}" ${statusLabel}${actualOutput}`;
         await execFileAsync('openclaw', [
           'message', 'send',
           '--channel', 'telegram',
