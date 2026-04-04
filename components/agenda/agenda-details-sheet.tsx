@@ -319,17 +319,27 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
     </p>
   );
 
-  const levelColor: Record<string, string> = {
-    info: "text-blue-500",
-    warn: "text-amber-500",
-    error: "text-red-500",
-  };
   const eventLabel: Record<string, string> = {
-    "agenda.started": "▶ Started",
-    "agenda.output_captured": "📥 Output captured",
-    "agenda.succeeded": "✅ Succeeded",
-    "agenda.failed": "❌ Failed",
-    "agenda.fallback": "⚠️ Fallback queued",
+    "agenda.created": "Created",
+    "agenda.queued": "Queued",
+    "agenda.started": "Running",
+    "agenda.output_captured": "Output captured",
+    "agenda.succeeded": "Succeeded",
+    "agenda.failed": "Failed",
+    "agenda.fallback": "Fallback queued",
+    "agenda.skipped": "Skipped",
+    "agenda.cancelled": "Cancelled",
+  };
+  const eventTone: Record<string, string> = {
+    "agenda.created": "text-muted-foreground",
+    "agenda.queued": "text-muted-foreground",
+    "agenda.started": "text-blue-600 dark:text-blue-400",
+    "agenda.output_captured": "text-muted-foreground",
+    "agenda.succeeded": "text-emerald-600 dark:text-emerald-400",
+    "agenda.failed": "text-red-600 dark:text-red-400",
+    "agenda.fallback": "text-amber-600 dark:text-amber-400",
+    "agenda.skipped": "text-slate-500 dark:text-slate-400",
+    "agenda.cancelled": "text-muted-foreground",
   };
 
   return (
@@ -337,8 +347,8 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
       {logs.map((log) => (
         <div key={log.id} className="rounded-md border bg-card p-3 text-xs">
           <div className="flex items-center justify-between gap-2 mb-1">
-            <span className={`font-semibold ${levelColor[log.level] ?? 'text-foreground'}`}>
-              {eventLabel[log.event_type] ?? log.event_type}
+            <span className={`font-semibold ${eventTone[log.event_type] ?? 'text-foreground'}`}>
+              {eventLabel[log.event_type] ?? log.event_type.replace(/^agenda\./, '').replaceAll('_', ' ')}
             </span>
             <span className="text-muted-foreground text-[10px]">
               {new Date(log.occurred_at).toLocaleTimeString()}
