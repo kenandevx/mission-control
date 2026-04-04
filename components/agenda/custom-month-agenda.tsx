@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { cn } from "@/lib/utils";
 import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek,
   eachDayOfInterval, isSameMonth, isToday,
@@ -703,28 +704,62 @@ function WeekView({
             const dateStr = format(day, "yyyy-MM-dd");
             const dayEvts = events.filter((e) => e.date === dateStr);
 
-            // Sort events by time, each takes full width
-            const positioned = dayEvts
+            // Parse events into timed slots
+            const timed = dayEvts
               .filter((e) => !!e.time)
               .map((evt) => {
                 const [hour, minute] = evt.time!.split(":").map(Number);
-                const topMin = hour * 60 + minute;
-                return { evt, topMin };
+                return { evt, topMin: hour * 60 + minute };
               })
               .sort((a, b) => a.topMin - b.topMin);
 
-            // Full-width layout — push events down so they never overlap visually
-            const EVENT_BLOCK_HEIGHT = 60; // min height of TimeGridEventBlock + gap
-            const layout: { evt: CalendarEvent; topPx: number }[] = [];
-            let nextFreeY = 0; // track the bottom edge of the last placed event
-            for (let i = 0; i < positioned.length; i++) {
-              const item = positioned[i];
+            // Column-based layout (Google Calendar style): overlapping events go
+            // side-by-side instead of stacking vertically.
+            // Each event gets: col (column index), colCount (total columns)
+            const MAX_COLS = 3;
+            const GAP_PX = 3;
+            const MIN_EVENT_HEIGHT_PX = 56;
+            const MAX_EVENT_HEIGHT_PX = 90; // cap so one event can't dominate the column
+
+            type LayoutItem = { evt: CalendarEvent; topPx: number; col: number; colCount: number; heightPx: number; overflow: boolean };
+            const layout: LayoutItem[] = [];
+            // columns[col] = bottom minute of last event in that column
+            const columns: number[] = [];
+
+            for (const item of timed) {
               const naturalTop = (item.topMin / 60) * HOUR_HEIGHT;
-              // If natural position would overlap the previous event, push it down
-              const topPx = Math.max(naturalTop, nextFreeY);
-              layout.push({ evt: item.evt, topPx });
-              nextFreeY = topPx + EVENT_BLOCK_HEIGHT;
+
+              // Find the first column this event fits in without overlapping
+              let col = columns.findIndex((bottom) => {
+                const topPx = (bottom / 60) * HOUR_HEIGHT;
+                return topPx - naturalTop >= MIN_EVENT_HEIGHT_PX;
+              });
+
+              if (col === -1) {
+                // No free column — create a new one
+                col = columns.length;
+                if (col >= MAX_COLS) col = MAX_COLS - 1; // cap at MAX_COLS-1
+              }
+
+              const colBottomMin = columns[col] ?? 0;
+              const topPx = Math.max(naturalTop, (colBottomMin / 60) * HOUR_HEIGHT);
+              columns[col] = item.topMin + 30; // mark column as occupied until 30 min after event start
+
+              // Count how many columns are in use at this event's top
+              const activeCols = columns.filter((b) => (b / 60) * HOUR_HEIGHT > topPx - MIN_EVENT_HEIGHT_PX).length;
+              const colCount = Math.min(activeCols, MAX_COLS);
+
+              // Height: proportional to time slot density, capped
+              const eventDurationMin = 60; // default 1h unless we had end time
+              const baseHeight = Math.max(MIN_EVENT_HEIGHT_PX, Math.min((eventDurationMin / 60) * HOUR_HEIGHT * 0.85, MAX_EVENT_HEIGHT_PX));
+              // If many events overlap, shrink height so more fit
+              const heightPx = colCount >= 2 ? Math.min(baseHeight, MAX_EVENT_HEIGHT_PX / colCount) : baseHeight;
+
+              layout.push({ evt: item.evt, topPx, col, colCount, heightPx, overflow: colCount >= MAX_COLS });
             }
+
+            const colWidthPct = 100 / Math.max(MAX_COLS, columns.length);
+            const overflowCount = layout.filter((l) => l.overflow).length;
 
             return (
               <div
@@ -745,7 +780,6 @@ function WeekView({
                   setDragOverCell(null);
                   const eventId = e.dataTransfer.getData("text/event-id");
                   if (!eventId || !onEventDrop) return;
-                  // Calculate dropped hour from Y position
                   const rect = e.currentTarget.getBoundingClientRect();
                   const relativeY = e.clientY - rect.top;
                   const totalMinutes = Math.max(0, Math.round((relativeY / HOUR_HEIGHT) * 60));
@@ -758,25 +792,33 @@ function WeekView({
                 {HOURS.map((h) => (
                   <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
                 ))}
-                {layout.map(({ evt, topPx }) => (
+                {layout.map(({ evt, topPx, col, colCount, heightPx, overflow }) => (
                   <div
                     key={evt.id}
-                    draggable
+                    draggable={!overflow}
                     onDragStart={(e) => {
+                      if (overflow) { e.preventDefault(); return; }
                       e.stopPropagation();
                       e.dataTransfer.setData("text/event-id", evt.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
                     onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-                    className="absolute cursor-grab active:cursor-grabbing"
+                    className={cn("absolute transition-all cursor-grab active:cursor-grabbing", overflow ? "opacity-60 cursor-default" : "")}
                     style={{
                       top: `${topPx}px`,
-                      left: 2,
-                      right: 2,
+                      left: `calc(${col * colWidthPct}% + ${col > 0 ? GAP_PX : 2}px)`,
+                      width: `calc(${100 / colCount * colWidthPct}% - ${GAP_PX}px)`,
+                      height: `${heightPx}px`,
                       zIndex: 5,
                     }}
                   >
-                    <TimeGridEventBlock event={evt} />
+                    {overflow ? (
+                      <div className="flex items-center justify-center h-full text-[10px] text-muted-foreground font-medium px-1">
+                        +{layout.filter((l) => l.col === col).length - 1} more
+                      </div>
+                    ) : (
+                      <TimeGridEventBlock event={evt} />
+                    )}
                   </div>
                 ))}
               </div>
