@@ -76,6 +76,8 @@ if (!connectionString) {
 const OPENCLAW_HOME = getOpenClawHome();
 const SERVICE_NAME = "agenda-scheduler";
 const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
+const SCHEDULER_TICK_MS = Math.max(5_000, parseInt(process.env.AGENDA_SCHEDULER_TICK_MS || "15000", 10));
+const SCHEDULER_WAKE_DEBOUNCE_MS = Math.max(250, parseInt(process.env.AGENDA_SCHEDULER_WAKE_DEBOUNCE_MS || "1500", 10));
 
 const sql = postgres(connectionString, { max: 5, prepare: false, idle_timeout: 20, connect_timeout: 10 });
 
@@ -116,6 +118,9 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
   const scheduledMs = new Date(scheduledFor).getTime();
   const msUntil = scheduledMs - Date.now();
   const atValue = msUntil > 0 ? new Date(scheduledFor).toISOString() : "0s";
+  if (msUntil <= 0) {
+    console.log(`[agenda-scheduler] createCronJob: scheduling IMMEDIATE (was due ${Math.round(-msUntil/1000)}s ago, at=${atValue}) for "${title}"`);
+  }
   const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
   // Main session cron jobs require --system-event; isolated sessions use --message.
   const isMain = target === "main";
@@ -633,21 +638,31 @@ await writeHeartbeat("running");
 const heartbeatInterval = setInterval(() => writeHeartbeat("running"), 30_000);
 
 let runInProgress = false;
-async function tick() {
+let wakeTimer = null;
+async function tick(reason = "interval") {
   if (runInProgress) {
-    console.warn("[agenda-scheduler] Previous cycle still running, skipping tick");
+    console.warn(`[agenda-scheduler] Previous cycle still running, skipping tick (${reason})`);
     return;
   }
   runInProgress = true;
   try {
+    console.log(`[agenda-scheduler] Tick start (${reason})`);
     await runCycle();
     await writeHeartbeat("running", null);
   } catch (err) {
-    console.error("[agenda-scheduler] Cycle failed:", err.message);
+    console.error(`[agenda-scheduler] Cycle failed (${reason}):`, err.message);
     await writeHeartbeat("degraded", err.message);
   } finally {
     runInProgress = false;
   }
+}
+
+function scheduleWake(reason = "external", delayMs = SCHEDULER_WAKE_DEBOUNCE_MS) {
+  if (wakeTimer) clearTimeout(wakeTimer);
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    void tick(`wake:${reason}`);
+  }, Math.max(0, delayMs));
 }
 
 let shuttingDown = false;
@@ -656,6 +671,7 @@ async function shutdown() {
   shuttingDown = true;
   console.log("[agenda-scheduler] Shutting down...");
   clearInterval(heartbeatInterval);
+  if (wakeTimer) clearTimeout(wakeTimer);
   await writeHeartbeat("stopped").catch(() => {});
   await sql.end({ timeout: 5 }).catch(() => {});
   process.exit(0);
@@ -666,8 +682,8 @@ process.on("SIGINT", () => void shutdown());
 process.on("unhandledRejection", (reason) => console.error("[agenda-scheduler] Unhandled rejection:", reason));
 process.on("uncaughtException", (err) => console.error("[agenda-scheduler] Uncaught exception:", err));
 
-void tick();
-setInterval(() => void tick(), 60_000);
+void tick("startup");
+setInterval(() => void tick("interval"), SCHEDULER_TICK_MS);
 
 // ── Fallback model listener ────────────────────────────────────────────────────────
 // bridge-logger emits pg_notify('agenda_change', { action:'needs_retry', scheduleFallback:true })
@@ -677,6 +693,13 @@ try {
   await sql.listen("agenda_change", async (payload) => {
     let data;
     try { data = JSON.parse(payload); } catch { return; }
+
+    const action = String(data?.action || "");
+    if (["create", "update", "delete", "test_create", "force_delete_events"].includes(action)) {
+      console.log(`[agenda-scheduler] Wake requested from agenda_change action=${action}`);
+      scheduleWake(action);
+    }
+
     if (data?.action !== "needs_retry" || !data?.scheduleFallback || !data?.fallbackModel) return;
 
     const { occurrenceId, fallbackModel } = data;
@@ -716,7 +739,7 @@ try {
       console.log(`[agenda-scheduler] Fallback cron job created for occurrence ${occurrenceId} with model ${fallbackModel}`);
     }
   });
-  console.log("[agenda-scheduler] Listening for fallback model signals");
+  console.log(`[agenda-scheduler] Listening for agenda_change signals (tick=${SCHEDULER_TICK_MS}ms, wakeDebounce=${SCHEDULER_WAKE_DEBOUNCE_MS}ms)`);
 } catch (err) {
   console.warn("[agenda-scheduler] Failed to set up fallback listener (non-fatal):", err.message);
 }
