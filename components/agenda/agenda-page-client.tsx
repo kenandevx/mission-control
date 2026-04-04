@@ -261,6 +261,8 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
           latestResult: null,
           occurrenceId,
           modelOverride: (evt as Record<string, unknown>).model_override as string ?? "",
+          fallbackModel: (evt as Record<string, unknown>).fallback_model as string ?? "",
+          sessionTarget: ((evt as Record<string, unknown>).session_target === "main" ? "main" : "isolated") as "isolated" | "main",
         };
 
         setSelectedEvent(summary);

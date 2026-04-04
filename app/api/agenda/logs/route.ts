@@ -23,6 +23,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
 
   const occurrenceId = url.searchParams.get("occurrenceId")?.trim() || null;
+  const eventTypeFilter = url.searchParams.get("eventType")?.trim() || null;
   const eventId = url.searchParams.get("eventId")?.trim() || null;
   const levelFilter = url.searchParams.get("level")?.trim() || null;
   const since = url.searchParams.get("since")?.trim() || null;
@@ -92,6 +93,7 @@ export async function GET(request: Request) {
         SELECT COUNT(*)::int as c FROM agent_logs
         WHERE type = 'agenda'
           ${levelFilter ? sql`AND level = ${levelFilter}` : sql``}
+          ${eventTypeFilter ? sql`AND event_type = ${eventTypeFilter}` : sql``}
           ${since ? sql`AND occurred_at > ${since}::timestamptz` : sql``}
       `;
       total = countRow[0]?.c ?? 0;
@@ -107,6 +109,7 @@ export async function GET(request: Request) {
         LEFT JOIN agenda_events ae ON ae.id = ao.agenda_event_id
         WHERE l.type = 'agenda'
           ${levelFilter ? sql`AND l.level = ${levelFilter}` : sql``}
+          ${eventTypeFilter ? sql`AND l.event_type = ${eventTypeFilter}` : sql``}
           ${since ? sql`AND l.occurred_at > ${since}::timestamptz` : sql``}
         ORDER BY l.occurred_at DESC
         LIMIT ${limit} OFFSET ${offset}
@@ -116,6 +119,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       logs: rows,
+      total,
       pageInfo: {
         page,
         limit,

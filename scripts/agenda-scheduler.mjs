@@ -28,6 +28,45 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Emit a structured agenda lifecycle log to agent_logs.
+ * Non-fatal — errors are swallowed so log emission never breaks the scheduler.
+ */
+async function emitSchedulerLog(sql, { workspaceId, agentId, occurrenceId, eventType, level, message, rawPayload = null }) {
+  try {
+    if (!workspaceId) return;
+    // Ensure agent row exists (agent_id is NOT NULL)
+    const agentRtId = agentId || "main";
+    let [agentRow] = await sql`SELECT id FROM agents WHERE workspace_id = ${workspaceId} AND runtime_agent_id = ${agentRtId} LIMIT 1`;
+    if (!agentRow) {
+      [agentRow] = await sql`
+        INSERT INTO agents (workspace_id, runtime_agent_id, name, provider, model, is_active)
+        VALUES (${workspaceId}, ${agentRtId}, ${agentRtId}, 'openclaw', '', true)
+        ON CONFLICT (workspace_id, runtime_agent_id) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+      `;
+    }
+    if (!agentRow?.id) return;
+    const preview = String(message || "").slice(0, 240);
+    await sql`
+      INSERT INTO agent_logs (
+        workspace_id, agent_id, runtime_agent_id, occurred_at, level, type,
+        message, event_type, direction, channel_type,
+        message_preview, is_json, contains_pii, agenda_occurrence_id,
+        raw_payload
+      ) VALUES (
+        ${workspaceId}, ${agentRow.id}, ${agentRtId}, now(), ${level}, 'agenda',
+        ${message}, ${eventType}, 'internal', 'internal',
+        ${preview}, ${rawPayload != null}, false, ${occurrenceId || null},
+        ${rawPayload ? sql.json(rawPayload) : null}
+      )
+    `;
+  } catch (err) {
+    console.warn('[agenda-scheduler] emitSchedulerLog failed (non-fatal):', err?.message);
+  }
+}
+
+
 const connectionString = process.env.DATABASE_URL?.trim() || process.env.OPENCLAW_DATABASE_URL?.trim();
 if (!connectionString) {
   console.error("[agenda-scheduler] Missing DATABASE_URL / OPENCLAW_DATABASE_URL");
@@ -84,7 +123,7 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
     "--session", target,
     "--message", message,
     "--agent", agentId || "main",
-    "--keep-after-run",
+    "--delete-after-run",
     "--json",
   ];
   if (model?.trim()) {
@@ -308,11 +347,13 @@ async function runCycle() {
 
       for (const scheduledFor of occurrences) {
         // Upsert occurrence row
-        await sql`
+        const occInsertResult = await sql`
           INSERT INTO agenda_occurrences (agenda_event_id, scheduled_for, status)
           VALUES (${event.id}, ${scheduledFor}, 'scheduled')
           ON CONFLICT (agenda_event_id, scheduled_for) DO NOTHING
+          RETURNING id
         `;
+        const wasNewOccurrence = occInsertResult.length > 0;
 
         const [occ] = await sql`
           SELECT id, status, cron_job_id
@@ -320,6 +361,17 @@ async function runCycle() {
           WHERE agenda_event_id = ${event.id} AND scheduled_for = ${scheduledFor}
         `;
         if (!occ) continue;
+
+        if (wasNewOccurrence) {
+          await emitSchedulerLog(sql, {
+            workspaceId: event.workspace_id,
+            agentId: event.default_agent_id || "main",
+            occurrenceId: occ.id,
+            eventType: "agenda.created",
+            level: "info",
+            message: `Occurrence created for event "${event.title}" scheduled at ${scheduledFor.toISOString()}`,
+          });
+        }
 
         // Skip terminal states — never re-fire completed/cancelled/failed work
         if (["succeeded", "failed", "cancelled", "needs_retry"].includes(occ.status)) continue;
@@ -358,6 +410,14 @@ async function runCycle() {
 
         if (!cronJobId) {
           console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id} — marking needs_retry`);
+          await emitSchedulerLog(sql, {
+            workspaceId: event.workspace_id,
+            agentId: event.default_agent_id || "main",
+            occurrenceId: occ.id,
+            eventType: "agenda.error",
+            level: "error",
+            message: `Failed to create cron job for event "${event.title}" — occurrence marked needs_retry`,
+          });
           await transitionOccurrenceToNeedsRetry(sql, {
             occurrenceId: occ.id,
             reasonCode: "PROVIDER_REJECTED",
@@ -379,6 +439,16 @@ async function runCycle() {
         await transitionOccurrenceToQueued(sql, {
           occurrenceId: occ.id,
           cronJobId,
+        });
+
+        await emitSchedulerLog(sql, {
+          workspaceId: event.workspace_id,
+          agentId: event.default_agent_id || "main",
+          occurrenceId: occ.id,
+          eventType: "agenda.queued",
+          level: "info",
+          message: `Cron job created — event "${event.title}" picked up at ${new Date().toISOString()} (cron job ${cronJobId})`,
+          rawPayload: { cronJobId, scheduledFor: scheduledFor.toISOString() },
         });
 
         scheduled++;

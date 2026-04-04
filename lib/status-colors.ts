@@ -44,7 +44,7 @@ export const DOT_COLORS: Record<EventColor, string> = {
 // ── Status → color key mapping ──────────────────────────────────────────────
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:   "blue",   // upcoming — blue dot, no badge
+  scheduled:   "gray",   // upcoming — gray dot, no badge (blue is for user-chosen event color)
   queued:      "gray",   // cron job created, waiting to fire — neutral gray
   running:     "indigo", // agent actively executing — indigo pulse
   succeeded:   "green",  // done ✓
@@ -53,17 +53,17 @@ export const STATUS_COLOR_MAP: Record<string, EventColor> = {
   cancelled:   "gray",   // dismissed
 };
 
-export function resolveEventColorKey(event: { status?: string; latestResult?: string | null }): EventColor {
+export function resolveEventColorKey(event: { status?: string; latestResult?: string | null; color?: EventColor }): EventColor {
   if (event.status === "draft") return "gray";
   if (event.latestResult && STATUS_COLOR_MAP[event.latestResult]) {
     return STATUS_COLOR_MAP[event.latestResult];
   }
-  // Active event with no occurrence yet (just created / scheduled) → blue
-  if (event.status === "active") return "blue";
+  // Active event with no occurrence yet → use user-chosen color or default blue
+  if (event.status === "active") return event.color || "blue";
   return "gray";
 }
 
-export function resolveEventColor(event: { status?: string; latestResult?: string | null }) {
+export function resolveEventColor(event: { status?: string; latestResult?: string | null; color?: EventColor }) {
   return EVENT_COLORS[resolveEventColorKey(event)];
 }
 

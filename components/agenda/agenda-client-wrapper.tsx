@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { IconCalendarEvent, IconGitBranch } from "@tabler/icons-react";
+import { IconCalendarEvent, IconGitBranch, IconLogs } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { AgendaPageClient } from "@/components/agenda/agenda-page-client";
 import { AgendaEventModal, type AgendaEventFormData } from "@/components/agenda/agenda-event-modal";
@@ -473,6 +474,14 @@ export function AgendaClientWrapper() {
               onAddEvent={openNewEventModal}
               agentsForDetails={agents}
               onInitialReady={() => setAgendaInitialReady(true)}
+              headerActions={
+                <Link href="/agenda/logs">
+                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs cursor-pointer">
+                    <IconLogs className="size-3.5" />
+                    Agenda Logs
+                  </Button>
+                </Link>
+              }
             />
           </div>
         </motion.div>

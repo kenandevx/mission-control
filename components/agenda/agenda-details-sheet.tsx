@@ -84,6 +84,7 @@ export type AgendaEventSummary = {
   modelOverride?: string;
   executionWindowMinutes?: number;
   fallbackModel?: string;
+  sessionTarget?: "isolated" | "main";
 };
 
 type RunAttempt = {
@@ -464,7 +465,7 @@ function humanRecurrence(recurrence: string) {
 
 export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCopy, onRetry, onDelete }: Props) {
   const [activeTab, setActiveTab] = useState("overview");
-  const [occurrences, setOccurrences] = useState<{ id: string; scheduled_for: string; status: string; latest_attempt_no: number }[]>([]);
+  const [occurrences, setOccurrences] = useState<{ id: string; scheduled_for: string; status: string; latest_attempt_no: number; rendered_prompt?: string | null }[]>([]);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<RunAttempt[]>([]);
   const [steps, setSteps] = useState<RunStep[]>([]);
@@ -760,6 +761,28 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     </Card>
                   )}
 
+                  {/* Session Mode */}
+                  <Card data-slot="card">
+                    <CardHeader>
+                      <CardDescription>Execution mode</CardDescription>
+                      <CardTitle className="text-lg font-semibold">
+                        {event.sessionTarget === "main" ? "Main session" : "Isolated"}
+                      </CardTitle>
+                      <CardAction>
+                        <Badge variant="outline">
+                          {event.sessionTarget === "main" ? "Persistent" : "Fresh each run"}
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <div className="text-muted-foreground text-xs">
+                        {event.sessionTarget === "main"
+                          ? "Runs in your persistent main session — full memory and context"
+                          : "Runs in a fresh isolated session — no shared state"}
+                      </div>
+                    </CardFooter>
+                  </Card>
+
                   {/* Recurrence */}
                   {isRecurring && (
                     <Card data-slot="card">
@@ -777,6 +800,25 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       </CardHeader>
                       <CardFooter className="flex-col items-start gap-1 text-sm">
                         <div className="text-muted-foreground text-xs">Repeating schedule</div>
+                      </CardFooter>
+                    </Card>
+                  )}
+
+                  {/* Rendered Prompt preview */}
+                  {selectedOccurrence?.rendered_prompt && (
+                    <Card data-slot="card" className="col-span-2">
+                      <CardHeader>
+                        <CardDescription>Prompt sent to agent</CardDescription>
+                        <CardTitle className="text-sm font-semibold leading-snug line-clamp-2">
+                          {selectedOccurrence.rendered_prompt.length > 120
+                            ? selectedOccurrence.rendered_prompt.slice(0, 120) + "…"
+                            : selectedOccurrence.rendered_prompt}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardFooter className="flex-col items-start gap-1 text-sm">
+                        <div className="text-muted-foreground text-xs">
+                          Full prompt visible in Output tab
+                        </div>
                       </CardFooter>
                     </Card>
                   )}
@@ -896,9 +938,20 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     <p className="text-sm text-muted-foreground">No output yet — event hasn&apos;t run.</p>
                   </div>
                 ) : attemptSteps.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <IconFileText className="size-10 text-muted-foreground/50 mb-3" />
-                    <p className="text-sm text-muted-foreground">No output recorded.</p>
+                  <div className="flex flex-col gap-4">
+                    {selectedOccurrence?.rendered_prompt && (
+                      <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Prompt sent to agent</p>
+                        <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">{selectedOccurrence.rendered_prompt}</p>
+                      </div>
+                    )}
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <IconFileText className="size-10 text-muted-foreground/50 mb-3" />
+                      <p className="text-sm text-muted-foreground">No output recorded yet.</p>
+                      {!selectedOccurrence?.rendered_prompt && (
+                        <p className="text-xs text-muted-foreground/60 mt-1">The prompt will appear here once the occurrence is picked up.</p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   // Deduplicate: group steps by step_order, show only the last one per group
@@ -999,10 +1052,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </div>
 
                           {/* Prompt / Instruction */}
-                          {promptText && (
+                          {(promptText || selectedOccurrence?.rendered_prompt) && (
                             <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-3">
                               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Prompt</p>
-                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{promptText.length > 500 ? promptText.slice(0, 500) + "…" : promptText}</p>
+                              {promptText ? (
+                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}</p>
+                              ) : selectedOccurrence?.rendered_prompt ? (
+                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{selectedOccurrence.rendered_prompt.length > 1000 ? selectedOccurrence.rendered_prompt.slice(0, 1000) + "…" : selectedOccurrence.rendered_prompt}</p>
+                              ) : null}
                             </div>
                           )}
 
