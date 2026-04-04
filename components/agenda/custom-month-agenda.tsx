@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek,
@@ -851,8 +851,8 @@ function WeekView({
         {/* Time + content grid — one row per hour, height auto-expands to content */}
         <div className="grid grid-cols-8">
           {HOURS.map((h) => (
-            <>
-              {/* Hour gutter label */}
+            <React.Fragment key={h}>
+              {/* Hour gutter label */
               <div
                 key={`gutter-${h}`}
                 className="relative border-b border-r border-dashed border-border/30 flex items-start justify-end pr-2 pt-1 min-h-[60px]"
@@ -906,7 +906,7 @@ function WeekView({
                   />
                 );
               })}
-            </>
+            </React.Fragment>
           ))}
         </div>
       </div>
