@@ -504,7 +504,7 @@ async function handleSessionLine(sql, filePath, line) {
   }
 }
 
-function tailFile(getSql, onDbReset, filePath, handler) {
+function tailFile(getSql, onDbReset, filePath, handler, startFromBeginning = false) {
   if (watched.has(filePath)) return;
   watched.add(filePath);
 
@@ -562,8 +562,16 @@ function tailFile(getSql, onDbReset, filePath, handler) {
     if (err) return;
     const offset = getOffset(filePath);
     if (offset == null) {
-      pos = stat.size;
-      setOffset(filePath, pos);
+      if (startFromBeginning) {
+        // Cron run files: always read from the start — the result is already in the file
+        pos = 0;
+        setOffset(filePath, 0);
+        drain();
+      } else {
+        // Session/gateway files: skip existing content on first encounter
+        pos = stat.size;
+        setOffset(filePath, pos);
+      }
       return;
     }
     pos = Math.min(offset, stat.size);
@@ -1064,6 +1072,7 @@ async function main() {
         (sql, fp, line) => handleCronRunLine(getSql, jobId, line).catch((err) =>
           console.error(`[bridge-logger] cron run handler error for job ${jobId}:`, err.message)
         ),
+        true, // startFromBeginning — cron run result is already written when we first see the file
       );
     }
 
