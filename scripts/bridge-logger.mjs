@@ -673,6 +673,15 @@ async function emitAgendaLog(sql, {
 }) {
   const preview = String(message || "").slice(0, 240);
   try {
+    // Ensure agent row exists (agent_id is NOT NULL in agent_logs)
+    let resolvedAgentDbId = agentDbId;
+    if (!resolvedAgentDbId && workspaceId && agentId) {
+      resolvedAgentDbId = await ensureAgent(sql, workspaceId, agentId);
+    }
+    if (!resolvedAgentDbId) {
+      console.warn('[bridge-logger] emitAgendaLog: could not resolve agentDbId, skipping log');
+      return;
+    }
     await sql`
       INSERT INTO agent_logs (
         workspace_id, agent_id, runtime_agent_id, occurred_at, level, type,
@@ -680,7 +689,7 @@ async function emitAgendaLog(sql, {
         message_preview, is_json, contains_pii, agenda_occurrence_id,
         raw_payload
       ) VALUES (
-        ${workspaceId}, ${agentDbId}, ${agentId}, now(), ${level}, 'agenda',
+        ${workspaceId}, ${resolvedAgentDbId}, ${agentId}, now(), ${level}, 'agenda',
         ${message}, ${eventType}, ${sessionKey || null}, 'internal', 'internal',
         ${preview}, ${rawPayload != null}, false, ${occurrenceId || null},
         ${rawPayload ? sql.json(rawPayload) : null}

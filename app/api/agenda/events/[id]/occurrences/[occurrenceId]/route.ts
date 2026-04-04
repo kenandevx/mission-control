@@ -97,6 +97,25 @@ export async function POST(
       return ok({ occurrenceId, status: "running" });
     }
 
+    if (action === "testOnlySetFailed") {
+      // For integration tests: simulate terminal failure (fallback also exhausted).
+      // Sets status='failed', fallback_attempted=true, locked_at=NULL.
+      const [occ] = await sql`
+        select ao.id from agenda_occurrences ao
+        join agenda_events ae on ae.id = ao.agenda_event_id
+        where ao.id = ${occurrenceId} and ae.workspace_id = ${wid} limit 1
+      `;
+      if (!occ) return fail("Occurrence not found.", 404);
+      await sql`
+        update agenda_occurrences
+        set status = 'failed', locked_at = null, fallback_attempted = true,
+            last_retry_reason = 'FALLBACK_EXHAUSTED: test-only'
+        where id = ${occurrenceId}
+      `;
+      await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "failed", occurrenceId })})`;
+      return ok({ occurrenceId, status: "failed" });
+    }
+
     // ── Standard / force retry ────────────────────────────────────────────────
     const [occurrence] = await sql`
       select ao.id, ao.status, ao.cron_job_id, ao.rendered_prompt,

@@ -629,4 +629,263 @@ export const AGENDA_TESTS: TestDefinition[] = [
     },
   },
 
+  // ── 16. Occurrence transitions through 'running' before succeeded ────────
+  {
+    id: "running-state-emitted",
+    name: "Occurrence goes through 'running' state",
+    description: "Creates an event, waits for it to succeed, verifies that run_attempts were recorded (proves the running transition ran in bridge-logger).",
+    run: async (ctx) => {
+      const ID = "running-state-emitted";
+      const NAME = "Occurrence goes through 'running' state";
+      const DESC = "After execution, run_attempts must exist with a started_at timestamp, proving locked_at / running transition was set.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+      log(`Event: ${eventId}`);
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for occurrence to succeed");
+
+      const occId = (succeeded.occurrences as { id: string; status: string }[])
+        .find((o) => o.status === "succeeded")!.id;
+      log(`Succeeded occurrence: ${occId}`);
+
+      const runs = await ctx.apiGet(`/api/agenda/events/${eventId}/occurrences/${occId}/runs`) as {
+        attempts?: { status: string; started_at: string | null }[]
+      };
+      log(`Run attempts: ${JSON.stringify((runs.attempts ?? []).map((a) => ({ status: a.status, started_at: a.started_at })))}`);
+
+      if (!runs.attempts || runs.attempts.length === 0) {
+        return fail(ID, NAME, DESC, t0, "No run_attempts found after succeeded");
+      }
+      const attempt = runs.attempts[0];
+      if (!attempt.started_at) {
+        return fail(ID, NAME, DESC, t0, "run_attempts.started_at is null — running transition may not have fired");
+      }
+
+      return pass(ID, NAME, DESC, t0, `${runs.attempts.length} run attempt(s) with started_at=${attempt.started_at}`);
+    },
+  },
+
+  // ── 17. Agenda logs API returns entries after a run ───────────────────
+  {
+    id: "agenda-logs-api",
+    name: "Agenda logs appear after execution",
+    description: "Creates an event, waits for it to succeed, then checks /api/agenda/logs?occurrenceId=X returns at least one agenda.succeeded entry.",
+    run: async (ctx) => {
+      const ID = "agenda-logs-api";
+      const NAME = "Agenda logs appear after execution";
+      const DESC = "After a run, /api/agenda/logs?occurrenceId=X must return an agenda.succeeded log entry.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for occurrence to succeed");
+
+      const occId = (succeeded.occurrences as { id: string; status: string }[])
+        .find((o) => o.status === "succeeded")!.id;
+      log(`Succeeded occurrence: ${occId}`);
+
+      const logsResult = await poll(
+        () => ctx.apiGet(`/api/agenda/logs?occurrenceId=${occId}`) as Promise<{ ok: boolean; logs?: { event_type: string }[] }>,
+        (r) => (r?.logs ?? []).length > 0,
+        { intervalMs: 3000, timeoutMs: 30_000 },
+      );
+      if (!logsResult?.logs?.length) {
+        return fail(ID, NAME, DESC, t0, "No agenda logs found for the occurrence after 30s");
+      }
+
+      const types = logsResult.logs.map((l: { event_type: string }) => l.event_type);
+      log(`Log event types: ${types.join(", ")}`);
+
+      if (!types.some((t: string) => t === "agenda.succeeded")) {
+        return fail(ID, NAME, DESC, t0, `Missing agenda.succeeded log. Got: ${types.join(", ")}`);
+      }
+
+      return pass(ID, NAME, DESC, t0, `agenda.succeeded found (${logsResult.logs.length} total log entries)`);
+    },
+  },
+
+  // ── 18. Force retry re-renders prompt from current event definition ──────
+  {
+    id: "force-retry-rerenders-prompt",
+    name: "Force retry re-renders prompt",
+    description: "Creates event with free_prompt A, waits for success, edits to free_prompt B, force-retries — verifies rendered_prompt now contains B.",
+    run: async (ctx) => {
+      const ID = "force-retry-rerenders-prompt";
+      const NAME = "Force retry re-renders prompt";
+      const DESC = "After editing free_prompt, Force Retry must pick up the new prompt, not the cached one.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx, { freePrompt: "Say: ORIGINAL_PROMPT" }) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+      log(`Event: ${eventId}`);
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for initial run to succeed");
+
+      const occId = (succeeded.occurrences as { id: string; status: string }[])
+        .find((o) => o.status === "succeeded")!.id;
+      log(`Succeeded occurrence: ${occId}`);
+
+      // Update the event
+      const editRes = await ctx.apiPost(`/api/agenda/events/${eventId}`, {
+        action: "updateEvent",
+        freePrompt: "Say: UPDATED_PROMPT",
+      }) as { ok: boolean; error?: string };
+      if (!editRes.ok) return fail(ID, NAME, DESC, t0, `Edit failed: ${editRes.error}`);
+      log("free_prompt updated to UPDATED_PROMPT");
+
+      // Force retry
+      const retryRes = await ctx.apiPost(
+        `/api/agenda/events/${eventId}/occurrences/${occId}`,
+        { action: "retry", force: true },
+      ) as { ok: boolean; error?: string };
+      if (!retryRes.ok) return fail(ID, NAME, DESC, t0, `Force retry failed: ${retryRes.error}`);
+      log("Force retry triggered");
+
+      // Wait briefly then check rendered_prompt
+      await new Promise((r) => setTimeout(r, 3000));
+      const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as {
+        occurrences?: { id: string; rendered_prompt?: string }[]
+      };
+      const occ = (detail.occurrences ?? []).find((o) => o.id === occId);
+      const snippet = String(occ?.rendered_prompt ?? "").slice(0, 120);
+      log(`rendered_prompt snippet: ${snippet}`);
+
+      if (!String(occ?.rendered_prompt ?? "").includes("UPDATED_PROMPT")) {
+        return fail(ID, NAME, DESC, t0, `rendered_prompt does not contain 'UPDATED_PROMPT'. Got: ${snippet}`);
+      }
+      return pass(ID, NAME, DESC, t0, "Force retry correctly re-rendered prompt from updated event definition");
+    },
+  },
+
+  // ── 19. Agenda logs filterable by eventId ────────────────────────────
+  {
+    id: "agenda-logs-by-event",
+    name: "Agenda logs filterable by eventId",
+    description: "After a run, /api/agenda/logs?eventId=X returns logs for all occurrences of that event.",
+    run: async (ctx) => {
+      const ID = "agenda-logs-by-event";
+      const NAME = "Agenda logs filterable by eventId";
+      const DESC = "GET /api/agenda/logs?eventId=X returns logs linked to occurrences of that event.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for occurrence to succeed");
+      log(`Event ${eventId} has a succeeded occurrence`);
+
+      const logsResult = await poll(
+        () => ctx.apiGet(`/api/agenda/logs?eventId=${eventId}`) as Promise<{ ok: boolean; logs?: { event_type: string }[] }>,
+        (r) => (r?.logs ?? []).length > 0,
+        { intervalMs: 3000, timeoutMs: 30_000 },
+      );
+      if (!logsResult?.logs?.length) {
+        return fail(ID, NAME, DESC, t0, "No logs returned for eventId filter");
+      }
+      const types = logsResult.logs.map((l: { event_type: string }) => l.event_type);
+      log(`${logsResult.logs.length} log(s): ${types.join(", ")}`);
+
+      if (!types.some((t: string) => t === "agenda.succeeded")) {
+        return fail(ID, NAME, DESC, t0, `Missing agenda.succeeded in eventId-filtered logs. Got: ${types.join(", ")}`);
+      }
+      return pass(ID, NAME, DESC, t0, `eventId filter works — ${logsResult.logs.length} log(s) returned`);
+    },
+  },
+
+  // ── 20. Terminal 'failed' state via testOnlySetFailed ────────────────────
+  {
+    id: "terminal-failed-state",
+    name: "Terminal 'failed' state (fallback exhausted)",
+    description: "Uses testOnlySetNeedsRetry then testOnlySetFailed to simulate primary + fallback exhaustion. Occurrence must end in 'failed', not 'needs_retry'.",
+    run: async (ctx) => {
+      const ID = "terminal-failed-state";
+      const NAME = "Terminal 'failed' state (fallback exhausted)";
+      const DESC = "testOnlySetFailed transitions occurrence to 'failed'. Force Retry still allowed; normal Retry is not.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      const withOcc = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).length > 0,
+        { timeoutMs: 30_000 },
+      );
+      if (!withOcc) return fail(ID, NAME, DESC, t0, "Timed out waiting for occurrence");
+      const occId = (withOcc.occurrences as { id: string; status: string }[])[0].id;
+      log(`Occurrence: ${occId}`);
+
+      // Step 1: simulate primary retries exhausted
+      const step1 = await ctx.apiPost(
+        `/api/agenda/events/${eventId}/occurrences/${occId}`,
+        { action: "testOnlySetNeedsRetry" },
+      ) as { ok: boolean; error?: string };
+      if (!step1.ok) return fail(ID, NAME, DESC, t0, `testOnlySetNeedsRetry failed: ${step1.error}`);
+      log("needs_retry set");
+
+      // Step 2: simulate fallback also failed → terminal
+      const step2 = await ctx.apiPost(
+        `/api/agenda/events/${eventId}/occurrences/${occId}`,
+        { action: "testOnlySetFailed" },
+      ) as { ok: boolean; error?: string };
+      if (!step2.ok) return fail(ID, NAME, DESC, t0, `testOnlySetFailed failed: ${step2.error}`);
+      log("failed (terminal) set");
+
+      const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as { occurrences?: { id: string; status: string }[] };
+      const occ = (detail.occurrences ?? []).find((o) => o.id === occId);
+      log(`Final status: ${occ?.status}`);
+
+      if (occ?.status !== "failed") {
+        return fail(ID, NAME, DESC, t0, `Expected 'failed', got '${occ?.status}'`);
+      }
+
+      // Verify normal Retry is rejected (force=false should fail for 'failed' status)
+      const retryRes = await ctx.apiPost(
+        `/api/agenda/events/${eventId}/occurrences/${occId}`,
+        { action: "retry", force: false },
+      ) as { ok: boolean; error?: string };
+      if (retryRes.ok) {
+        return fail(ID, NAME, DESC, t0, "Normal Retry should be rejected for 'failed' status but it was accepted");
+      }
+      log(`Normal Retry correctly rejected: ${retryRes.error}`);
+
+      return pass(ID, NAME, DESC, t0, "Terminal 'failed' state set; normal Retry correctly rejected");
+    },
+  },
+
 ];
+
+

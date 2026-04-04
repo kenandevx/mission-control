@@ -22,7 +22,8 @@
     "agenda:selfcheck": "node scripts/agenda-selfcheck.mjs",
     "agenda:smoke": "node scripts/agenda-smoke.mjs",
     "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs",
-    "dev:kill": "bash scripts/mc-services.sh stop 2>/dev/null; sleep 1; pkill -f 'next dev' 2>/dev/null; pkill -f 'next-server' 2>/dev/null; pkill -f 'next start' 2>/dev/null; pkill -f 'mc-services.*watch' 2>/dev/null; sleep 1; fuser -k 3000/tcp 2>/dev/null; sleep 0.5; lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null; echo 'All Mission Control processes killed. Port 3000 freed.'"
+    "dev:kill": "bash scripts/mc-services.sh stop 2>/dev/null; sleep 1; pkill -f 'next dev' 2>/dev/null; pkill -f 'next-server' 2>/dev/null; pkill -f 'next start' 2>/dev/null; pkill -f 'mc-services.*watch' 2>/dev/null; sleep 1; fuser -k 3000/tcp 2>/dev/null; sleep 0.5; lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null; echo 'All Mission Control processes killed. Port 3000 freed.'",
+    "test:agenda": "set -a && . .env.local && set +a && node scripts/agenda-integration-test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
