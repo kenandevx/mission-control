@@ -627,8 +627,9 @@ setAgendaTimeStepMinutes(safe);
         </Select>
       </div>
 
-      {/* Agent + Model — 50/50 */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Agent + Model Override + Fallback — 33/33/33 */}
+      <div className="grid grid-cols-3 gap-3">
+        {/* Agent */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <IconRobot className="size-3.5 text-primary" />
@@ -650,6 +651,7 @@ setAgendaTimeStepMinutes(safe);
           </Select>
         </div>
 
+        {/* Model Override */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <IconCpu className="size-3.5 text-primary" />
@@ -664,7 +666,7 @@ setAgendaTimeStepMinutes(safe);
                 {form.modelOverride
                   ? <span className="flex gap-1.5 items-center truncate">
                       <span className="font-medium truncate">{models.find((m) => m.id === form.modelOverride)?.alias ?? form.modelOverride}</span>
-                      <span className="text-muted-foreground text-xs shrink-0">({getProviderLabel(form.modelOverride)})</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.modelOverride)})</span>
                     </span>
                   : "Agent default"}
               </SelectValue>
@@ -680,38 +682,38 @@ setAgendaTimeStepMinutes(safe);
             </SelectContent>
           </Select>
         </div>
-      </div>
 
-      {/* Fallback Model — full width */}
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-          <IconShieldCheck className="size-3.5 text-primary" />
-          Fallback Model
-        </Label>
-        <Select
-          value={form.fallbackModel || "__none__"}
-          onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
-        >
-          <SelectTrigger className="h-10 w-full cursor-pointer">
-            <SelectValue placeholder="None">
-              {form.fallbackModel
-                ? <span className="flex gap-1.5 items-center truncate">
-                    <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
-                    <span className="text-muted-foreground text-xs shrink-0">({getProviderLabel(form.fallbackModel)})</span>
-                  </span>
-                : "None"}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">None</SelectItem>
-            {models.map((m) => (
-              <SelectItem key={m.id} value={m.id}>
-                <span className="font-medium">{m.alias}</span>
-                <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Fallback Model */}
+        <div className="flex flex-col gap-1.5 min-w-0">
+          <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+            <IconShieldCheck className="size-3.5 text-primary" />
+            Fallback model
+          </Label>
+          <Select
+            value={form.fallbackModel || "__none__"}
+            onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
+          >
+            <SelectTrigger className="h-10 w-full cursor-pointer">
+              <SelectValue placeholder="None">
+                {form.fallbackModel
+                  ? <span className="flex gap-1.5 items-center truncate">
+                      <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.fallbackModel)})</span>
+                    </span>
+                  : "None"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">None</SelectItem>
+              {models.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  <span className="font-medium">{m.alias}</span>
+                  <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Session Target */}
@@ -725,14 +727,16 @@ setAgendaTimeStepMinutes(safe);
           onValueChange={(v) => updateField("sessionTarget", v as "isolated" | "main")}
         >
           <SelectTrigger className="h-10 w-full cursor-pointer">
-            <SelectValue />
+            <SelectValue>
+              {form.sessionTarget === "main" ? "Main session" : "Isolated session"}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="isolated">
               <div className="flex flex-col py-0.5">
                 <span className="font-medium">Isolated session</span>
                 <span className="text-xs text-muted-foreground">
-                  Runs in a fresh session every time — no history, no shared state. Recommended for most tasks.
+                  Fresh session every time — no history, no shared state.
                 </span>
               </div>
             </SelectItem>
@@ -740,7 +744,7 @@ setAgendaTimeStepMinutes(safe);
               <div className="flex flex-col py-0.5">
                 <span className="font-medium">Main session</span>
                 <span className="text-xs text-muted-foreground">
-                  Runs in your persistent main session — has full memory and context. Use only for tasks that need continuity.
+                  Persistent main session — full memory and context.
                 </span>
               </div>
             </SelectItem>
