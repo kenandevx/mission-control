@@ -664,14 +664,12 @@ function WeekHourCell({
           if (id) onDropEvent(id);
         }}
       >
-        {/* Now line — spans full width at the minute fraction */}
+        {/* Now line — 1px, full width, spans all day columns */}
         {nowLineAt !== null && (
           <div
-            className="absolute left-0 right-0 pointer-events-none z-10"
+            className="absolute left-0 right-0 h-px bg-primary pointer-events-none z-10"
             style={{ top: `${(nowLineAt / 60) * 100}%` }}
-          >
-            <div className="w-full h-[2px] bg-primary" style={{ boxShadow: "0 0 6px hsl(var(--accent) / 0.4)" }} />
-          </div>
+          />
         )}
         {visible.map((evt) => (
           <div
@@ -860,13 +858,13 @@ function WeekView({
                 <span className="text-[10px] text-muted-foreground/50 font-semibold tabular-nums">
                   {String(h).padStart(2, "0")}:00
                 </span>
-                {/* Now dot on gutter — only for the current hour */}
+                {/* Now dot on gutter — sits on the line, right-aligned to connect with day columns */}
                 {h === nowHour && (
                   <div
-                    className="absolute right-0 pointer-events-none z-10"
+                    className="absolute right-0 translate-x-[5px] -translate-y-[5px] pointer-events-none z-10"
                     style={{ top: `${(nowMinute / 60) * 100}%` }}
                   >
-                    <div className="size-[10px] rounded-full bg-primary translate-x-[5px] -translate-y-[5px]" style={{ boxShadow: "0 0 8px var(--primary-glow)" }} />
+                    <div className="size-[9px] rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(var(--primary) / 0.6)" }} />
                   </div>
                 )}
               </div>
@@ -894,7 +892,7 @@ function WeekView({
                     allHourEvts={hourEvts}
                     isTodayCol={isToday(day)}
                     isDragOver={dragOverCell === cellKey}
-                    nowLineAt={h === nowHour && isToday(day) ? nowMinute : null}
+                    nowLineAt={h === nowHour ? nowMinute : null}
                     onEventClick={onEventClick}
                     onEventDrop={onEventDrop}
                     onDragEnter={() => setDragOverCell(cellKey)}
