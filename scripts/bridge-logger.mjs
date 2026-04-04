@@ -1053,7 +1053,50 @@ async function scanRunArtifacts(occurrenceId, eventId) {
  * Non-fatal.
  */
 async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId }) {
-  if (sessionTarget !== 'isolated') return; // main session user already sees the output
+  // For isolated runs: inject a system event into the main session so the user
+  // sees the result in chat. For main session runs: the agent runs inside the
+  // main session but the output doesn't auto-deliver back to Telegram — we need
+  // to send it explicitly via the Telegram channel.
+  const isIsolated = sessionTarget !== 'main';
+  if (!isIsolated) {
+    // Main session run — send summary directly to Telegram
+    const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
+    const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
+    const snippet = summary && summary.length > 0
+      ? `\n\n${String(summary).slice(0, 400)}${summary.length > 400 ? '\u2026' : ''}`
+      : '';
+    try {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      const sessionsPath = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', 'sessions.json');
+      let chatId;
+      try {
+        const data = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+        for (const val of Object.values(data)) {
+          if (val?.deliveryContext?.channel === 'telegram' && val?.deliveryContext?.to) {
+            chatId = String(val.deliveryContext.to).replace(/^telegram:/, '');
+            break;
+          }
+        }
+      } catch { /* no sessions file yet */ }
+      if (chatId) {
+        const text = `${statusEmoji} Agenda task "${title}" ${statusLabel}${snippet}`;
+        await execFileAsync('openclaw', [
+          'message', 'send',
+          '--channel', 'telegram',
+          '--target', chatId,
+          '--message', text,
+        ], { timeout: 15000 });
+        console.log(`[bridge-logger] Telegram delivery for main-session run "${title}" (${status})`);
+      } else {
+        console.warn('[bridge-logger] notifyMainSession: no Telegram chatId found in sessions.json');
+      }
+    } catch (err) {
+      console.warn('[bridge-logger] notifyMainSession (main/telegram) failed:', err?.message);
+    }
+    return;
+  }
   try {
     const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
     const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
@@ -1105,6 +1148,42 @@ async function sendTelegramAlert(getSql, title, occurrenceId, reason) {
     ], { timeout: 30000 });
   } catch (err) {
     console.warn("[bridge-logger] Telegram alert failed:", err.message);
+  }
+}
+
+/**
+ * Promote occurrences that are queued/scheduled but whose scheduled_for is
+ * already in the past to 'running'. OpenClaw fires the cron job at the
+ * scheduled time but bridge-logger only sees the result after it finishes.
+ * This gives the UI a real-time 'running' state instead of staying 'queued'
+ * for the full execution duration.
+ */
+async function promotePastDueToRunning(getSql) {
+  try {
+    const sql = getSql();
+    const rows = await sql`
+      SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.cron_job_id
+      FROM agenda_occurrences ao
+      WHERE ao.status IN ('queued', 'scheduled')
+        AND ao.scheduled_for <= now() - interval '5 seconds'
+        AND ao.cron_job_id IS NOT NULL
+    `;
+    for (const row of rows) {
+      const [updated] = await sql`
+        UPDATE agenda_occurrences
+        SET status = 'running', locked_at = now()
+        WHERE id = ${row.occurrence_id}
+          AND status IN ('queued', 'scheduled')
+        RETURNING id
+      `;
+      if (updated) {
+        await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'started', occurrenceId: row.occurrence_id, eventId: row.agenda_event_id })})`;
+        console.log(`[bridge-logger] promote: occurrence ${row.occurrence_id} → running (past due, cron job ${row.cron_job_id})`);
+      }
+    }
+  } catch (err) {
+    // Non-fatal — next cycle will retry
+    console.warn('[bridge-logger] promotePastDueToRunning failed:', err?.message);
   }
 }
 
@@ -1186,6 +1265,9 @@ async function main() {
 
   scan();
   const scanTimer = setInterval(scan, SCAN_INTERVAL_MS);
+  // Promote past-due queued occurrences to 'running' every 5s so UI shows live state
+  void guarded(() => promotePastDueToRunning(getSql));
+  const promoteTimer = setInterval(() => void guarded(() => promotePastDueToRunning(getSql)), 5000);
   const deadLetterTimer = setInterval(() => {
     void guarded(() => replayDeadLetters(getSql()));
   }, DEAD_LETTER_REPLAY_MS);
@@ -1201,6 +1283,7 @@ async function main() {
 
   const shutdown = async () => {
     clearInterval(scanTimer);
+    clearInterval(promoteTimer);
     clearInterval(deadLetterTimer);
     clearInterval(heartbeatTimer);
     clearInterval(serviceHeartbeatTimer);
