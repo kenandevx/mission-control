@@ -611,6 +611,170 @@ function DayCell({
   );
 }
 
+// ── WeekHourCell ────────────────────────────────────────────────────────────
+// One cell in the week grid: a single (day × hour) slot.
+// Shows up to MAX_VISIBLE events + "+N more" button that opens a mini-modal.
+
+function WeekHourCell({
+  day,
+  hour,
+  dateStr,
+  visible,
+  overflow,
+  allHourEvts,
+  isTodayCol,
+  isDragOver,
+  onEventClick,
+  onEventDrop,
+  onDragEnter,
+  onDragLeave,
+  onDropEvent,
+}: {
+  day: Date;
+  hour: number;
+  dateStr: string;
+  visible: CalendarEvent[];
+  overflow: number;
+  allHourEvts: CalendarEvent[];
+  isTodayCol: boolean;
+  isDragOver: boolean;
+  onEventClick: (evt: CalendarEvent) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onDragEnter: () => void;
+  onDragLeave: () => void;
+  onDropEvent: (eventId: string) => void;
+}) {
+  const [showMore, setShowMore] = useState(false);
+
+  return (
+    <>
+      <div
+        className={cn(
+          "border-b border-l border-dashed border-border/30 p-1 min-h-[60px] flex flex-col gap-1 transition-colors",
+          isTodayCol ? "bg-primary/[0.025]" : "",
+          isDragOver ? "bg-primary/10" : "",
+        )}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; onDragEnter(); }}
+        onDragLeave={onDragLeave}
+        onDrop={(e) => {
+          e.preventDefault();
+          const id = e.dataTransfer.getData("text/event-id");
+          if (id) onDropEvent(id);
+        }}
+      >
+        {visible.map((evt) => (
+          <div
+            key={evt.id}
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              e.dataTransfer.setData("text/event-id", evt.id);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
+            className="cursor-grab active:cursor-grabbing"
+          >
+            <TimeGridEventBlock event={evt} />
+          </div>
+        ))}
+        {overflow > 0 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowMore(true); }}
+            className="flex items-center gap-1 text-[10px] font-bold text-primary hover:text-primary/80 bg-primary/8 hover:bg-primary/15 rounded-md px-2 py-1 transition-all cursor-pointer w-fit"
+          >
+            +{overflow} more
+          </button>
+        )}
+      </div>
+
+      {/* Overflow modal — shows all events for this hour slot */}
+      {showMore && (
+        <Dialog open={showMore} onOpenChange={setShowMore}>
+          <DialogContent className="sm:max-w-[480px] max-h-[80vh] overflow-hidden p-0">
+            <DialogHeader className="px-6 pt-5 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-center justify-center select-none">
+                  <span className="text-[9px] font-black tracking-[0.15em] text-primary/60 uppercase">
+                    {format(day, "MMM").toUpperCase()}
+                  </span>
+                  <span className="text-[26px] font-black leading-none text-primary tracking-tight">
+                    {format(day, "d")}
+                  </span>
+                </div>
+                <div className="h-10 w-px bg-border/60" />
+                <div>
+                  <DialogTitle className="text-base">
+                    {format(day, "EEEE, MMMM d")} · {String(hour).padStart(2, "0")}:00
+                  </DialogTitle>
+                  <DialogDescription className="text-[11px]">
+                    {allHourEvts.length} event{allHourEvts.length !== 1 ? "s" : ""} at this hour
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="overflow-y-auto px-4 pb-5 flex flex-col gap-2 max-h-[60vh]">
+              {allHourEvts.map((evt) => {
+                const resolved = resolveEventColor(evt);
+                const resolvedKey = resolveEventColorKey(evt);
+                const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
+                const timeStr = (() => {
+                  if (!evt.time) return null;
+                  const [h, m] = evt.time.split(":").map(Number);
+                  if (isNaN(h)) return null;
+                  const ampm = h >= 12 ? "PM" : "AM";
+                  const h12 = h % 12 || 12;
+                  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+                })();
+                return (
+                  <button
+                    key={evt.id}
+                    onClick={() => { setShowMore(false); onEventClick(evt); }}
+                    className="w-full text-left rounded-xl border bg-card hover:bg-muted/40 hover:border-primary/30 transition-all duration-150 p-3 cursor-pointer group"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-1 self-stretch rounded-full shrink-0 mt-0.5" style={{ backgroundColor: dotColor }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold truncate group-hover:text-primary transition-colors">{evt.title}</span>
+                          {evt.isRecurring && <RecurringIcon size={11} />}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {timeStr && <span className="text-[11px] text-muted-foreground font-medium">{timeStr}</span>}
+                          {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
+                            evt.latestResult === "running" ? (
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-indigo-500/10">
+                                <RunningBadge />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
+                              </span>
+                            ) : evt.latestResult === "needs_retry" ? (
+                              <NeedsRetryBadge />
+                            ) : (
+                              <span
+                                className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                                style={{
+                                  color: evt.latestResult === "succeeded" ? "#16a34a" : evt.latestResult === "failed" ? "#dc2626" : undefined,
+                                  backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)" : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)" : undefined,
+                                }}
+                              >
+                                {evt.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      </div>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-muted-foreground/40 group-hover:text-primary transition-colors mt-1"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 // ── Week view ─────────────────────────────────────────────────────────────────
 
 function WeekView({
@@ -626,21 +790,18 @@ function WeekView({
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   className?: string;
 }) {
-  const now = useNow();
-  const todayIndex = weekDays.findIndex((d) => isToday(d));
-  const showNowLine = todayIndex >= 0;
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to current time (1 hour before now) on mount — like Outlook
+  // Auto-scroll so the current hour is visible on mount
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const currentHour = now.getHours();
+    const currentHour = new Date().getHours();
+    // Each hour row is min 60px; scroll to 1h before now
     const scrollToHour = Math.max(0, currentHour - 1);
-    const scrollTop = scrollToHour * HOUR_HEIGHT;
-    container.scrollTop = scrollTop;
-  }, []); // only on mount
+    container.scrollTop = scrollToHour * 60;
+  }, []);
 
   return (
     <div ref={scrollContainerRef} className={`overflow-x-auto overflow-y-auto min-h-0 h-full ${className ?? ""}`}>
@@ -673,132 +834,56 @@ function WeekView({
           ))}
         </div>
 
-        {/* Time + content grid */}
-        <div className="grid grid-cols-8 relative">
-          {/* Now indicator spanning across day columns (skip hour gutter = 1/8 width) */}
-          {showNowLine && (
-            <NowIndicator
-              now={now}
-              hourHeight={HOUR_HEIGHT}
-              leftOffset="calc(100% / 8)"
-            />
-          )}
-
-          {/* Hour gutter */}
-          <div className="flex flex-col">
-            {HOURS.map((h) => (
+        {/* Time + content grid — one row per hour, height auto-expands to content */}
+        <div className="grid grid-cols-8">
+          {HOURS.map((h) => (
+            <>
+              {/* Hour gutter label */}
               <div
-                key={h}
-                className="border-b border-dashed border-border/30 flex items-start justify-end pr-2 pt-1"
-                style={{ height: HOUR_HEIGHT }}
+                key={`gutter-${h}`}
+                className="border-b border-r border-dashed border-border/30 flex items-start justify-end pr-2 pt-1 min-h-[60px]"
               >
                 <span className="text-[10px] text-muted-foreground/50 font-semibold tabular-nums">
                   {String(h).padStart(2, "0")}:00
                 </span>
               </div>
-            ))}
-          </div>
 
-          {/* Day columns */}
-          {weekDays.map((day) => {
-            const dateStr = format(day, "yyyy-MM-dd");
-            const dayEvts = events.filter((e) => e.date === dateStr);
+              {/* One cell per day for this hour */}
+              {weekDays.map((day) => {
+                const dateStr = format(day, "yyyy-MM-dd");
+                const cellKey = `${dateStr}-${h}`;
+                const hourEvts = events
+                  .filter((e) => e.date === dateStr && !!e.time)
+                  .filter((e) => Number(e.time!.split(":")[0]) === h)
+                  .sort((a, b) => Number(a.time!.split(":")[1] ?? 0) - Number(b.time!.split(":")[1] ?? 0));
 
-            // Parse events into timed slots
-            const timed = dayEvts
-              .filter((e) => !!e.time)
-              .map((evt) => {
-                const [hour, minute] = evt.time!.split(":").map(Number);
-                return { evt, topMin: hour * 60 + minute };
-              })
-              .sort((a, b) => a.topMin - b.topMin);
+                const visible = hourEvts.slice(0, MAX_VISIBLE);
+                const overflow = hourEvts.length - MAX_VISIBLE;
 
-            // Column-based layout (Google Calendar style):
-            // overlapping events sit side-by-side, non-overlapping events
-            // stay at their natural time position.
-            const MAX_COLS = 3;
-            const GAP_PX = 3;
-            const MIN_H = 56; // px — minimum event block height
-
-            // Pass 1: assign a column to every event.
-            // colBottomPx[c] = pixel position of the bottom edge of the last event in column c.
-            const colBottomPx: number[] = [];
-
-            type RawItem = { evt: CalendarEvent; topPx: number; col: number };
-            const rawLayout: RawItem[] = [];
-
-            for (const item of timed) {
-              const topPx = (item.topMin / 60) * HOUR_HEIGHT;
-              // Find the first column whose last event ends at or before this topPx
-              let col = colBottomPx.findIndex((bottom) => bottom <= topPx);
-              if (col === -1) {
-                col = colBottomPx.length; // open a new column
-              }
-              if (col >= MAX_COLS) col = MAX_COLS - 1; // hard cap
-              colBottomPx[col] = topPx + MIN_H;
-              rawLayout.push({ evt: item.evt, topPx, col });
-            }
-
-            // Total columns actually used
-            const totalCols = Math.min(colBottomPx.length, MAX_COLS);
-            const colW = totalCols > 0 ? 100 / totalCols : 100;
-
-            return (
-              <div
-                key={day.toISOString()}
-                className={[
-                  "relative border-l transition-colors",
-                  isToday(day) ? "bg-primary/[0.025]" : "",
-                  dragOverCell === dateStr ? "bg-primary/10" : "",
-                ].join(" ")}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  setDragOverCell(dateStr);
-                }}
-                onDragLeave={() => setDragOverCell((prev) => prev === dateStr ? null : prev)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOverCell(null);
-                  const eventId = e.dataTransfer.getData("text/event-id");
-                  if (!eventId || !onEventDrop) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const relativeY = e.clientY - rect.top;
-                  const totalMinutes = Math.max(0, Math.round((relativeY / HOUR_HEIGHT) * 60));
-                  const dropHour = Math.min(23, Math.floor(totalMinutes / 60));
-                  const dropMinute = Math.round((totalMinutes % 60) / 15) * 15;
-                  const timeStr = `${String(dropHour).padStart(2, "0")}:${String(dropMinute % 60).padStart(2, "0")}`;
-                  onEventDrop(eventId, dateStr, timeStr);
-                }}
-              >
-                {HOURS.map((h) => (
-                  <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
-                ))}
-                {rawLayout.map(({ evt, topPx, col }) => (
-                  <div
-                    key={evt.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.stopPropagation();
-                      e.dataTransfer.setData("text/event-id", evt.id);
-                      e.dataTransfer.effectAllowed = "move";
+                return (
+                  <WeekHourCell
+                    key={cellKey}
+                    day={day}
+                    hour={h}
+                    dateStr={dateStr}
+                    visible={visible}
+                    overflow={overflow}
+                    allHourEvts={hourEvts}
+                    isTodayCol={isToday(day)}
+                    isDragOver={dragOverCell === cellKey}
+                    onEventClick={onEventClick}
+                    onEventDrop={onEventDrop}
+                    onDragEnter={() => setDragOverCell(cellKey)}
+                    onDragLeave={() => setDragOverCell((p) => p === cellKey ? null : p)}
+                    onDropEvent={(eventId) => {
+                      setDragOverCell(null);
+                      if (onEventDrop) onEventDrop(eventId, dateStr, `${String(h).padStart(2, "0")}:00`);
                     }}
-                    onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-                    className="absolute cursor-grab active:cursor-grabbing"
-                    style={{
-                      top: `${topPx}px`,
-                      left: `calc(${col * colW}% + ${col > 0 ? GAP_PX : 2}px)`,
-                      width: `calc(${colW}% - ${GAP_PX + (col === 0 ? 2 : 0)}px)`,
-                      minHeight: `${MIN_H}px`,
-                      zIndex: 5,
-                    }}
-                  >
-                    <TimeGridEventBlock event={evt} />
-                  </div>
-                ))}
-              </div>
-            );
-          })}
+                  />
+                );
+              })}
+            </>
+          ))}
         </div>
       </div>
     </div>
