@@ -713,53 +713,35 @@ function WeekView({
               })
               .sort((a, b) => a.topMin - b.topMin);
 
-            // Column-based layout (Google Calendar style): overlapping events go
-            // side-by-side instead of stacking vertically.
-            // Each event gets: col (column index), colCount (total columns)
+            // Column-based layout (Google Calendar style):
+            // overlapping events sit side-by-side, non-overlapping events
+            // stay at their natural time position.
             const MAX_COLS = 3;
             const GAP_PX = 3;
-            const MIN_EVENT_HEIGHT_PX = 56;
-            const MAX_EVENT_HEIGHT_PX = 90; // cap so one event can't dominate the column
+            const MIN_H = 56; // px — minimum event block height
 
-            type LayoutItem = { evt: CalendarEvent; topPx: number; col: number; colCount: number; heightPx: number; overflow: boolean };
-            const layout: LayoutItem[] = [];
-            // columns[col] = bottom minute of last event in that column
-            const columns: number[] = [];
+            // Pass 1: assign a column to every event.
+            // colBottomPx[c] = pixel position of the bottom edge of the last event in column c.
+            const colBottomPx: number[] = [];
+
+            type RawItem = { evt: CalendarEvent; topPx: number; col: number };
+            const rawLayout: RawItem[] = [];
 
             for (const item of timed) {
-              const naturalTop = (item.topMin / 60) * HOUR_HEIGHT;
-
-              // Find the first column this event fits in without overlapping
-              let col = columns.findIndex((bottom) => {
-                const topPx = (bottom / 60) * HOUR_HEIGHT;
-                return topPx - naturalTop >= MIN_EVENT_HEIGHT_PX;
-              });
-
+              const topPx = (item.topMin / 60) * HOUR_HEIGHT;
+              // Find the first column whose last event ends at or before this topPx
+              let col = colBottomPx.findIndex((bottom) => bottom <= topPx);
               if (col === -1) {
-                // No free column — create a new one
-                col = columns.length;
-                if (col >= MAX_COLS) col = MAX_COLS - 1; // cap at MAX_COLS-1
+                col = colBottomPx.length; // open a new column
               }
-
-              const colBottomMin = columns[col] ?? 0;
-              const topPx = Math.max(naturalTop, (colBottomMin / 60) * HOUR_HEIGHT);
-              columns[col] = item.topMin + 30; // mark column as occupied until 30 min after event start
-
-              // Count how many columns are in use at this event's top
-              const activeCols = columns.filter((b) => (b / 60) * HOUR_HEIGHT > topPx - MIN_EVENT_HEIGHT_PX).length;
-              const colCount = Math.min(activeCols, MAX_COLS);
-
-              // Height: proportional to time slot density, capped
-              const eventDurationMin = 60; // default 1h unless we had end time
-              const baseHeight = Math.max(MIN_EVENT_HEIGHT_PX, Math.min((eventDurationMin / 60) * HOUR_HEIGHT * 0.85, MAX_EVENT_HEIGHT_PX));
-              // If many events overlap, shrink height so more fit
-              const heightPx = colCount >= 2 ? Math.min(baseHeight, MAX_EVENT_HEIGHT_PX / colCount) : baseHeight;
-
-              layout.push({ evt: item.evt, topPx, col, colCount, heightPx, overflow: colCount >= MAX_COLS });
+              if (col >= MAX_COLS) col = MAX_COLS - 1; // hard cap
+              colBottomPx[col] = topPx + MIN_H;
+              rawLayout.push({ evt: item.evt, topPx, col });
             }
 
-            const colWidthPct = 100 / Math.max(MAX_COLS, columns.length);
-            const overflowCount = layout.filter((l) => l.overflow).length;
+            // Total columns actually used
+            const totalCols = Math.min(colBottomPx.length, MAX_COLS);
+            const colW = totalCols > 0 ? 100 / totalCols : 100;
 
             return (
               <div
@@ -792,33 +774,26 @@ function WeekView({
                 {HOURS.map((h) => (
                   <div key={h} className="border-b border-dashed border-border/30" style={{ height: HOUR_HEIGHT }} />
                 ))}
-                {layout.map(({ evt, topPx, col, colCount, heightPx, overflow }) => (
+                {rawLayout.map(({ evt, topPx, col }) => (
                   <div
                     key={evt.id}
-                    draggable={!overflow}
+                    draggable
                     onDragStart={(e) => {
-                      if (overflow) { e.preventDefault(); return; }
                       e.stopPropagation();
                       e.dataTransfer.setData("text/event-id", evt.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
                     onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
-                    className={cn("absolute transition-all cursor-grab active:cursor-grabbing", overflow ? "opacity-60 cursor-default" : "")}
+                    className="absolute cursor-grab active:cursor-grabbing"
                     style={{
                       top: `${topPx}px`,
-                      left: `calc(${col * colWidthPct}% + ${col > 0 ? GAP_PX : 2}px)`,
-                      width: `calc(${100 / colCount * colWidthPct}% - ${GAP_PX}px)`,
-                      height: `${heightPx}px`,
+                      left: `calc(${col * colW}% + ${col > 0 ? GAP_PX : 2}px)`,
+                      width: `calc(${colW}% - ${GAP_PX + (col === 0 ? 2 : 0)}px)`,
+                      minHeight: `${MIN_H}px`,
                       zIndex: 5,
                     }}
                   >
-                    {overflow ? (
-                      <div className="flex items-center justify-center h-full text-[10px] text-muted-foreground font-medium px-1">
-                        +{layout.filter((l) => l.col === col).length - 1} more
-                      </div>
-                    ) : (
-                      <TimeGridEventBlock event={evt} />
-                    )}
+                    <TimeGridEventBlock event={evt} />
                   </div>
                 ))}
               </div>
