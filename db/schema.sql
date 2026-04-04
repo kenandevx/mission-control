@@ -504,3 +504,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_logs_occurrence ON agent_logs(agenda_occurr
 -- the lines written during this specific task, preventing cross-task
 -- contamination in shared main sessions.
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS session_line_offset BIGINT;
+CREATE INDEX IF NOT EXISTS idx_agenda_occurrences_session_line_offset
+  ON agenda_occurrences(session_line_offset)
+  WHERE session_line_offset IS NOT NULL;

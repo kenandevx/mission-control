@@ -43,11 +43,12 @@ async function getMainSessionLineOffset() {
     const sessions = JSON.parse(raw);
     const mainEntry = sessions["agent:main:main"];
     if (!mainEntry?.sessionFile) return null;
-    const stat = fs.statSync(mainEntry.sessionFile);
     const content = fs.readFileSync(mainEntry.sessionFile, "utf8");
     const lineCount = content.split("\n").filter((l) => l.trim()).length;
     return lineCount;
-  } catch {
+  } catch (err) {
+    // Log the error so we know why offset capture failed in production.
+    console.warn(`[agenda-scheduler] getMainSessionLineOffset: ${err?.message}`);
     return null;
   }
 }
@@ -321,7 +322,9 @@ async function renderPromptForEvent(event, occurrenceId) {
   // Inject a unique marker into the task text. Bridge-logger uses this to locate
   // the exact injection point in the session file regardless of when the task fired,
   // solving the session_line_offset capture-time mismatch problem.
-  const markerLine = `[AGENDA_MARKER:occurrence_id=${occurrenceId}]`;
+  // Prefixed with # so it reads as a comment/directive to the model rather than
+  // user content. The system-prompt framing hides it from the model's main context.
+  const markerLine = `# AGENDA_MARKER:occurrence_id=${occurrenceId}`;
 
   const rendered = renderUnifiedTaskMessage({
     title: event.title,
@@ -559,91 +562,126 @@ async function runCycle() {
         if (hoursUntil > 48) continue;
         // Note: no lower floor — hoursUntil may be negative (missed/past), these get --at 30s
 
-        // Render the prompt with the stable, occurrence-scoped artifact path baked in.
-        const message = await renderPromptForEvent(event, occ.id);
+        // ── Per-occurrence scheduling (isolated so one failure doesn't block others) ──
+        // Wrapped in try/catch: if renderPromptForEvent throws, the occurrence is
+        // left in 'scheduled' with no cron job — we must mark it needs_retry immediately.
+        let occScheduled = false;
+        try {
+          // Render the prompt with the stable, occurrence-scoped artifact path baked in.
+          const message = await renderPromptForEvent(event, occ.id);
 
-        // Persist the rendered prompt so retries always use the exact same message.
-        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
+          // Persist the rendered prompt so retries always use the exact same message.
+          await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
 
-        // Log catch-up fires (past occurrences being scheduled now due to missed window)
-        if (hoursUntil < -0.5) {
-          const hoursAgo = Math.round(-hoursUntil * 10) / 10;
-          console.warn(`[agenda-scheduler] Catch-up: occurrence ${occ.id} was scheduled ${hoursAgo}h ago — firing immediately`);
-        }
-
-        // ── Session injection boundary (main session only) ───────────────────────
-        // Capture the session file's line count immediately before the cron job
-        // fires. Bridge-logger reads from this offset onwards so it only sees
-        // output from this specific task, not earlier messages in the shared
-        // agent:main:main session file. Isolated sessions have their own files
-        // so no injection boundary is needed.
-        const sessionTarget = event.session_target || "isolated";
-        if (sessionTarget === "main") {
-          const lineOffset = await getMainSessionLineOffset();
-          if (lineOffset !== null) {
-            await sql`UPDATE agenda_occurrences SET session_line_offset = ${lineOffset} WHERE id = ${occ.id}`;
-            console.log(`[agenda-scheduler] main-session line offset captured: occurrence ${occ.id} @ line ${lineOffset}`);
-          } else {
-            console.warn(`[agenda-scheduler] could not capture main-session line offset for occurrence ${occ.id} — output resolution will fall back to full-session scan`);
+          // Log catch-up fires (past occurrences being scheduled now due to missed window)
+          if (hoursUntil < -0.5) {
+            const hoursAgo = Math.round(-hoursUntil * 10) / 10;
+            console.warn(`[agenda-scheduler] Catch-up: occurrence ${occ.id} was scheduled ${hoursAgo}h ago — firing immediately`);
           }
-        }
 
-        // Create the cron job — session target from event config (default: isolated)
-        const cronJobId = await createCronJob({
-          title: event.title,
-          message,
-          agentId: event.default_agent_id || "main",
-          model: event.model_override || null,
-          scheduledFor,
-          sessionTarget,
-          timeoutSeconds: null,
-        });
+          // ── Session injection boundary (main session only) ───────────────────────
+          // Capture the session file's line count immediately before the cron job
+          // fires. Bridge-logger reads from this offset onwards so it only sees
+          // output from this specific task, not earlier messages in the shared
+          // agent:main:main session file. Isolated sessions have their own files
+          // so no injection boundary is needed.
+          const sessionTarget = event.session_target || "isolated";
+          if (sessionTarget === "main") {
+            const lineOffset = await getMainSessionLineOffset();
+            if (lineOffset !== null) {
+              await sql`UPDATE agenda_occurrences SET session_line_offset = ${lineOffset} WHERE id = ${occ.id}`;
+              console.log(`[agenda-scheduler] main-session line offset captured: occurrence ${occ.id} @ line ${lineOffset}`);
+            } else {
+              console.warn(`[agenda-scheduler] could not capture main-session line offset for occurrence ${occ.id} — output resolution will fall back to full-session scan`);
+            }
+          }
 
-        if (!cronJobId) {
-          console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id} — marking needs_retry`);
+          // Create the cron job — session target from event config (default: isolated)
+          const cronJobId = await createCronJob({
+            title: event.title,
+            message,
+            agentId: event.default_agent_id || "main",
+            model: event.model_override || null,
+            scheduledFor,
+            sessionTarget,
+            timeoutSeconds: null,
+          });
+
+          if (!cronJobId) {
+            console.warn(`[agenda-scheduler] Failed to create cron job for occurrence ${occ.id} — marking needs_retry`);
+            await emitSchedulerLog(sql, {
+              workspaceId: event.workspace_id,
+              agentId: event.default_agent_id || "main",
+              occurrenceId: occ.id,
+              eventType: "agenda.error",
+              level: "error",
+              message: `Failed to create cron job for event "${event.title}" — occurrence marked needs_retry`,
+            });
+            await transitionOccurrenceToNeedsRetry(sql, {
+              occurrenceId: occ.id,
+              reasonCode: "PROVIDER_REJECTED",
+              reasonText: "Cron job creation failed — check gateway logs",
+            });
+            await sql`
+              INSERT INTO agenda_run_attempts
+                (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
+              VALUES
+                (${occ.id}, 1, 'failed', now(), now(),
+                 'Failed to create cron job', 'Cron job creation failed — check gateway logs')
+              ON CONFLICT DO NOTHING
+            `;
+            await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.id })})`;
+            continue;
+          }
+
+          // Atomically mark queued with the cron job ID
+          await transitionOccurrenceToQueued(sql, {
+            occurrenceId: occ.id,
+            cronJobId,
+          });
+
+          await emitSchedulerLog(sql, {
+            workspaceId: event.workspace_id,
+            agentId: event.default_agent_id || "main",
+            occurrenceId: occ.id,
+            eventType: "agenda.queued",
+            level: "info",
+            message: `Cron job created — event "${event.title}" picked up at ${new Date().toISOString()} (cron job ${cronJobId})`,
+            rawPayload: { cronJobId, scheduledFor: scheduledFor.toISOString() },
+          });
+
+          scheduled++;
+          occScheduled = true;
+          console.log(`[agenda-scheduler] Scheduled occurrence ${occ.id} → cron job ${cronJobId}`);
+        } catch (err) {
+          // renderPromptForEvent threw (malformed steps, missing skill, bad artifact path, etc.)
+          // OR the SQL update / cron creation threw — mark the occurrence failed immediately
+          // so it is never left in 'scheduled' with no cron job.
+          console.error(`[agenda-scheduler] Occurrence ${occ.id} scheduling failed: ${err.message}`);
           await emitSchedulerLog(sql, {
             workspaceId: event.workspace_id,
             agentId: event.default_agent_id || "main",
             occurrenceId: occ.id,
             eventType: "agenda.error",
             level: "error",
-            message: `Failed to create cron job for event "${event.title}" — occurrence marked needs_retry`,
+            message: `Occurrence scheduling failed: ${err.message} — marked needs_retry`,
           });
           await transitionOccurrenceToNeedsRetry(sql, {
             occurrenceId: occ.id,
-            reasonCode: "PROVIDER_REJECTED",
-            reasonText: "Cron job creation failed — check gateway logs",
+            reasonCode: "RENDER_FAILED",
+            reasonText: err.message.slice(0, 500),
           });
           await sql`
             INSERT INTO agenda_run_attempts
               (occurrence_id, attempt_no, status, started_at, finished_at, summary, error_message)
             VALUES
               (${occ.id}, 1, 'failed', now(), now(),
-               'Failed to create cron job', 'Cron job creation failed — check gateway logs')
+               'Occurrence scheduling failed: ' || ${err.message.slice(0, 200)}, ${err.message.slice(0, 500)})
             ON CONFLICT DO NOTHING
           `;
           await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.id })})`;
           continue;
         }
-
-        // Atomically mark queued with the cron job ID
-        await transitionOccurrenceToQueued(sql, {
-          occurrenceId: occ.id,
-          cronJobId,
-        });
-
-        await emitSchedulerLog(sql, {
-          workspaceId: event.workspace_id,
-          agentId: event.default_agent_id || "main",
-          occurrenceId: occ.id,
-          eventType: "agenda.queued",
-          level: "info",
-          message: `Cron job created — event "${event.title}" picked up at ${new Date().toISOString()} (cron job ${cronJobId})`,
-          rawPayload: { cronJobId, scheduledFor: scheduledFor.toISOString() },
-        });
-
-        scheduled++;
-        console.log(`[agenda-scheduler] Scheduled occurrence ${occ.id} → cron job ${cronJobId}`);
       }
     } catch (err) {
       console.error(`[agenda-scheduler] Event processing failed for event=${event.id}:`, err.message);

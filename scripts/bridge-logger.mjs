@@ -685,7 +685,7 @@ async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOf
     // The marker appears as a user message line in the session file.
     let injectionLineIdx = null;
     if (occurrenceId) {
-      const markerPattern = `[AGENDA_MARKER:occurrence_id=${occurrenceId}]`;
+      const markerPattern = `# AGENDA_MARKER:occurrence_id=${occurrenceId}`;
       // Scan backward from end to find the most recent marker for this occurrence.
       // This correctly handles the case where multiple tasks are pending:
       // the most recent marker in the file belongs to the most recently fired task.
