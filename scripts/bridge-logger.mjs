@@ -655,6 +655,45 @@ async function cleanupFailedCronSessionMemories(sessionId) {
 }
 
 /**
+ * Emit a structured agenda log entry into agent_logs.
+ * These are the events visible in the Agenda Logs panel.
+ * event_type uses the "agenda.*" namespace so they can be filtered.
+ */
+async function emitAgendaLog(sql, {
+  workspaceId,
+  agentDbId,
+  agentId,
+  occurrenceId,
+  sessionKey,
+  eventType,   // e.g. "agenda.started" | "agenda.succeeded" | "agenda.failed" | "agenda.fallback"
+  level,       // "info" | "warn" | "error"
+  message,
+  rawPayload = null,
+}) {
+  const preview = String(message || "").slice(0, 240);
+  try {
+    await sql`
+      INSERT INTO agent_logs (
+        workspace_id, agent_id, runtime_agent_id, occurred_at, level, type,
+        message, event_type, session_key, direction, channel_type,
+        message_preview, is_json, contains_pii, agenda_occurrence_id,
+        raw_payload
+      ) VALUES (
+        ${workspaceId}, ${agentDbId}, ${agentId}, now(), ${level}, 'agenda',
+        ${message}, ${eventType}, ${sessionKey || null}, 'internal', 'internal',
+        ${preview}, ${rawPayload != null}, false, ${occurrenceId || null},
+        ${rawPayload ? sql.json(rawPayload) : null}
+      )
+      ON CONFLICT DO NOTHING
+    `;
+  } catch (err) {
+    // Non-fatal — log emission failure must never break the main sync path
+    console.warn('[bridge-logger] emitAgendaLog failed:', err?.message);
+  }
+}
+
+
+/**
  * Process a single finished cron run line and write results to the DB.
  *
  * Flow (per run):
@@ -697,6 +736,19 @@ async function handleCronRunLine(getSql, jobId, line) {
   const summaryText = String(run.summary || "").slice(0, 500);
   const startedAt = new Date(run.runAtMs || Date.now());
   const finishedAt = new Date((run.runAtMs || Date.now()) + (run.durationMs || 0));
+  const sessionKey = run.sessionKey || `agent:main:cron:${jobId}`;
+
+  // Resolve workspace + agent DB IDs for agenda log emission (best-effort)
+  let wid = null;
+  let agentDbId = null;
+  try {
+    const [ws] = await sql`SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1`;
+    wid = ws?.id || null;
+    if (wid) {
+      const [ag] = await sql`SELECT id FROM agents WHERE workspace_id = ${wid} AND openclaw_agent_id = ${occ.default_agent_id || 'main'} LIMIT 1`;
+      agentDbId = ag?.id || null;
+    }
+  } catch { /* non-fatal */ }
 
   // 4A: Claim the occurrence as running before writing the final result.
   // locked_at is set to the actual run start time so the stale-running sweep
@@ -709,6 +761,18 @@ async function handleCronRunLine(getSql, jobId, line) {
       WHERE id = ${occ.occurrence_id}
         AND status = 'queued'
     `;
+    // Emit: agenda run started
+    await emitAgendaLog(sql, {
+      workspaceId: wid,
+      agentDbId,
+      agentId: occ.default_agent_id || 'main',
+      occurrenceId: occ.occurrence_id,
+      sessionKey,
+      eventType: 'agenda.started',
+      level: 'info',
+      message: `Agenda run started: "${occ.title}" (attempt ${attemptNo}, cron job ${jobId})`,
+      rawPayload: { cronJobId: jobId, attemptNo, model: run.model || null, sessionId: run.sessionId || null },
+    });
   }
 
   if (succeeded) {
@@ -743,6 +807,14 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
 
     await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id })})`;
+    await emitAgendaLog(sql, {
+      workspaceId: wid, agentDbId,
+      agentId: occ.default_agent_id || 'main',
+      occurrenceId: occ.occurrence_id, sessionKey,
+      eventType: 'agenda.succeeded', level: 'info',
+      message: `Agenda run succeeded: "${occ.title}" (attempt ${attemptNo}, ${run.durationMs ? Math.round(run.durationMs/1000)+'s' : 'unknown duration'})`,
+      rawPayload: { cronJobId: jobId, attemptNo, durationMs: run.durationMs, summary: summaryText, model: run.model || null },
+    });
     console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} succeeded (attempt ${attemptNo})`);
 
   } else {
@@ -805,6 +877,14 @@ async function handleCronRunLine(getSql, jobId, line) {
         fallbackModel,
         scheduleFallback: true,
       })})`;
+      await emitAgendaLog(sql, {
+        workspaceId: wid, agentDbId,
+        agentId: occ.default_agent_id || 'main',
+        occurrenceId: occ.occurrence_id, sessionKey,
+        eventType: 'agenda.fallback', level: 'warn',
+        message: `Agenda run exhausted primary retries, queuing fallback model for "${occ.title}" (attempt ${attemptNo})`,
+        rawPayload: { cronJobId: jobId, attemptNo, fallbackModel, error: errorText.slice(0, 400) },
+      });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
     } else {
       // All retries exhausted, no fallback — mark needs_retry and alert
@@ -815,6 +895,14 @@ async function handleCronRunLine(getSql, jobId, line) {
       });
       await sql`UPDATE agenda_occurrences SET cron_synced_at = now() WHERE id = ${occ.occurrence_id}`;
       await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: occ.occurrence_id })})`;
+      await emitAgendaLog(sql, {
+        workspaceId: wid, agentDbId,
+        agentId: occ.default_agent_id || 'main',
+        occurrenceId: occ.occurrence_id, sessionKey,
+        eventType: 'agenda.failed', level: 'error',
+        message: `Agenda run failed: "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
+        rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs },
+      });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
 
       // Send Telegram alert via openclaw message (best-effort)

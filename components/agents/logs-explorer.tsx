@@ -412,6 +412,7 @@ function matchesGroup(log: NormalizedLog, group: FilterGroup) {
   if (group === "memory") return log.eventType.startsWith("memory.") || log.type === "memory";
   if (group === "system") return log.eventType.startsWith("system.") || log.eventType.startsWith("heartbeat.") || log.type === "system";
   if (group === "worker") return log.type === "worker" || log.type === "bullmq" || log.type === "cron";
+  if (group === "agenda") return log.type === "agenda" || log.eventType.startsWith("agenda.");
   return true;
 }
 
@@ -706,6 +707,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                 <SelectItem value="tool">Tools</SelectItem>
                 <SelectItem value="memory">Memory / Qdrant</SelectItem>
                 <SelectItem value="system">System / Heartbeat</SelectItem>
+                <SelectItem value="agenda">Agenda</SelectItem>
                 <SelectItem value="worker">Worker / Cron</SelectItem>
                 <SelectItem value="error">Warnings + Errors</SelectItem>
               </SelectContent>

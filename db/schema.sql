@@ -493,3 +493,7 @@ BEGIN
     ALTER TABLE agenda_run_attempts RENAME COLUMN queue_job_id TO cron_job_id;
   END IF;
 END $$;
+
+-- v4.1: agenda correlation in agent_logs — enables agenda-specific log filtering
+ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS agenda_occurrence_id UUID;
+CREATE INDEX IF NOT EXISTS idx_agent_logs_occurrence ON agent_logs(agenda_occurrence_id) WHERE agenda_occurrence_id IS NOT NULL;

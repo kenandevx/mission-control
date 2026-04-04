@@ -273,6 +273,84 @@ function renderInline(text: string): React.ReactNode {
   return parts.length === 1 ? parts[0] : <>{parts}</>;
 }
 
+// ── Agenda occurrence logs ───────────────────────────────────────────────────────────────
+
+type AgendaLogEntry = {
+  id: string;
+  occurred_at: string;
+  level: string;
+  event_type: string;
+  message: string;
+  raw_payload: Record<string, unknown> | null;
+};
+
+function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null }) {
+  const [logs, setLogs] = useState<AgendaLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!occurrenceId) { setLogs([]); return; }
+    setLoading(true);
+    fetch(`/api/agenda/logs?occurrenceId=${encodeURIComponent(occurrenceId)}&limit=50`)
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setLogs(d.logs ?? []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [occurrenceId]);
+
+  if (!occurrenceId) return (
+    <p className="text-xs text-muted-foreground py-4 text-center">Select an occurrence to view its logs.</p>
+  );
+
+  if (loading) return (
+    <div className="flex flex-col gap-2 py-2">
+      {[0,1,2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+    </div>
+  );
+
+  if (logs.length === 0) return (
+    <p className="text-xs text-muted-foreground py-4 text-center">
+      No agenda logs yet for this occurrence. Logs appear when the run starts.
+    </p>
+  );
+
+  const levelColor: Record<string, string> = {
+    info: "text-blue-500",
+    warn: "text-amber-500",
+    error: "text-red-500",
+  };
+  const eventLabel: Record<string, string> = {
+    "agenda.started": "▶ Started",
+    "agenda.succeeded": "✅ Succeeded",
+    "agenda.failed": "❌ Failed",
+    "agenda.fallback": "⚠️ Fallback queued",
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {logs.map((log) => (
+        <div key={log.id} className="rounded-md border bg-card p-3 text-xs">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className={`font-semibold ${levelColor[log.level] ?? 'text-foreground'}`}>
+              {eventLabel[log.event_type] ?? log.event_type}
+            </span>
+            <span className="text-muted-foreground text-[10px]">
+              {new Date(log.occurred_at).toLocaleTimeString()}
+            </span>
+          </div>
+          <p className="text-muted-foreground leading-relaxed">{log.message}</p>
+          {log.raw_payload?.durationMs ? (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Duration: {Math.round(Number(log.raw_payload.durationMs) / 1000)}s
+              {log.raw_payload.model ? ` · Model: ${log.raw_payload.model}` : ""}
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
   if (!outputPayload) return null;
   let outputText = "";
@@ -600,9 +678,10 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
           {/* ── Tabs ── */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
             <div className="px-6 pt-3">
-              <TabsList className="grid w-full grid-cols-2 h-9">
+              <TabsList className="grid w-full grid-cols-3 h-9">
                 <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
                 <TabsTrigger value="output" className="text-xs">Output</TabsTrigger>
+                <TabsTrigger value="logs" className="text-xs">Logs</TabsTrigger>
               </TabsList>
             </div>
 
@@ -954,6 +1033,11 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     );
                   })
                 )}
+              </TabsContent>
+
+              {/* ── Logs ── */}
+              <TabsContent value="logs" className="flex flex-col gap-2 mt-0">
+                <AgendaOccurrenceLogs occurrenceId={selectedOccurrenceId} />
               </TabsContent>
             </div>
           </Tabs>
