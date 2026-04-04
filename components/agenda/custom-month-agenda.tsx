@@ -667,7 +667,7 @@ function WeekHourCell({
         {/* Now line — 1px, full width, spans all day columns */}
         {nowLineAt !== null && (
           <div
-            className="absolute left-0 right-0 h-px bg-primary pointer-events-none z-10"
+            className="absolute left-0 right-0 h-px bg-primary pointer-events-none z-[1]"
             style={{ top: `${(nowLineAt / 60) * 100}%` }}
           />
         )}
@@ -861,7 +861,7 @@ function WeekView({
                 {/* Now dot on gutter — sits on the line, right-aligned to connect with day columns */}
                 {h === nowHour && (
                   <div
-                    className="absolute right-0 translate-x-[5px] -translate-y-[5px] pointer-events-none z-10"
+                    className="absolute right-0 translate-x-[5px] -translate-y-[5px] pointer-events-none z-[1]"
                     style={{ top: `${(nowMinute / 60) * 100}%` }}
                   >
                     <div className="size-[9px] rounded-full bg-primary" style={{ boxShadow: "0 0 6px hsl(var(--primary) / 0.6)" }} />
