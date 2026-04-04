@@ -49,6 +49,7 @@ export type CalendarEvent = {
   runStartedAt?: string | null;
   runFinishedAt?: string | null;
   timezone?: string;
+  scheduledFor?: string | null; // ISO timestamp of the next occurrence's scheduled_for
 };
 
 // EventColor re-exported from @/lib/status-colors
@@ -123,6 +124,35 @@ const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: b
   failed:       { emoji: "", color: "bg-rose-500" },
   needs_retry:  { emoji: "", color: "bg-amber-500" },
 };
+
+// ── Cron countdown (for queued/scheduled events) ─────────────────────────────
+
+function CronCountdown({ scheduledFor }: { scheduledFor: string | null | undefined }) {
+  const now = useNow(1_000);
+  if (!scheduledFor) return null;
+  const targetMs = new Date(scheduledFor).getTime();
+  const diffMs = targetMs - now.getTime();
+  if (diffMs <= 0) return null;
+  const totalSecs = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSecs / 86_400);
+  const hours = Math.floor((totalSecs % 86_400) / 3_600);
+  const mins = Math.floor((totalSecs % 3_600) / 60);
+  const secs = totalSecs % 60;
+  let label: string;
+  if (days > 0) label = `${days}d`;
+  else if (hours > 0) label = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  else if (mins > 0) label = secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  else label = `${secs}s`;
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold tabular-nums text-gray-500 dark:text-gray-400 shrink-0">
+      <svg viewBox="0 0 16 16" fill="none" className="size-2.5 shrink-0" stroke="currentColor" strokeWidth={1.8}>
+        <circle cx="8" cy="8" r="6.5" />
+        <path d="M8 4.5v3.5l2 2" strokeLinecap="round" />
+      </svg>
+      {label}
+    </span>
+  );
+}
 
 function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["latestResult"]; size?: number }) {
   if (!result || !RESULT_INDICATOR[result]) return null;
@@ -263,6 +293,9 @@ function EventPill({ event }: { event: CalendarEvent }) {
             {timeStr}
           </span>
         )}
+        {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
+          <CronCountdown scheduledFor={event.scheduledFor} />
+        )}
         {event.latestResult && event.latestResult !== "scheduled" && event.latestResult !== "queued" && (
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
@@ -343,6 +376,9 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
           >
             {timeStr}{event.timezone ? ` ${getTimezoneAbbr(event.timezone)}` : ''}
           </span>
+        )}
+        {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
+          <CronCountdown scheduledFor={event.scheduledFor} />
         )}
         {event.isRecurring && <RecurringIcon size={10} />}
         {event.latestResult && event.latestResult !== "scheduled" && event.latestResult !== "queued" && (
@@ -940,6 +976,7 @@ export function CustomMonthAgenda({
         runStartedAt: (props.runStartedAt as string) ?? null,
         runFinishedAt: (props.runFinishedAt as string) ?? null,
         timezone: tz,
+        scheduledFor: (props.scheduledFor as string) ?? (e.start ?? null),
       };
     });
   }, [events]);

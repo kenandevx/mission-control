@@ -125,6 +125,8 @@ function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
         runStartedAt: e.run_started_at ?? null,
         runFinishedAt: e.run_finished_at ?? null,
         nextRuns: [],
+        // scheduled_for of the next occurrence — used for live countdown timer
+        scheduledFor: e.starts_at ?? null,
       },
     };
   });
