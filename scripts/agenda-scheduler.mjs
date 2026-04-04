@@ -37,12 +37,12 @@ async function emitSchedulerLog(sql, { workspaceId, agentId, occurrenceId, event
     if (!workspaceId) return;
     // Ensure agent row exists (agent_id is NOT NULL)
     const agentRtId = agentId || "main";
-    let [agentRow] = await sql`SELECT id FROM agents WHERE workspace_id = ${workspaceId} AND runtime_agent_id = ${agentRtId} LIMIT 1`;
+    let [agentRow] = await sql`SELECT id FROM agents WHERE workspace_id = ${workspaceId} AND openclaw_agent_id = ${agentRtId} LIMIT 1`;
     if (!agentRow) {
       [agentRow] = await sql`
-        INSERT INTO agents (workspace_id, runtime_agent_id, name, provider, model, is_active)
-        VALUES (${workspaceId}, ${agentRtId}, ${agentRtId}, 'openclaw', '', true)
-        ON CONFLICT (workspace_id, runtime_agent_id) DO UPDATE SET name = EXCLUDED.name
+        INSERT INTO agents (workspace_id, openclaw_agent_id, status, model)
+        VALUES (${workspaceId}, ${agentRtId}, 'idle', null)
+        ON CONFLICT (workspace_id, openclaw_agent_id) DO UPDATE SET updated_at = now()
         RETURNING id
       `;
     }

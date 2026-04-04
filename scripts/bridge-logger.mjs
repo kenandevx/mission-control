@@ -739,12 +739,35 @@ async function handleCronRunLine(getSql, jobId, line) {
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
     WHERE ao.cron_job_id = ${jobId}
-      AND ao.status IN ('queued', 'running')
     LIMIT 1
   `;
 
   if (occurrences.length === 0) {
-    // No matching occurrence — cron job may have been a manual retry or already synced
+    // No matching occurrence — non-agenda cron job (e.g. memory-audit, healthcheck) or orphaned
+    return;
+  }
+
+  // If the occurrence is already in a terminal state (succeeded/failed/cancelled),
+  // still emit the agenda log but skip DB state transitions (they already happened).
+  const alreadyTerminal = ['succeeded', 'failed', 'cancelled', 'needs_retry'].includes(occurrences[0].status);
+  if (alreadyTerminal) {
+    // Log was missed (e.g. bridge-logger was down) — emit a catch-up log entry only.
+    const occ2 = occurrences[0];
+    const wid2 = (() => { try { return sql`SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1`.then(r => r[0]?.id); } catch { return null; } })();
+    void wid2.then(async (w) => {
+      if (!w) return;
+      await emitAgendaLog(sql, {
+        workspaceId: w,
+        agentDbId: null,
+        agentId: occ2.default_agent_id || 'main',
+        occurrenceId: occ2.occurrence_id,
+        sessionKey: `agent:main:cron:${jobId}`,
+        eventType: run.status === 'ok' ? 'agenda.succeeded' : 'agenda.failed',
+        level: run.status === 'ok' ? 'info' : 'error',
+        message: `[catch-up] Agenda run ${run.status === 'ok' ? 'succeeded' : 'failed'}: "${occ2.title}" (cron job ${jobId})`,
+        rawPayload: { cronJobId: jobId, catchUp: true, durationMs: run.durationMs, model: run.model || null },
+      }).catch(() => {});
+    }).catch(() => {});
     return;
   }
 
