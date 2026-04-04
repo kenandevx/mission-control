@@ -7,6 +7,7 @@ import postgres from "postgres";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
+import { buildCleanEnv } from "./openclaw-config.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,12 +19,6 @@ if (!dbUrl) {
 
 const sql = postgres(dbUrl, { max: 2, prepare: false });
 
-function buildCleanEnv() {
-  const env = { ...process.env };
-  delete env.OPENCLAW_GATEWAY_URL;
-  delete env.OPENCLAW_GATEWAY_TOKEN;
-  return env;
-}
 
 async function main() {
   const out = {

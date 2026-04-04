@@ -44,13 +44,13 @@ export const DOT_COLORS: Record<EventColor, string> = {
 // ── Status → color key mapping ──────────────────────────────────────────────
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:   "blue",
-  queued:      "blue",
-  running:     "indigo",
-  succeeded:   "green",
-  failed:      "rose",
-  needs_retry: "amber",
-  cancelled:   "gray",
+  scheduled:   "blue",   // upcoming — blue dot, no badge
+  queued:      "gray",   // cron job created, waiting to fire — neutral gray
+  running:     "indigo", // agent actively executing — indigo pulse
+  succeeded:   "green",  // done ✓
+  failed:      "rose",   // terminal failure
+  needs_retry: "amber",  // user action required
+  cancelled:   "gray",   // dismissed
 };
 
 export function resolveEventColorKey(event: { status?: string; latestResult?: string | null }): EventColor {

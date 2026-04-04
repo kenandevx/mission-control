@@ -14,6 +14,7 @@ const LOCK_PATH = path.join(STATE_DIR, "bridge-logger.lock");
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.join(os.homedir(), ".openclaw");
 const AGENTS_DIR = path.join(OPENCLAW_HOME, "agents");
 const GATEWAY_LOG_DIR = "/tmp/openclaw";
+const CRON_RUNS_DIR = path.join(OPENCLAW_HOME, "cron", "runs");
 
 const SCAN_INTERVAL_MS = 5000;
 const DEAD_LETTER_REPLAY_MS = 30000;
@@ -49,7 +50,7 @@ function acquireLockOrExit() {
           // PID collision with a very recent timestamp → likely a real concurrent instance
           const now = Date.now();
           const isRecent = (now - previousStartMs) < 30_000; // within 30s
-          if (previousPid === process.pid && isRecent) {
+          if (previousPid !== process.pid && isRecent) {
             console.error(`[bridge-logger] another instance is already running (pid=${previousPid}). Exiting.`);
             process.exit(1);
           }
@@ -581,6 +582,277 @@ async function heartbeat(sql) {
   }
 }
 
+// ── Cron run JSONL watcher ───────────────────────────────────────────────────
+// Watches ~/.openclaw/cron/runs/<jobId>.jsonl for new lines.
+// Each line is a finished cron run. On completion we:
+//   1. Write agenda_run_attempts + agenda_run_steps so the Output tab works.
+//   2. pg_notify('agenda_change') so the calendar updates instantly.
+//   3. Trigger Qdrant cleanup for failed sessions.
+// This replaces the scheduler's polling-based syncCronRunResults() entirely.
+
+function listCronRunFiles() {
+  if (!fs.existsSync(CRON_RUNS_DIR)) return [];
+  return fs
+    .readdirSync(CRON_RUNS_DIR)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => path.join(CRON_RUNS_DIR, f));
+}
+
+/** Parse jobId from the file path: ~/.openclaw/cron/runs/<jobId>.jsonl */
+function cronJobIdFromPath(filePath) {
+  return path.basename(filePath, ".jsonl");
+}
+
+/**
+ * Delete Qdrant memory entries that were written by a failed isolated session.
+ * Parses the session JSONL for memory_store tool result IDs.
+ * We use proper JSON parsing (not regex) to avoid false positives.
+ */
+async function cleanupFailedCronSessionMemories(sessionId) {
+  if (!sessionId) return;
+  const sessionFilePath = path.join(OPENCLAW_HOME, "agents", "main", "sessions", `${sessionId}.jsonl`);
+  const ids = [];
+  try {
+    const raw = fs.readFileSync(sessionFilePath, "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let parsed;
+      try { parsed = JSON.parse(line); } catch { continue; }
+      // Look for tool result lines where the tool was memory_store
+      const role = parsed?.role ?? parsed?.message?.role ?? "";
+      if (role !== "tool") continue;
+      const toolName = parsed?.name ?? parsed?.message?.name ?? "";
+      if (toolName !== "memory_store") continue;
+      // The result content contains the stored memory id
+      const content = parsed?.content ?? parsed?.message?.content ?? "";
+      const text = typeof content === "string" ? content : JSON.stringify(content);
+      const match = text.match(/["']id["']\s*:\s*["']([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["']/i);
+      if (match?.[1]) ids.push(match[1]);
+    }
+  } catch {
+    // Session file may not exist yet or be unreadable — skip silently
+    return;
+  }
+  if (ids.length === 0) return;
+  try {
+    const resp = await fetch("http://localhost:6333/collections/memories/points/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points: [...new Set(ids)] }),
+    });
+    if (resp.ok) {
+      console.log(`[bridge-logger] cron cleanup: deleted ${ids.length} orphaned Qdrant entries from session ${sessionId}`);
+    } else {
+      console.warn(`[bridge-logger] cron cleanup: Qdrant delete returned ${resp.status} for session ${sessionId}`);
+    }
+  } catch (err) {
+    console.warn(`[bridge-logger] cron cleanup: Qdrant request failed for session ${sessionId}:`, err.message);
+  }
+}
+
+/**
+ * Process a single finished cron run line and write results to the DB.
+ * Only handles lines with action === "finished" — ignores anything else.
+ */
+async function handleCronRunLine(getSql, jobId, line) {
+  let run;
+  try { run = JSON.parse(line); } catch { return; }
+
+  if (run?.action !== "finished") return;
+
+  const sql = getSql();
+
+  // Find the occurrence that owns this cron job
+  const occurrences = await sql`
+    SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
+           ao.fallback_attempted, ao.rendered_prompt,
+           ae.title, ae.fallback_model, ae.default_agent_id
+    FROM agenda_occurrences ao
+    JOIN agenda_events ae ON ae.id = ao.agenda_event_id
+    WHERE ao.cron_job_id = ${jobId}
+      AND ao.status IN ('queued', 'running')
+    LIMIT 1
+  `;
+
+  if (occurrences.length === 0) {
+    // No matching occurrence — cron job may have been a manual retry or already synced
+    return;
+  }
+
+  const occ = occurrences[0];
+  const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
+  const succeeded = run.status === "ok";
+  const errorText = String(run.error || "").slice(0, 2000);
+  const summaryText = String(run.summary || "").slice(0, 500);
+
+  if (succeeded) {
+    // ── Success path ──────────────────────────────────────────────────────────
+    const updated = await sql`
+      UPDATE agenda_occurrences
+      SET status = 'succeeded',
+          latest_attempt_no = ${attemptNo},
+          locked_at = null,
+          cron_job_id = null,
+          cron_synced_at = now()
+      WHERE id = ${occ.occurrence_id}
+        AND status IN ('queued', 'running')
+      RETURNING id
+    `;
+    if (updated.length === 0) return; // Another process got there first
+
+    const [attempt] = await sql`
+      INSERT INTO agenda_run_attempts
+        (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary)
+      VALUES
+        (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'succeeded',
+         ${new Date(run.runAtMs || Date.now())},
+         ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
+         ${summaryText})
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `;
+
+    if (attempt?.id) {
+      await sql`
+        INSERT INTO agenda_run_steps
+          (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at)
+        VALUES
+          (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
+           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
+           ${sql.json({ output: summaryText })},
+           'succeeded',
+           ${new Date(run.runAtMs || Date.now())},
+           ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id })})`;
+    console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} succeeded (attempt ${attemptNo})`);
+
+  } else {
+    // ── Failure path ──────────────────────────────────────────────────────────
+    const [attempt] = await sql`
+      INSERT INTO agenda_run_attempts
+        (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
+      VALUES
+        (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'failed',
+         ${new Date(run.runAtMs || Date.now())},
+         ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
+         ${summaryText},
+         ${errorText})
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `;
+
+    if (attempt?.id) {
+      await sql`
+        INSERT INTO agenda_run_steps
+          (run_attempt_id, step_order, agent_id, input_payload, output_payload, status,
+           started_at, finished_at, error_message)
+        VALUES
+          (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
+           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
+           ${sql.json({ output: errorText || summaryText })},
+           'failed',
+           ${new Date(run.runAtMs || Date.now())},
+           ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
+           ${errorText})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    // Qdrant cleanup for failed isolated sessions
+    if (run.sessionId) {
+      cleanupFailedCronSessionMemories(run.sessionId).catch((e) =>
+        console.warn(`[bridge-logger] cron cleanup error for session ${run.sessionId}:`, e.message)
+      );
+    }
+
+    // Load settings to check fallback model threshold
+    const [settings] = await sql`SELECT max_retries, default_fallback_model FROM worker_settings WHERE id = 1 LIMIT 1`;
+    const maxRetries = Math.max(1, Number(settings?.max_retries ?? 1));
+    const globalFallback = String(settings?.default_fallback_model || "").trim();
+    const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
+
+    const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
+
+    if (shouldTryFallback) {
+      // Mark fallback attempted and re-queue — scheduler will create the new cron job
+      await sql`
+        UPDATE agenda_occurrences
+        SET fallback_attempted = true,
+            latest_attempt_no = ${attemptNo},
+            status = 'needs_retry',
+            last_retry_reason = ${'RETRY_EXHAUSTED: primary retries exhausted, fallback model queued'},
+            cron_job_id = null,
+            locked_at = null,
+            cron_synced_at = now()
+        WHERE id = ${occ.occurrence_id}
+      `;
+      // Signal the scheduler to create a new cron job with the fallback model
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({
+        action: 'needs_retry',
+        occurrenceId: occ.occurrence_id,
+        fallbackModel,
+        scheduleFallback: true,
+      })})`;
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
+    } else {
+      // All retries exhausted, no fallback — mark needs_retry and alert
+      await sql`
+        UPDATE agenda_occurrences
+        SET status = 'needs_retry',
+            latest_attempt_no = ${attemptNo},
+            last_retry_reason = ${`RETRY_EXHAUSTED: ${errorText.slice(0, 400)}`},
+            cron_job_id = null,
+            locked_at = null,
+            cron_synced_at = now()
+        WHERE id = ${occ.occurrence_id}
+          AND status IN ('queued', 'running')
+      `;
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: occ.occurrence_id })})`;
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
+
+      // Send Telegram alert via openclaw message (best-effort)
+      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
+    }
+  }
+}
+
+/** Send a Telegram alert for a failed occurrence. Reads chatId from app_settings. */
+async function sendTelegramAlert(getSql, title, occurrenceId, reason) {
+  try {
+    const sql = getSql();
+    const [settings] = await sql`SELECT gateway_token FROM app_settings WHERE id = 1 LIMIT 1`;
+    if (!settings?.gateway_token) return;
+    // Discover chatId from sessions.json
+    const sessionsPath = path.join(OPENCLAW_HOME, "agents", "main", "sessions", "sessions.json");
+    let chatId;
+    try {
+      const data = JSON.parse(fs.readFileSync(sessionsPath, "utf8"));
+      for (const val of Object.values(data)) {
+        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
+          chatId = String(val.deliveryContext.to).replace(/^telegram:/, "");
+          break;
+        }
+      }
+    } catch { return; }
+    if (!chatId) return;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    await execFileAsync("openclaw", [
+      "message", "send",
+      "--channel", "telegram",
+      "--target", chatId,
+      "--message", `⚠️ Agenda event "${title}" needs manual retry\n\nReason: ${String(reason || "").slice(0, 200)}\n\nOpen Mission Control to retry.`,
+    ], { timeout: 30000 });
+  } catch (err) {
+    console.warn("[bridge-logger] Telegram alert failed:", err.message);
+  }
+}
+
 async function main() {
   ensureStateDir();
   acquireLockOrExit();
@@ -619,6 +891,21 @@ async function main() {
 
     const gatewayFiles = listGatewayFiles();
     for (const filePath of gatewayFiles) tailFile(getSql, resetSql, filePath, handleGatewayLine);
+
+    // Watch cron run result files — each file is one job, each line is one completed run.
+    // This is the source of truth for agenda occurrence result sync (replaces scheduler polling).
+    const cronRunFiles = listCronRunFiles();
+    for (const filePath of cronRunFiles) {
+      const jobId = cronJobIdFromPath(filePath);
+      tailFile(
+        getSql,
+        resetSql,
+        filePath,
+        (sql, fp, line) => handleCronRunLine(getSql, jobId, line).catch((err) =>
+          console.error(`[bridge-logger] cron run handler error for job ${jobId}:`, err.message)
+        ),
+      );
+    }
 
     flushOffsets();
   };

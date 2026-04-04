@@ -473,3 +473,11 @@ CREATE INDEX IF NOT EXISTS idx_agenda_occurrences_cron_job ON agenda_occurrences
 
 -- v2.1: rendered_prompt for retry accuracy
 ALTER TABLE agenda_occurrences ADD COLUMN IF NOT EXISTS rendered_prompt TEXT;
+
+-- v3.0: per-event session target (isolated | main) — controls how cron runs the agent
+-- Defaults to 'isolated' (safe, no session pollution).
+ALTER TABLE agenda_events ADD COLUMN IF NOT EXISTS session_target TEXT NOT NULL DEFAULT 'isolated'
+  CHECK (session_target IN ('isolated', 'main'));
+
+-- v3.0: sidebar activity count setting
+ALTER TABLE worker_settings ADD COLUMN IF NOT EXISTS sidebar_activity_count INTEGER NOT NULL DEFAULT 8;

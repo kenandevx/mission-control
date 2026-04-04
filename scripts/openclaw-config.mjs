@@ -69,3 +69,15 @@ export function getGatewayHttpUrl() {
 export function getOpenClawHome() {
   return OPENCLAW_HOME;
 }
+
+/**
+ * Build a clean env object for openclaw CLI subprocesses.
+ * Strips gateway override vars so auto-discovery from openclaw.json is always used.
+ * Single source of truth — import this instead of duplicating the function everywhere.
+ */
+export function buildCleanEnv() {
+  const env = { ...process.env };
+  delete env.OPENCLAW_GATEWAY_URL;
+  delete env.OPENCLAW_GATEWAY_TOKEN;
+  return env;
+}

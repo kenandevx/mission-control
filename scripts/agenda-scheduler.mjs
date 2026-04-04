@@ -1,26 +1,25 @@
 #!/usr/bin/env node
 /**
- * Agenda Scheduler v2 — cron-based execution engine.
+ * Agenda Scheduler v3 — cron-based execution engine.
  *
- * What it does every 60 seconds:
+ * Responsibilities (this process only):
  *   1. For each active event, expand RRULE over next 48h → create occurrences
  *   2. For each upcoming occurrence without a cron job → render prompt → openclaw cron add --at
- *   3. Sync cron run results back to Postgres (run history for UI)
- *   4. Detect failed cron jobs → attempt fallback model retry if configured
- *   5. Detect Qdrant memories from failed isolated sessions → clean up
+ *   3. Listen for pg_notify('agenda_change') for scheduleFallback signals from bridge-logger
+ *      and create a new cron job with the fallback model.
  *
- * No BullMQ. No Redis. No worker process. No stdout/stderr parsing.
- * Execution lives inside the OpenClaw gateway.
+ * Result sync (succeeded/failed/needs_retry) is handled entirely by bridge-logger,
+ * which watches ~/.openclaw/cron/runs/*.jsonl and writes to DB directly.
+ * No polling. No shared state. No race conditions.
  */
 import postgres from "postgres";
 import { execFile } from "node:child_process";
-import { readFile, open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
-import { getRunArtifactDir, ensureArtifactDir, cleanupRunArtifacts, scanArtifactDir } from "./runtime-artifacts.mjs";
+import { getRunArtifactDir } from "./runtime-artifacts.mjs";
+import { buildCleanEnv, getOpenClawHome } from "./openclaw-config.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,7 +29,7 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const OPENCLAW_HOME = process.env.OPENCLAW_HOME || resolve(process.env.HOME || "/home/clawdbot", ".openclaw");
+const OPENCLAW_HOME = getOpenClawHome();
 const SERVICE_NAME = "agenda-scheduler";
 const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
 
@@ -53,14 +52,6 @@ async function writeHeartbeat(status = "running", lastError = null) {
 
 // ── OpenClaw cron helpers ─────────────────────────────────────────────────────
 
-/** Build clean env for openclaw CLI calls — no gateway override vars */
-function buildCleanEnv() {
-  const env = { ...process.env };
-  delete env.OPENCLAW_GATEWAY_URL;
-  delete env.OPENCLAW_GATEWAY_TOKEN;
-  return env;
-}
-
 /** Run openclaw cron command, return parsed JSON output */
 async function cronCmd(args, timeoutMs = 15000) {
   const env = buildCleanEnv();
@@ -74,20 +65,20 @@ async function cronCmd(args, timeoutMs = 15000) {
 }
 
 /** Create a one-shot cron job for an occurrence. Returns the cron job ID. */
-async function createCronJob({ title, message, agentId, model, scheduledFor, chatId, timeoutSeconds }) {
-  // If the scheduled time is already past or within 30s, run immediately.
+async function createCronJob({ title, message, agentId, model, scheduledFor, sessionTarget, timeoutSeconds }) {
+  // If the scheduled time is already past or within 30s, schedule for 30s from now.
   // Cron rejects --at timestamps in the past with INVALID_REQUEST.
   const scheduledMs = new Date(scheduledFor).getTime();
   const msUntil = scheduledMs - Date.now();
   const atValue = msUntil > 30_000 ? new Date(scheduledFor).toISOString() : "30s";
+  const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
   const args = [
     "add",
     "--name", `MC: ${title}`,
     "--at", atValue,
-    "--session", "isolated",
+    "--session", target,
     "--message", message,
     "--agent", agentId || "main",
-    "--best-effort-deliver",
     "--keep-after-run",
     "--json",
   ];
@@ -96,9 +87,6 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, cha
   }
   if (timeoutSeconds && Number.isFinite(Number(timeoutSeconds))) {
     args.push("--timeout-seconds", String(Math.max(60, Number(timeoutSeconds))));
-  }
-  if (chatId) {
-    args.push("--announce", "--channel", "telegram", "--to", String(chatId));
   }
   const result = await cronCmd(args, 20000);
   return result?.id || null;
@@ -133,85 +121,6 @@ async function deleteCronJob(cronJobId) {
   }).catch(() => { /* already deleted is fine */ });
 }
 
-/** Get run history for a cron job. */
-async function getCronRuns(cronJobId, limit = 10) {
-  try {
-    const env = buildCleanEnv();
-    const result = await execFileAsync("openclaw", ["cron", "runs", "--id", cronJobId, "--limit", String(limit)], {
-      timeout: 15000,
-      env,
-      maxBuffer: 5 * 1024 * 1024,
-    });
-    const raw = (result.stdout || "").trim() || (result.stderr || "").trim();
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed?.entries) ? parsed.entries : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Fetch all cron job states at once — returns Map<jobId, state> */
-async function getAllCronJobStates() {
-  try {
-    const env = buildCleanEnv();
-    const result = await execFileAsync("openclaw", ["cron", "list", "--json"], {
-      timeout: 15000,
-      env,
-      maxBuffer: 5 * 1024 * 1024,
-    });
-    const raw = (result.stdout || "").trim() || (result.stderr || "").trim();
-    if (!raw) return new Map();
-    const parsed = JSON.parse(raw);
-    const map = new Map();
-    for (const job of (parsed?.jobs || [])) {
-      map.set(job.id, job.state ?? {});
-    }
-    return map;
-  } catch {
-    return new Map();
-  }
-}
-
-// ── Telegram chat ID discovery ───────────────────────────────────────────────
-let _cachedChatId = null;
-async function getTelegramChatId(agentId = "main") {
-  if (_cachedChatId) return _cachedChatId;
-  const searchPaths = [
-    resolve(OPENCLAW_HOME, `agents/${agentId}/sessions/sessions.json`),
-    resolve(OPENCLAW_HOME, "agents/main/sessions/sessions.json"),
-  ];
-  for (const sessionsPath of searchPaths) {
-    try {
-      const raw = await readFile(sessionsPath, "utf8");
-      const data = JSON.parse(raw);
-      for (const [, val] of Object.entries(data)) {
-        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
-          _cachedChatId = String(val.deliveryContext.to).replace(/^telegram:/, "");
-          return _cachedChatId;
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-// ── Telegram notification ────────────────────────────────────────────────────
-async function sendTelegramNotification(message, agentId = "main") {
-  try {
-    const chatId = await getTelegramChatId(agentId);
-    if (!chatId) return;
-    const env = buildCleanEnv();
-    await execFileAsync("openclaw", [
-      "message", "send",
-      "--channel", "telegram",
-      "--target", chatId,
-      "--message", message,
-    ], { timeout: 30000, env });
-  } catch (err) {
-    console.warn("[agenda-scheduler] Telegram notification failed:", err.message);
-  }
-}
 
 // ── RRULE expansion (unchanged from v1 — works well) ─────────────────────────
 function localTimeToUTC(localDateStr, localTimeStr, timezone) {
@@ -277,7 +186,7 @@ async function expandOccurrences(event, from, to) {
 }
 
 // ── Prompt rendering helper ───────────────────────────────────────────────────
-async function renderPromptForEvent(event) {
+async function renderPromptForEvent(event, occurrenceId) {
   // Load process steps if any
   const processes = await sql`
     select aep.process_version_id, aep.sort_order
@@ -304,13 +213,13 @@ async function renderPromptForEvent(event) {
     }
   }
 
-  // Build artifact dir path WITHOUT creating it.
-  // It only gets created if the agent actually writes files to it.
+  // Build a stable, occurrence-scoped artifact path.
+  // No random UUIDs — deterministic so the agent always writes to the same place.
   const artifactDir = getRunArtifactDir({
     kind: "agenda",
     entityId: event.id,
-    occurrenceId: "cron",
-    runId: randomUUID(),
+    occurrenceId: occurrenceId || "unknown",
+    runId: "artifacts",
   });
 
   return renderUnifiedTaskMessage({
@@ -321,253 +230,7 @@ async function renderPromptForEvent(event) {
   });
 }
 
-// ── Qdrant memory cleanup ────────────────────────────────────────────────────
-async function parseMemoryStoreIds(sessionFilePath) {
-  const ids = [];
-  try {
-    const raw = await readFile(sessionFilePath, "utf8");
-    const lines = raw.split("\n").filter(Boolean);
-    for (const line of lines) {
-      if (!line.includes("memory_store")) continue;
-      const uuidRegex = /["']id["']\s*:\s*["']([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["']/gi;
-      let match;
-      while ((match = uuidRegex.exec(line)) !== null) ids.push(match[1]);
-    }
-  } catch { /* file may not exist */ }
-  return [...new Set(ids)];
-}
 
-async function deleteQdrantMemories(memoryIds) {
-  if (memoryIds.length === 0) return;
-  try {
-    const resp = await fetch("http://localhost:6333/collections/memories/points/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ points: memoryIds }),
-    });
-    if (resp.ok) {
-      console.log(`[agenda-scheduler] Deleted ${memoryIds.length} orphaned memory entries from Qdrant`);
-    } else {
-      console.warn(`[agenda-scheduler] Qdrant delete failed (${resp.status})`);
-    }
-  } catch (err) {
-    console.warn(`[agenda-scheduler] Qdrant delete error:`, err.message);
-  }
-}
-
-/** Clean up Qdrant memories from a failed isolated cron session. */
-async function cleanupFailedCronSession(sessionId) {
-  if (!sessionId) return;
-  // Isolated cron sessions live under agents/main/sessions/<sessionId>.jsonl
-  const sessionFilePath = resolve(OPENCLAW_HOME, `agents/main/sessions/${sessionId}.jsonl`);
-  const memoryIds = await parseMemoryStoreIds(sessionFilePath);
-  if (memoryIds.length > 0) {
-    await deleteQdrantMemories(memoryIds);
-  }
-}
-
-// ── Sync cron run results to Postgres ────────────────────────────────────────
-async function syncCronRunResults() {
-  // Load max_retries from worker_settings (controls fallback model threshold)
-  const [settingsRow] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
-  const maxRetries = Math.max(1, Number(settingsRow?.max_retries ?? 1));
-
-  // Fetch all cron job states once (avoids one list call per occurrence)
-  const cronJobStates = await getAllCronJobStates();
-
-  // Find occurrences that have a cron_job_id but are still in running/queued state
-  const pending = await sql`
-    SELECT ao.id as occurrence_id, ao.cron_job_id, ao.agenda_event_id,
-           ao.status, ao.latest_attempt_no, ao.fallback_attempted,
-           ao.rendered_prompt,
-           ae.title, ae.fallback_model, ae.default_agent_id
-    FROM agenda_occurrences ao
-    JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-    WHERE ao.cron_job_id IS NOT NULL
-      AND ao.status IN ('queued', 'running')
-    LIMIT 100
-  `;
-
-  for (const occ of pending) {
-    try {
-      const runs = await getCronRuns(occ.cron_job_id, 5);
-
-      // Detect "running" state: cron has fired (nextRunAtMs is past) but hasn't finished yet.
-      const jobState = cronJobStates.get(occ.cron_job_id) || {};
-      const nextRunAtMs = jobState?.nextRunAtMs;
-      const latestRunAtMs = runs[0]?.runAtMs || 0;
-      const cronFiredButNotSynced = nextRunAtMs && Date.now() > nextRunAtMs + 10_000 && nextRunAtMs > latestRunAtMs;
-
-      if ((runs.length === 0 || !runs[0].action) && cronFiredButNotSynced) {
-        // Cron fired but no finished entry yet → running
-        if (occ.status === "queued") {
-          await sql`UPDATE agenda_occurrences SET status = 'running', locked_at = now() WHERE id = ${occ.occurrence_id} AND status = 'queued'`;
-          await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "running", occurrenceId: occ.occurrence_id })})`;
-          console.log(`[agenda-scheduler] Occurrence ${occ.occurrence_id} → running`);
-        }
-        continue;
-      }
-
-      if (runs.length === 0) continue;
-
-      if (cronFiredButNotSynced && occ.status === "queued") {
-        await sql`UPDATE agenda_occurrences SET status = 'running', locked_at = now() WHERE id = ${occ.occurrence_id} AND status = 'queued'`;
-        await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "running", occurrenceId: occ.occurrence_id })})`;
-        continue; // will sync on next cycle when finished
-      }
-
-      const latest = runs[0]; // newest first
-
-      if (latest.action === "finished") {
-        if (latest.status === "ok") {
-          // Succeeded
-          const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
-          await sql`
-            UPDATE agenda_occurrences
-            SET status = 'succeeded', latest_attempt_no = ${attemptNo},
-                locked_at = null, cron_synced_at = now()
-            WHERE id = ${occ.occurrence_id} AND status IN ('queued', 'running')
-          `;
-          const [insertedAttempt] = await sql`
-            INSERT INTO agenda_run_attempts
-              (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary)
-            VALUES
-              (${occ.occurrence_id}, ${attemptNo}, ${occ.cron_job_id}, 'succeeded',
-               ${new Date(latest.runAtMs || Date.now())},
-               ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))},
-               ${String(latest.summary || "").slice(0, 500)})
-            ON CONFLICT DO NOTHING
-            RETURNING id
-          `;
-          // Insert a run step so the Output tab shows the agent's response
-          if (insertedAttempt?.id) {
-            // Scan for artifacts the agent may have written
-            const stableArtifactDir = getRunArtifactDir({
-              kind: "agenda",
-              entityId: occ.agenda_event_id,
-              occurrenceId: occ.occurrence_id,
-              runId: "artifacts",
-            });
-            const scannedFiles = await scanArtifactDir(stableArtifactDir);
-            const artifactData = scannedFiles.length > 0 ? { files: scannedFiles } : null;
-            if (scannedFiles.length > 0) {
-              console.log(`[agenda-scheduler] Found ${scannedFiles.length} artifact(s) for occurrence ${occ.occurrence_id}`);
-            }
-            await sql`
-              INSERT INTO agenda_run_steps
-                (run_attempt_id, step_order, agent_id, input_payload, output_payload, artifact_payload, status, started_at, finished_at)
-              VALUES
-                (${insertedAttempt.id}, 0, ${occ.default_agent_id || 'main'},
-                 ${sql.json({ instruction: String(occ.rendered_prompt || '(Prompt stored in cron job)').slice(0, 2000), cronJobId: occ.cron_job_id })},
-                 ${sql.json({ output: String(latest.summary || '').trim() })},
-                 ${artifactData ? sql.json(artifactData) : null},
-                 'succeeded',
-                 ${new Date(latest.runAtMs || Date.now())},
-                 ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))})
-              ON CONFLICT DO NOTHING
-            `;
-          }
-          await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "succeeded", occurrenceId: occ.occurrence_id })})`;
-          console.log(`[agenda-scheduler] Occurrence ${occ.occurrence_id} succeeded via cron`);
-          // Result synced to DB — cron job no longer needed, clean it up
-          await deleteCronJob(occ.cron_job_id).catch(() => {});
-          await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
-
-        } else {
-          // Failed — check if we should try fallback model
-          const fallbackModel = String(occ.fallback_model || "").trim();
-          const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
-
-          // Record the failed attempt
-          const [failedAttempt] = await sql`
-            INSERT INTO agenda_run_attempts
-              (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
-            VALUES
-              (${occ.occurrence_id}, ${attemptNo}, ${occ.cron_job_id}, 'failed',
-               ${new Date(latest.runAtMs || Date.now())},
-               ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))},
-               ${String(latest.summary || latest.error || "").slice(0, 500)},
-               ${String(latest.error || "").slice(0, 500)})
-            ON CONFLICT DO NOTHING
-            RETURNING id
-          `;
-          // Insert a failed step for the Output tab
-          if (failedAttempt?.id) {
-            await sql`
-              INSERT INTO agenda_run_steps
-                (run_attempt_id, step_order, agent_id, input_payload, output_payload, status, started_at, finished_at, error_message)
-              VALUES
-                (${failedAttempt.id}, 0, ${occ.default_agent_id || 'main'},
-                 ${sql.json({ instruction: String(occ.rendered_prompt || '(Prompt stored in cron job)').slice(0, 2000), cronJobId: occ.cron_job_id })},
-                 ${sql.json({ output: String(latest.error || latest.summary || '').trim() })},
-                 'failed',
-                 ${new Date(latest.runAtMs || Date.now())},
-                 ${new Date((latest.runAtMs || Date.now()) + (latest.durationMs || 0))},
-                 ${String(latest.error || '').slice(0, 500)})
-              ON CONFLICT DO NOTHING
-            `;
-          }
-
-          // Clean up Qdrant memories from the failed session
-          if (latest.sessionId) {
-            await cleanupFailedCronSession(latest.sessionId).catch((e) =>
-              console.warn(`[agenda-scheduler] Qdrant cleanup failed for session ${latest.sessionId}:`, e.message)
-            );
-          }
-
-          const attemptedSoFar = Number(occ.latest_attempt_no || 0) + 1;
-          if (fallbackModel && !occ.fallback_attempted && attemptedSoFar >= maxRetries) {
-            // All primary retries exhausted — retry with fallback model
-            console.log(`[agenda-scheduler] Attempting fallback model for ${occ.occurrence_id}: ${fallbackModel}`);
-            try {
-              await editCronJob(occ.cron_job_id, { model: fallbackModel });
-              await runCronJobNow(occ.cron_job_id);
-              await sql`
-                UPDATE agenda_occurrences
-                SET fallback_attempted = TRUE, latest_attempt_no = ${attemptNo},
-                    cron_synced_at = now()
-                WHERE id = ${occ.occurrence_id}
-              `;
-              await sendTelegramNotification(
-                `🔄 Agenda event "${occ.title}" failed — retrying with fallback model (${fallbackModel})`,
-                occ.default_agent_id || "main"
-              );
-            } catch (err) {
-              console.warn(`[agenda-scheduler] Fallback retry failed for ${occ.occurrence_id}:`, err.message);
-              await markNeedsRetry(occ, attemptNo, latest.error || "Fallback retry failed");
-              await deleteCronJob(occ.cron_job_id).catch(() => {});
-              await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
-            }
-          } else {
-            // All retries exhausted
-            await markNeedsRetry(occ, attemptNo, latest.error || "Cron retries exhausted");
-            // Result synced — delete the cron job
-            await deleteCronJob(occ.cron_job_id).catch(() => {});
-            await sql`UPDATE agenda_occurrences SET cron_job_id = NULL WHERE id = ${occ.occurrence_id}`;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`[agenda-scheduler] Sync failed for occurrence ${occ.occurrence_id}:`, err.message);
-    }
-  }
-}
-
-async function markNeedsRetry(occ, attemptNo, reason) {
-  await sql`
-    UPDATE agenda_occurrences
-    SET status = 'needs_retry', latest_attempt_no = ${attemptNo},
-        locked_at = null, last_retry_reason = ${String(reason).slice(0, 500)},
-        cron_synced_at = now()
-    WHERE id = ${occ.occurrence_id} AND status IN ('queued', 'running')
-  `;
-  await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "needs_retry", occurrenceId: occ.occurrence_id })})`;
-  await sendTelegramNotification(
-    `⚠️ Agenda event "${occ.title}" needs manual retry\n\nReason: ${String(reason).slice(0, 200)}\n\nOpen Mission Control to retry.`,
-    occ.default_agent_id || "main"
-  );
-  console.warn(`[agenda-scheduler] Occurrence ${occ.occurrence_id} → needs_retry: ${reason}`);
-}
 
 // ── Main scheduling cycle ─────────────────────────────────────────────────────
 async function runCycle() {
@@ -583,8 +246,6 @@ async function runCycle() {
     WHERE ae.status = 'active'
   `;
 
-  // Discover Telegram chat ID once
-  const chatId = await getTelegramChatId("main");
 
   let scheduled = 0;
 
@@ -614,31 +275,20 @@ async function runCycle() {
         const hoursUntil = (scheduledFor.getTime() - now.getTime()) / 3600000;
         if (hoursUntil > 48 || hoursUntil < -1) continue;
 
-        // Render the prompt
-        const message = await renderPromptForEvent(event);
+        // Render the prompt with the stable, occurrence-scoped artifact path baked in.
+        const message = await renderPromptForEvent(event, occ.id);
 
-        // Store the rendered prompt. Replace the random artifact dir path in the prompt
-        // with a stable occurrence-scoped path so the agent always writes to the same place.
-        const stableArtifactDir = getRunArtifactDir({
-          kind: "agenda",
-          entityId: event.id,
-          occurrenceId: occ.id,
-          runId: "artifacts",
-        });
-        const stableMessage = message.replace(
-          /runtime-artifacts\/agenda\/[^\s]+/g,
-          `runtime-artifacts/agenda/${event.id}/occurrences/${occ.id}/artifacts`
-        );
-        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${stableMessage} WHERE id = ${occ.id}`;
+        // Persist the rendered prompt so retries always use the exact same message.
+        await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
 
-        // Create the cron job
+        // Create the cron job — session target from event config (default: isolated)
         const cronJobId = await createCronJob({
           title: event.title,
           message,
           agentId: event.default_agent_id || "main",
-          model: event.model_override || event.fallback_model || null,
+          model: event.model_override || null,
           scheduledFor,
-          chatId,
+          sessionTarget: event.session_target || "isolated",
           timeoutSeconds: null,
         });
 
@@ -674,9 +324,6 @@ async function runCycle() {
       console.error(`[agenda-scheduler] Event processing failed for event=${event.id}:`, err.message);
     }
   }
-
-  // Sync run results from cron back to Postgres
-  await syncCronRunResults();
 
   console.log(`[agenda-scheduler] Cycle complete — ${events.length} events, ${scheduled} new cron jobs created`);
 }
@@ -729,5 +376,58 @@ process.on("uncaughtException", (err) => console.error("[agenda-scheduler] Uncau
 
 void tick();
 setInterval(() => void tick(), 60_000);
+
+// ── Fallback model listener ────────────────────────────────────────────────────────
+// bridge-logger emits pg_notify('agenda_change', { action:'needs_retry', scheduleFallback:true })
+// when a run fails and a fallback model is configured.
+// We react here by creating a new cron job with the fallback model.
+try {
+  await sql.listen("agenda_change", async (payload) => {
+    let data;
+    try { data = JSON.parse(payload); } catch { return; }
+    if (data?.action !== "needs_retry" || !data?.scheduleFallback || !data?.fallbackModel) return;
+
+    const { occurrenceId, fallbackModel } = data;
+    const [occ] = await sql`
+      SELECT ao.id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target, ao.scheduled_for
+      FROM agenda_occurrences ao
+      JOIN agenda_events ae ON ae.id = ao.agenda_event_id
+      WHERE ao.id = ${occurrenceId} AND ao.status = 'needs_retry'
+      LIMIT 1
+    `;
+    if (!occ) return;
+
+    const message = occ.rendered_prompt || occ.title || "Run agenda task";
+    let cronJobId = null;
+    try {
+      cronJobId = await createCronJob({
+        title: `${occ.title} [fallback]`,
+        message,
+        agentId: occ.default_agent_id || "main",
+        model: fallbackModel,
+        scheduledFor: new Date(), // run immediately
+        sessionTarget: occ.session_target || "isolated",
+        timeoutSeconds: null,
+      });
+    } catch (err) {
+      console.error(`[agenda-scheduler] Failed to create fallback cron job for occurrence ${occurrenceId}:`, err.message);
+      return;
+    }
+
+    if (cronJobId) {
+      await sql`
+        UPDATE agenda_occurrences
+        SET cron_job_id = ${cronJobId}, status = 'queued',
+            locked_at = null, last_retry_reason = ${'FALLBACK_RETRY: retrying with fallback model'}
+        WHERE id = ${occurrenceId} AND status = 'needs_retry'
+      `;
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'queued', occurrenceId })})`;
+      console.log(`[agenda-scheduler] Fallback cron job created for occurrence ${occurrenceId} with model ${fallbackModel}`);
+    }
+  });
+  console.log("[agenda-scheduler] Listening for fallback model signals");
+} catch (err) {
+  console.warn("[agenda-scheduler] Failed to set up fallback listener (non-fatal):", err.message);
+}
 
 console.log("[agenda-scheduler] Started — cron-based scheduler active");
