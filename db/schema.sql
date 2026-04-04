@@ -329,7 +329,7 @@ create table if not exists agenda_occurrences (
   status text not null default 'scheduled' check (status in ('scheduled', 'queued', 'running', 'succeeded', 'failed', 'cancelled')),
   latest_attempt_no integer not null default 0,
   locked_at timestamptz,
-  queue_job_id text,
+  queue_job_id text,              -- legacy BullMQ era column, kept for compatibility
   queued_at timestamptz,
   retry_requested_at timestamptz,
   last_retry_reason text,
@@ -359,7 +359,7 @@ create table if not exists agenda_run_attempts (
   id uuid primary key default gen_random_uuid(),
   occurrence_id uuid not null references agenda_occurrences(id) on delete cascade,
   attempt_no integer not null,
-  queue_job_id text,
+  cron_job_id text, -- openclaw cron job id that produced this attempt
   status text not null default 'running' check (status in ('running', 'succeeded', 'failed')),
   started_at timestamptz not null default now(),
   finished_at timestamptz,
@@ -481,3 +481,15 @@ ALTER TABLE agenda_events ADD COLUMN IF NOT EXISTS session_target TEXT NOT NULL 
 
 -- v3.0: sidebar activity count setting
 ALTER TABLE worker_settings ADD COLUMN IF NOT EXISTS sidebar_activity_count INTEGER NOT NULL DEFAULT 8;
+
+-- v4.0: rename queue_job_id → cron_job_id in agenda_run_attempts (phase 4)
+-- The column held openclaw cron job IDs, not BullMQ queue job IDs.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'agenda_run_attempts' AND column_name = 'queue_job_id'
+  ) THEN
+    ALTER TABLE agenda_run_attempts RENAME COLUMN queue_job_id TO cron_job_id;
+  END IF;
+END $$;

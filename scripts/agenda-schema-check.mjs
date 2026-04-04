@@ -56,7 +56,8 @@ export async function assertAgendaSchema(sql) {
 
   // ── agenda_run_attempts ───────────────────────────────────────────────────
   const attemptCols = await getTableColumns(sql, 'agenda_run_attempts');
-  const requiredAttemptCols = ['queue_job_id', 'error_message', 'summary'];
+  // cron_job_id was renamed from queue_job_id in phase 4
+  const requiredAttemptCols = ['cron_job_id', 'error_message', 'summary'];
   const missingAttempt = requiredAttemptCols.filter((c) => !attemptCols.has(c));
   if (missingAttempt.length > 0) {
     errors.push(`agenda_run_attempts missing columns: ${missingAttempt.join(', ')}`);

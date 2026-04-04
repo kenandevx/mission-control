@@ -4,6 +4,10 @@ import path from "node:path";
 import readline from "node:readline";
 import os from "node:os";
 import postgres from "postgres";
+import {
+  transitionOccurrenceToSucceeded,
+  transitionOccurrenceToNeedsRetry,
+} from "./agenda-domain.mjs";
 
 const WORKSPACE_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
 const STATE_DIR = path.join(WORKSPACE_ROOT, ".runtime", "bridge-logger");
@@ -652,7 +656,14 @@ async function cleanupFailedCronSessionMemories(sessionId) {
 
 /**
  * Process a single finished cron run line and write results to the DB.
- * Only handles lines with action === "finished" — ignores anything else.
+ *
+ * Flow (per run):
+ *   1. Find occurrence by cron_job_id — status must be queued or running
+ *   2. Claim it: queued → running with locked_at = run start time
+ *      (enables the stale-running sweep in the scheduler)
+ *   3. Write final result via domain transitions (succeeded / needs_retry)
+ *   4. Write agenda_run_attempts + agenda_run_steps (cron_job_id column)
+ *   5. pg_notify so the UI updates immediately
  */
 async function handleCronRunLine(getSql, jobId, line) {
   let run;
@@ -662,11 +673,11 @@ async function handleCronRunLine(getSql, jobId, line) {
 
   const sql = getSql();
 
-  // Find the occurrence that owns this cron job
+  // Find the occurrence that owns this cron job.
   const occurrences = await sql`
     SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
-           ao.fallback_attempted, ao.rendered_prompt,
-           ae.title, ae.fallback_model, ae.default_agent_id
+           ao.fallback_attempted, ao.rendered_prompt, ao.status,
+           ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
     WHERE ao.cron_job_id = ${jobId}
@@ -684,30 +695,36 @@ async function handleCronRunLine(getSql, jobId, line) {
   const succeeded = run.status === "ok";
   const errorText = String(run.error || "").slice(0, 2000);
   const summaryText = String(run.summary || "").slice(0, 500);
+  const startedAt = new Date(run.runAtMs || Date.now());
+  const finishedAt = new Date((run.runAtMs || Date.now()) + (run.durationMs || 0));
+
+  // 4A: Claim the occurrence as running before writing the final result.
+  // locked_at is set to the actual run start time so the stale-running sweep
+  // has accurate timing data (not just "when bridge-logger processed this").
+  if (occ.status === 'queued') {
+    await sql`
+      UPDATE agenda_occurrences
+      SET status = 'running',
+          locked_at = ${startedAt}
+      WHERE id = ${occ.occurrence_id}
+        AND status = 'queued'
+    `;
+  }
 
   if (succeeded) {
     // ── Success path ──────────────────────────────────────────────────────────
-    const updated = await sql`
-      UPDATE agenda_occurrences
-      SET status = 'succeeded',
-          latest_attempt_no = ${attemptNo},
-          locked_at = null,
-          cron_job_id = null,
-          cron_synced_at = now()
-      WHERE id = ${occ.occurrence_id}
-        AND status IN ('queued', 'running')
-      RETURNING id
-    `;
-    if (updated.length === 0) return; // Another process got there first
+    const written = await transitionOccurrenceToSucceeded(sql, {
+      occurrenceId: occ.occurrence_id,
+      attemptNo,
+    });
+    if (!written) return; // Another process got there first (race guard)
 
     const [attempt] = await sql`
       INSERT INTO agenda_run_attempts
-        (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary)
+        (occurrence_id, attempt_no, cron_job_id, status, started_at, finished_at, summary)
       VALUES
         (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'succeeded',
-         ${new Date(run.runAtMs || Date.now())},
-         ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
-         ${summaryText})
+         ${startedAt}, ${finishedAt}, ${summaryText})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -720,9 +737,7 @@ async function handleCronRunLine(getSql, jobId, line) {
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
            ${sql.json({ output: summaryText })},
-           'succeeded',
-           ${new Date(run.runAtMs || Date.now())},
-           ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))})
+           'succeeded', ${startedAt}, ${finishedAt})
         ON CONFLICT DO NOTHING
       `;
     }
@@ -734,13 +749,10 @@ async function handleCronRunLine(getSql, jobId, line) {
     // ── Failure path ──────────────────────────────────────────────────────────
     const [attempt] = await sql`
       INSERT INTO agenda_run_attempts
-        (occurrence_id, attempt_no, queue_job_id, status, started_at, finished_at, summary, error_message)
+        (occurrence_id, attempt_no, cron_job_id, status, started_at, finished_at, summary, error_message)
       VALUES
         (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'failed',
-         ${new Date(run.runAtMs || Date.now())},
-         ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
-         ${summaryText},
-         ${errorText})
+         ${startedAt}, ${finishedAt}, ${summaryText}, ${errorText})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -754,10 +766,7 @@ async function handleCronRunLine(getSql, jobId, line) {
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
            ${sql.json({ output: errorText || summaryText })},
-           'failed',
-           ${new Date(run.runAtMs || Date.now())},
-           ${new Date((run.runAtMs || Date.now()) + (run.durationMs || 0))},
-           ${errorText})
+           'failed', ${startedAt}, ${finishedAt}, ${errorText})
         ON CONFLICT DO NOTHING
       `;
     }
@@ -778,19 +787,18 @@ async function handleCronRunLine(getSql, jobId, line) {
     const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
 
     if (shouldTryFallback) {
-      // Mark fallback attempted and re-queue — scheduler will create the new cron job
+      // Mark fallback_attempted before transitioning — prevents a second fallback attempt
+      // if the scheduler sees this before the status updates.
       await sql`
         UPDATE agenda_occurrences
-        SET fallback_attempted = true,
-            latest_attempt_no = ${attemptNo},
-            status = 'needs_retry',
-            last_retry_reason = ${'RETRY_EXHAUSTED: primary retries exhausted, fallback model queued'},
-            cron_job_id = null,
-            locked_at = null,
-            cron_synced_at = now()
+        SET fallback_attempted = true, cron_synced_at = now()
         WHERE id = ${occ.occurrence_id}
       `;
-      // Signal the scheduler to create a new cron job with the fallback model
+      await transitionOccurrenceToNeedsRetry(sql, {
+        occurrenceId: occ.occurrence_id,
+        attemptNo,
+        reasonText: 'RETRY_EXHAUSTED: primary retries exhausted, fallback model queued',
+      });
       await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({
         action: 'needs_retry',
         occurrenceId: occ.occurrence_id,
@@ -800,17 +808,12 @@ async function handleCronRunLine(getSql, jobId, line) {
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
     } else {
       // All retries exhausted, no fallback — mark needs_retry and alert
-      await sql`
-        UPDATE agenda_occurrences
-        SET status = 'needs_retry',
-            latest_attempt_no = ${attemptNo},
-            last_retry_reason = ${`RETRY_EXHAUSTED: ${errorText.slice(0, 400)}`},
-            cron_job_id = null,
-            locked_at = null,
-            cron_synced_at = now()
-        WHERE id = ${occ.occurrence_id}
-          AND status IN ('queued', 'running')
-      `;
+      await transitionOccurrenceToNeedsRetry(sql, {
+        occurrenceId: occ.occurrence_id,
+        attemptNo,
+        reasonText: `RETRY_EXHAUSTED: ${errorText.slice(0, 400)}`,
+      });
+      await sql`UPDATE agenda_occurrences SET cron_synced_at = now() WHERE id = ${occ.occurrence_id}`;
       await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: occ.occurrence_id })})`;
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
 
@@ -819,7 +822,6 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
   }
 }
-
 /** Send a Telegram alert for a failed occurrence. Reads chatId from app_settings. */
 async function sendTelegramAlert(getSql, title, occurrenceId, reason) {
   try {
