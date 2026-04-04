@@ -33,6 +33,8 @@ export async function assertAgendaSchema(sql) {
     'fallback_attempted',
     'cron_synced_at',
     'rendered_prompt',
+    // v3 dependencies
+    'skip_reason',
   ];
   const missingOcc = requiredOccurrenceCols.filter((c) => !occCols.has(c));
   if (missingOcc.length > 0) {
@@ -48,6 +50,8 @@ export async function assertAgendaSchema(sql) {
     'session_target',
     'fallback_model',
     'model_override',
+    'depends_on_event_id',
+    'dependency_timeout_hours',
   ];
   const missingEvt = requiredEventCols.filter((c) => !evtCols.has(c));
   if (missingEvt.length > 0) {

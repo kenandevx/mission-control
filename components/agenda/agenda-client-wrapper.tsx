@@ -81,12 +81,15 @@ function buildFormFromEvent(event: AgendaEventSummary): Partial<AgendaEventFormD
     modelOverride: event.modelOverride ?? "",
     fallbackModel: (event as Record<string, unknown>).fallbackModel as string ?? "",
     sessionTarget: ((event as Record<string, unknown>).sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main",
+    dependsOnEventId: (event as Record<string, unknown>).dependsOnEventId as string ?? "",
+    dependencyTimeoutHours: (event as Record<string, unknown>).dependencyTimeoutHours as number ?? 0,
   };
 }
 
 export function AgendaClientWrapper() {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [processes, setProcesses] = useState<ProcessOption[]>([]);
+  const [allEvents, setAllEvents] = useState<{ id: string; title: string }[]>([]);
   const [agendaInitialReady, setAgendaInitialReady] = useState(false);
   const [contentReady, setContentReady] = useState(false);
 
@@ -168,8 +171,19 @@ export function AgendaClientWrapper() {
     }
   }, [processes.length]);
 
+  const loadAllEventsForPicker = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agenda/events?limit=200", { cache: "reload" });
+      const json = await res.json();
+      if (json.events) {
+        setAllEvents((json.events as { id: string; title: string }[]).map((e) => ({ id: e.id, title: e.title })));
+      }
+    } catch { /* non-fatal */ }
+  }, []);
+
   const openNewEventModal = () => {
     void loadProcessOptions();
+    void loadAllEventsForPicker();
     setEditingEvent(null);
     setEditingFormData({});
     setEventModalOpen(true);
@@ -177,6 +191,7 @@ export function AgendaClientWrapper() {
 
   const handleCopyEvent = useCallback((event: AgendaEventSummary) => {
     void loadProcessOptions();
+    void loadAllEventsForPicker();
     // Open the create modal pre-filled with the copied event's data (no editingEvent = creates new)
     setEditingEvent(null);
     setEditingFormData({
@@ -188,6 +203,7 @@ export function AgendaClientWrapper() {
 
   const handleDayClick = useCallback((date: Date) => {
     void loadProcessOptions();
+    void loadAllEventsForPicker();
     const dateStr = date.toISOString().split("T")[0]; // yyyy-MM-dd
     setEditingEvent(null);
     setEditingFormData({ startDate: dateStr });
@@ -371,6 +387,8 @@ export function AgendaClientWrapper() {
         modelOverride: data.modelOverride || "",
         fallbackModel: data.fallbackModel || "",
         sessionTarget: data.sessionTarget || "isolated",
+        dependsOnEventId: data.dependsOnEventId || null,
+        dependencyTimeoutHours: data.dependencyTimeoutHours || null,
         timeStepMinutes: data.timeStepMinutes,
       };
 
@@ -424,6 +442,8 @@ export function AgendaClientWrapper() {
           modelOverride: data.modelOverride || "",
           fallbackModel: data.fallbackModel || "",
           sessionTarget: data.sessionTarget || "isolated",
+          dependsOnEventId: data.dependsOnEventId || null,
+          dependencyTimeoutHours: data.dependencyTimeoutHours || null,
           timeStepMinutes: data.timeStepMinutes,
         }),
       });
@@ -494,6 +514,7 @@ export function AgendaClientWrapper() {
         open={eventModalOpen}
         agents={agents}
         processes={processes}
+        allEvents={allEvents}
         initialData={editingFormData}
         isReadOnly={
           editingEvent?.latestResult === "succeeded" &&

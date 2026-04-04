@@ -294,6 +294,81 @@ async function renderPromptForEvent(event, occurrenceId) {
 
 
 
+
+// ── Dependency check ──────────────────────────────────────────────────────────
+/**
+ * Check if event B's dependency (depends_on_event_id) is satisfied for a
+ * given scheduled time window.
+ *
+ * Returns:
+ *   { ok: true }                  — no dependency or dependency succeeded
+ *   { ok: false, skip: true,  reason }  — dependency failed/missed → skip this occurrence
+ *   { ok: false, skip: false, reason }  — dependency still running/queued → wait (retry next cycle)
+ *
+ * "Matching occurrence" = closest occurrence of event A whose scheduled_for
+ * falls within ±24h of B's scheduled_for. This handles slight timing offsets
+ * between recurring events without mixing up different days.
+ */
+async function checkDependency(sql, event, scheduledFor) {
+  if (!event.depends_on_event_id) return { ok: true };
+
+  const window = 24 * 3600 * 1000; // ±24h match window
+  const from = new Date(scheduledFor.getTime() - window);
+  const to   = new Date(scheduledFor.getTime() + window);
+
+  const [depOcc] = await sql`
+    SELECT ao.id, ao.status, ao.scheduled_for, ao.skip_reason
+    FROM agenda_occurrences ao
+    WHERE ao.agenda_event_id = ${event.depends_on_event_id}
+      AND ao.scheduled_for BETWEEN ${from} AND ${to}
+    ORDER BY ABS(EXTRACT(EPOCH FROM (ao.scheduled_for - ${scheduledFor}::timestamptz)))
+    LIMIT 1
+  `;
+
+  // Dependency occurrence doesn't exist yet — event A hasn't been scheduled this cycle.
+  // Wait; it will appear on a future cycle.
+  if (!depOcc) {
+    return { ok: false, skip: false, reason: "Dependency occurrence not yet scheduled — waiting" };
+  }
+
+  if (depOcc.status === 'succeeded') {
+    return { ok: true };
+  }
+
+  // Dependency skipped/failed/cancelled → skip B too (don't pile up broken chain)
+  if (['failed', 'cancelled', 'skipped'].includes(depOcc.status)) {
+    return {
+      ok: false, skip: true,
+      reason: `Dependency event failed/skipped (occurrence ${depOcc.id}, status: ${depOcc.status}) — skipping this occurrence`,
+    };
+  }
+
+  // Dependency needs_retry — skip B; user must fix A first
+  if (depOcc.status === 'needs_retry') {
+    return {
+      ok: false, skip: true,
+      reason: `Dependency occurrence ${depOcc.id} needs_retry — skipping until A is resolved`,
+    };
+  }
+
+  // Check timeout if configured
+  if (event.dependency_timeout_hours) {
+    const ageHours = (Date.now() - new Date(depOcc.scheduled_for).getTime()) / 3_600_000;
+    if (ageHours > event.dependency_timeout_hours) {
+      return {
+        ok: false, skip: true,
+        reason: `Dependency timed out after ${event.dependency_timeout_hours}h (occurrence ${depOcc.id} still ${depOcc.status})`,
+      };
+    }
+  }
+
+  // A is queued/running/scheduled — B waits
+  return {
+    ok: false, skip: false,
+    reason: `Waiting for dependency occurrence ${depOcc.id} (status: ${depOcc.status})`,
+  };
+}
+
 // ── Main scheduling cycle ─────────────────────────────────────────────────────
 async function runCycle() {
   const now = new Date();
@@ -405,10 +480,37 @@ async function runCycle() {
         }
 
         // Skip terminal states — never re-fire completed/cancelled/failed work
-        if (["succeeded", "failed", "cancelled", "needs_retry"].includes(occ.status)) continue;
+        if (["succeeded", "failed", "cancelled", "needs_retry", "skipped"].includes(occ.status)) continue;
 
         // Skip if already has a live cron job
         if (occ.cron_job_id) continue;
+
+        // ── Dependency check ───────────────────────────────────────────────
+        const dep = await checkDependency(sql, event, scheduledFor);
+        if (!dep.ok) {
+          if (dep.skip) {
+            // Dependency failed/timed-out — skip this occurrence permanently
+            await sql`
+              UPDATE agenda_occurrences
+              SET status = 'skipped', skip_reason = ${dep.reason}
+              WHERE id = ${occ.id} AND status NOT IN ('succeeded','failed','cancelled','skipped','needs_retry')
+            `;
+            await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'skipped', occurrenceId: occ.id })})`;
+            await emitSchedulerLog(sql, {
+              workspaceId: event.workspace_id,
+              agentId: event.default_agent_id || "main",
+              occurrenceId: occ.id,
+              eventType: "agenda.skipped",
+              level: "warning",
+              message: `Occurrence skipped (dependency): ${dep.reason}`,
+            });
+            console.warn(`[agenda-scheduler] Occurrence ${occ.id} ("${event.title}") skipped: ${dep.reason}`);
+          } else {
+            // Dependency still pending — log and wait for next cycle
+            console.log(`[agenda-scheduler] Occurrence ${occ.id} ("${event.title}") waiting: ${dep.reason}`);
+          }
+          continue;
+        }
 
         // Schedule window: past occurrences (any age) get fired immediately as catch-up.
         // Future occurrences beyond 48h get their cron job created when they come closer.

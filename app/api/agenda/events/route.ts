@@ -342,6 +342,8 @@ export async function POST(request: Request) {
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
       const fallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
       const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
+      const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;
+      const dependencyTimeoutHours = body.dependencyTimeoutHours ? Number(body.dependencyTimeoutHours) || null : null;
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
         ? body.processVersionIds.map(String)
         : [];

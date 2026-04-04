@@ -37,7 +37,7 @@ import {
   IconCpu,
   IconShieldCheck,
   IconServer,
-} from "@tabler/icons-react";
+  IconLink } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgendaSimulateModal } from "@/components/agenda/agenda-simulate-modal";
@@ -75,6 +75,8 @@ export type AgendaEventFormData = {
   executionWindowMinutes: number;
   fallbackModel: string;
   sessionTarget: "isolated" | "main";
+  dependsOnEventId: string;        // "" = no dependency
+  dependencyTimeoutHours: number;  // 0 = wait indefinitely
   timeStepMinutes?: number;
 };
 
@@ -85,6 +87,7 @@ type Props = {
   open: boolean;
   agents?: AgentOption[];
   processes?: ProcessOption[];
+  allEvents?: { id: string; title: string }[];   // for dependency picker
   initialData?: Partial<AgendaEventFormData>;
   isReadOnly?: boolean;
   onClose: () => void;
@@ -206,6 +209,8 @@ const defaultForm: AgendaEventFormData = {
   executionWindowMinutes: 30,
   fallbackModel: "",
   sessionTarget: "isolated",
+  dependsOnEventId: "",
+  dependencyTimeoutHours: 0,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -260,6 +265,8 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
     executionWindowMinutes: data.executionWindowMinutes ?? 30,
     fallbackModel: data.fallbackModel ?? "",
     sessionTarget: (data.sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main",
+    dependsOnEventId: data.dependsOnEventId ?? "",
+    dependencyTimeoutHours: data.dependencyTimeoutHours ?? 0,
   };
 }
 
@@ -312,7 +319,7 @@ function StepIndicator({ currentStep, onStepClick, canReach }: { currentStep: nu
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPTY_PROCESSES, initialData, isReadOnly, onClose, onSave }: Props) {
+export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPTY_PROCESSES, allEvents = [], initialData, isReadOnly, onClose, onSave }: Props) {
   const isEditing = !!initialData?.title;
   const [form, setForm] = useState<AgendaEventFormData>(initialData ? buildInitialForm(initialData) : defaultForm);
   const [error, setError] = useState("");
@@ -758,6 +765,51 @@ setAgendaTimeStepMinutes(safe);
         )}
       </div>
 
+      {/* Dependency — only show when there are other events to pick from */}
+      {allEvents.filter((e) => !initialData?.editOccurrenceId || true).length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+            <IconLink className="size-3.5 text-primary" />
+            Depends on event
+          </Label>
+          <Select
+            value={form.dependsOnEventId || "__none__"}
+            onValueChange={(v) => updateField("dependsOnEventId", v === "__none__" ? "" : v)}
+          >
+            <SelectTrigger className="h-10 w-full cursor-pointer">
+              <SelectValue>
+                {form.dependsOnEventId
+                  ? (allEvents.find((e) => e.id === form.dependsOnEventId)?.title ?? "Unknown event")
+                  : "No dependency"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">No dependency</SelectItem>
+              {allEvents.map((e) => (
+                <SelectItem key={e.id} value={e.id}>{e.title}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {form.dependsOnEventId && (
+            <div className="flex flex-col gap-1.5 mt-1">
+              <Label className="text-xs font-semibold text-foreground/80">Timeout (hours, 0 = wait indefinitely)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={168}
+                value={form.dependencyTimeoutHours}
+                onChange={(e) => updateField("dependencyTimeoutHours", Math.max(0, Number(e.target.value)))}
+                className="h-10 w-32"
+                placeholder="0"
+              />
+              <p className="text-xs text-muted-foreground">
+                This event will wait for the matching occurrence of the selected event to succeed. If that occurrence is skipped, failed, or times out — this occurrence is also skipped.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Status — full width */}
       <div className="flex flex-col gap-1.5">
         <Label className="text-xs font-semibold text-foreground/80">Status</Label>
@@ -1023,6 +1075,12 @@ setAgendaTimeStepMinutes(safe);
           {/* executionWindowMinutes uses global default from settings */}
           {form.fallbackModel && <ReviewRow label="Fallback" value={models.find((m) => m.id === form.fallbackModel)?.alias || form.fallbackModel} />}
           <ReviewRow label="Execution" value={form.sessionTarget === "main" ? "Main session" : "Isolated session"} />
+          {form.dependsOnEventId && (
+            <ReviewRow
+              label="Depends on"
+              value={allEvents.find((e) => e.id === form.dependsOnEventId)?.title ?? form.dependsOnEventId}
+            />
+          )}
 
           {/* Simulate section — only show if there's something to simulate */}
           {(form.freePrompt || form.processVersionIds.length > 0) && (
