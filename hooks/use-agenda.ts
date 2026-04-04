@@ -30,6 +30,10 @@ export type AgendaEvent = {
   latest_occurrence_status?: string | null;
   run_started_at?: string | null;
   run_finished_at?: string | null;
+  // scheduled_for of the next occurrence — used for the cron countdown timer in FullCalendar.
+  // One-time events: the occurrence's scheduled_for from agenda_occurrences.
+  // Recurring events: the specific occurrence ISO timestamp (from RRULE expansion).
+  scheduled_for?: string | null;
 };
 
 export type AgendaOccurrence = {
@@ -125,8 +129,11 @@ function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
         runStartedAt: e.run_started_at ?? null,
         runFinishedAt: e.run_finished_at ?? null,
         nextRuns: [],
-        // scheduled_for of the next occurrence — used for live countdown timer
-        scheduledFor: e.starts_at ?? null,
+        // scheduled_for of this specific occurrence — used for live countdown timer.
+        // One-time: occurrence's scheduled_for from agenda_occurrences.
+        // Recurring: per-occurrence ISO timestamp from RRULE expansion.
+        // Falls back to starts_at for pre-fix events.
+        scheduledFor: e.scheduled_for ?? e.starts_at ?? null,
       },
     };
   });

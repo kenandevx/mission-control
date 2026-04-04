@@ -181,6 +181,9 @@ export async function GET(request: Request) {
               // Store the series end separately so the UI can display "until April 17" etc.
               _seriesEndsAt: event.ends_at ?? null,
               _occurrenceDate: correctedDate,
+              // scheduled_for: ISO timestamp of this specific occurrence — used for the cron
+              // timer countdown in the FullCalendar UI (distinct from series starts_at).
+              scheduled_for: correctedOcc.toISOString(),
               // Preserve the intended local time for display, even across DST gaps
               // (e.g. 02:08 CET doesn't exist on spring-forward day, but we still want to show "02:08")
               _intendedLocalTime: localTime,
@@ -237,12 +240,13 @@ export async function GET(request: Request) {
           }
         }
 
-        // For non-recurring: use latest occurrence status + timing
+        // For non-recurring: use latest occurrence status + timing + scheduled_for
         const nonRecurringIds = expandedIds.filter((id) => !recurringEventIds.includes(id as string));
         if (nonRecurringIds.length > 0) {
           const occRows = await sql`
             select distinct on (ao.agenda_event_id)
               ao.agenda_event_id, ao.status as latest_occurrence_status,
+              ao.scheduled_for as next_scheduled_for,
               ra.started_at as run_started_at, ra.finished_at as run_finished_at
             from agenda_occurrences ao
             left join agenda_run_attempts ra
@@ -250,17 +254,19 @@ export async function GET(request: Request) {
             where ao.agenda_event_id = ANY(${nonRecurringIds as string[]})
             order by ao.agenda_event_id, ao.scheduled_for desc
           `;
-          const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null }>();
+          const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
           for (const r of occRows) statusMap.set(r.agenda_event_id, {
             status: r.latest_occurrence_status,
             run_started_at: r.run_started_at,
             run_finished_at: r.run_finished_at,
+            next_scheduled_for: r.next_scheduled_for,
           });
           for (const e of expanded) {
             const eid = (e as Record<string, unknown>).id as string;
             if (!recurringEventIds.includes(eid)) {
               const info = statusMap.get(eid);
               (e as Record<string, unknown>).latest_occurrence_status = info?.status ?? null;
+              (e as Record<string, unknown>).scheduled_for = info?.next_scheduled_for ?? (e as Record<string, unknown>).starts_at ?? null;
               if (info) {
                 (e as Record<string, unknown>).run_started_at = info.run_started_at;
                 (e as Record<string, unknown>).run_finished_at = info.run_finished_at;
@@ -279,6 +285,7 @@ export async function GET(request: Request) {
         select distinct on (ao.agenda_event_id)
           ao.agenda_event_id,
           ao.status as latest_occurrence_status,
+          ao.scheduled_for as next_scheduled_for,
           ara.started_at as run_started_at,
           ara.finished_at as run_finished_at
         from agenda_occurrences ao
@@ -299,15 +306,17 @@ export async function GET(request: Request) {
           end,
           ao.scheduled_for desc
       `;
-      const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null }>();
+      const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
       for (const r of occRows) statusMap.set(r.agenda_event_id, {
         status: r.latest_occurrence_status,
         run_started_at: r.run_started_at ?? null,
         run_finished_at: r.run_finished_at ?? null,
+        next_scheduled_for: r.next_scheduled_for ?? null,
       });
       for (const e of events) {
         const info = statusMap.get((e as Record<string, unknown>).id as string);
         (e as Record<string, unknown>).latest_occurrence_status = info?.status ?? null;
+        (e as Record<string, unknown>).scheduled_for = info?.next_scheduled_for ?? (e as Record<string, unknown>).starts_at ?? null;
         (e as Record<string, unknown>).run_started_at = info?.run_started_at ?? null;
         (e as Record<string, unknown>).run_finished_at = info?.run_finished_at ?? null;
       }
