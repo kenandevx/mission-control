@@ -795,26 +795,38 @@ async function handleCronRunLine(getSql, jobId, line) {
   // 4A: Claim the occurrence as running before writing the final result.
   // locked_at is set to the actual run start time so the stale-running sweep
   // has accurate timing data (not just "when bridge-logger processed this").
+  // Only claim if still queued — another bridge-logger instance may have won the race.
   if (occ.status === 'queued') {
-    await sql`
+    const [updated] = await sql`
       UPDATE agenda_occurrences
       SET status = 'running',
           locked_at = ${startedAt}
       WHERE id = ${occ.occurrence_id}
         AND status = 'queued'
+      RETURNING id
     `;
-    // Emit: agenda run started
-    await emitAgendaLog(sql, {
-      workspaceId: wid,
-      agentDbId,
-      agentId: occ.default_agent_id || 'main',
-      occurrenceId: occ.occurrence_id,
-      sessionKey,
-      eventType: 'agenda.started',
-      level: 'info',
-      message: `Agenda run started: "${occ.title}" (attempt ${attemptNo}, cron job ${jobId})`,
-      rawPayload: { cronJobId: jobId, attemptNo, model: run.model || null, sessionId: run.sessionId || null },
-    });
+    if (!updated) {
+      console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} already claimed by another process, skipping started transition`);
+    } else {
+      console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} claimed as running (was queued)`);
+      // Emit: agenda run started
+      await emitAgendaLog(sql, {
+        workspaceId: wid,
+        agentDbId,
+        agentId: occ.default_agent_id || 'main',
+        occurrenceId: occ.occurrence_id,
+        sessionKey,
+        eventType: 'agenda.started',
+        level: 'info',
+        message: `Agenda run started: "${occ.title}" (attempt ${attemptNo}, cron job ${jobId})`,
+        rawPayload: { cronJobId: jobId, attemptNo, model: run.model || null, sessionId: run.sessionId || null },
+      });
+      // Notify SSE stream so UI immediately sees the running state
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'started', occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id })})`;
+      console.log(`[bridge-logger] cron ${jobId} → SSE notified for running state (occurrence ${occ.occurrence_id})`);
+    }
+  } else {
+    console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} status=${occ.status}, skipping started transition`);
   }
 
   if (succeeded) {
