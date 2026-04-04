@@ -110,11 +110,12 @@ async function cronCmd(args, timeoutMs = 15000) {
 
 /** Create a one-shot cron job for an occurrence. Returns the cron job ID. */
 async function createCronJob({ title, message, agentId, model, scheduledFor, sessionTarget, timeoutSeconds }) {
-  // If the scheduled time is already past or within 30s, schedule for 30s from now.
-  // Cron rejects --at timestamps in the past with INVALID_REQUEST.
+  // If the scheduled time is already past, use "0s" to fire immediately (the occurrence
+  // is already overdue — no point adding more delay). Otherwise always use the absolute
+  // ISO timestamp so the cron fires at the exact scheduled second.
   const scheduledMs = new Date(scheduledFor).getTime();
   const msUntil = scheduledMs - Date.now();
-  const atValue = msUntil > 30_000 ? new Date(scheduledFor).toISOString() : "30s";
+  const atValue = msUntil > 0 ? new Date(scheduledFor).toISOString() : "0s";
   const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
   // Main session cron jobs require --system-event; isolated sessions use --message.
   const isMain = target === "main";
