@@ -895,25 +895,33 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   )}
 
 
-                  {/* Latest Occurrence */}
+                  {/* Latest Attempt */}
                   {selectedOccurrence && (
-                    <Card data-slot="card" className={selectedOccurrence.status === "failed" ? "border-red-200 dark:border-red-900" : ""}>
+                    <Card data-slot="card" className={(selectedAttempt?.status ?? selectedOccurrence.status) === "failed" ? "border-red-200 dark:border-red-900" : ""}>
                       <CardHeader>
                         <CardDescription>Latest Run</CardDescription>
                         <CardTitle className="text-lg font-semibold">
-                          <ResultBadge status={selectedOccurrence.status} />
+                          {selectedAttempt ? (
+                            <ResultBadge status={selectedAttempt.status} />
+                          ) : (
+                            <span className="text-muted-foreground text-sm font-normal">No attempt yet</span>
+                          )}
                         </CardTitle>
                         <CardAction>
                           <Badge variant="outline">
                             <IconClock className="size-3" />
-                            Run
+                            Attempt {selectedAttempt?.attempt_no ?? selectedOccurrence.latest_attempt_no}
                           </Badge>
                         </CardAction>
                       </CardHeader>
                       <CardFooter className="flex-col items-start gap-1 text-sm">
-                        <div className="text-muted-foreground text-xs">
-                          {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
-                        </div>
+                        {selectedAttempt?.started_at ? (
+                          <div className="text-muted-foreground text-xs">
+                            {formatTime(selectedAttempt.started_at, event.timezone)}
+                          </div>
+                        ) : selectedOccurrence.status === "queued" || selectedOccurrence.status === "scheduled" ? (
+                          <div className="text-muted-foreground text-xs">Waiting for run to start…</div>
+                        ) : null}
                         {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
                           <Button
                             size="sm"
