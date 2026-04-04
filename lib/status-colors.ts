@@ -77,6 +77,11 @@ export const STATUS_BADGE_MAP: Record<string, { label: string; className: string
   queued:       { label: "Queued",         className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled in cron engine, waiting to run" },
   scheduled:    { label: "Scheduled",      className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled for future execution" },
   needs_retry:  { label: "⚠ Needs Retry",  className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "All retries exhausted — needs manual retry" },
+  cancelled:    { label: "Cancelled",       className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "This occurrence was cancelled" },
+  skipped:      { label: "⏭ Skipped",       className: "border-slate-400/40 bg-slate-400/10 text-slate-500 dark:text-slate-400", tooltip: "Skipped due to unmet dependency" },
+  force_retry:  { label: "↺ Force Retry",   className: "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400", tooltip: "Manually force-retried" },
+  auto_retry:   { label: "↺ Auto-retrying", className: "border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", tooltip: "Automatically retrying with fallback model" },
+  stale_recovery: { label: "⟳ Stale Recovery", className: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400", tooltip: "Recovered from stale/stuck state" },
 };
 
 export const STATUS_BADGE_FALLBACK = { label: "—", className: "border-muted-foreground/30 text-muted-foreground", tooltip: "" };
