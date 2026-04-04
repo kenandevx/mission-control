@@ -852,7 +852,7 @@ function WeekView({
         <div className="grid grid-cols-8">
           {HOURS.map((h) => (
             <React.Fragment key={h}>
-              {/* Hour gutter label */
+              {/* Hour gutter label */}
               <div
                 key={`gutter-${h}`}
                 className="relative border-b border-r border-dashed border-border/30 flex items-start justify-end pr-2 pt-1 min-h-[60px]"
