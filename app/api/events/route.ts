@@ -11,7 +11,6 @@ export async function GET() {
   const encoder = new TextEncoder();
 
   let keepAlive: ReturnType<typeof setInterval> | null = null;
-  let listenerWorker: { unlisten: () => Promise<void> } | null = null;
   let listenerActivity: { unlisten: () => Promise<void> } | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -22,15 +21,7 @@ export async function GET() {
         controller.enqueue(encoder.encode(sse({ ok: true }, "ping")));
       }, 20000);
 
-      // Listen for worker tick notifications
-      listenerWorker = await sql.listen("worker_tick", (payload) => {
-        try {
-          const data = typeof payload === "string" ? JSON.parse(payload) : payload;
-          controller.enqueue(encoder.encode(sse(data, "worker_tick")));
-        } catch (e) {
-          // ignore parse errors
-        }
-      });
+      // Note: worker_tick listener removed in v2 (BullMQ/Redis removed; execution via openclaw cron)
 
       // Listen for ticket activity notifications (by ID)
       listenerActivity = await sql.listen("ticket_activity", async (payload) => {
@@ -64,8 +55,6 @@ export async function GET() {
     async cancel() {
       if (keepAlive) clearInterval(keepAlive);
       keepAlive = null;
-      if (listenerWorker) await listenerWorker.unlisten();
-      listenerWorker = null;
       if (listenerActivity) await listenerActivity.unlisten();
       listenerActivity = null;
     },

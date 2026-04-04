@@ -116,6 +116,21 @@ async function runCronJobNow(cronJobId) {
   });
 }
 
+/**
+ * Returns a Set of cron job IDs that currently exist in the gateway.
+ * Used to detect orphaned occurrences whose cron jobs were lost during restart.
+ */
+async function getLiveCronJobIds() {
+  try {
+    const result = await cronCmd(["list", "--json"], 10000);
+    const jobs = Array.isArray(result) ? result : (result?.jobs ?? result?.data ?? []);
+    return new Set(jobs.map((j) => j.id).filter(Boolean));
+  } catch (err) {
+    console.warn("[agenda-scheduler] Could not fetch live cron job list:", err.message);
+    return null; // null = don't sweep (gateway may be overloaded; skip this cycle)
+  }
+}
+
 /** Delete a cron job. */
 async function deleteCronJob(cronJobId) {
   const env = buildCleanEnv();
@@ -240,7 +255,10 @@ async function renderPromptForEvent(event, occurrenceId) {
 // ── Main scheduling cycle ─────────────────────────────────────────────────────
 async function runCycle() {
   const now = new Date();
-  const from = new Date(now.getTime() - 5 * 60 * 1000); // 5min back (catch just-missed)
+  // Lookahead: from the epoch (to catch all unscheduled past occurrences) up to LOOKAHEAD_DAYS
+  // The expansion window still uses a sensible from for RRULE (go back 30 days max to avoid
+  // computing thousands of historical dates for high-frequency events)
+  const rruleFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30d back for RRULE expansion
   const to = new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
 
   // Load all active events
@@ -251,12 +269,42 @@ async function runCycle() {
     WHERE ae.status = 'active'
   `;
 
+  // ── Dead-cron-job sweep (gateway restart recovery) ──────────────────────────
+  // Fetch all live cron job IDs from the gateway once per cycle.
+  // Any queued/scheduled occurrence whose cron_job_id is NOT in this set
+  // had its cron job lost (gateway restart, manual deletion, etc.)
+  // and will be recreated below when we process it.
+  const liveCronIds = await getLiveCronJobIds();
+  if (liveCronIds !== null) {
+    // Find queued occurrences with a cron_job_id that no longer exists in the gateway
+    const orphaned = await sql`
+      SELECT ao.id, ao.cron_job_id
+      FROM agenda_occurrences ao
+      WHERE ao.status = 'queued'
+        AND ao.cron_job_id IS NOT NULL
+        AND ao.scheduled_for <= ${new Date(now.getTime() + 48 * 3600_000)}
+    `;
+    for (const row of orphaned) {
+      if (!liveCronIds.has(row.cron_job_id)) {
+        // Cron job is gone — clear the ID so the loop below will recreate it
+        await sql`
+          UPDATE agenda_occurrences
+          SET cron_job_id = NULL, status = 'scheduled'
+          WHERE id = ${row.id} AND status = 'queued' AND cron_job_id = ${row.cron_job_id}
+        `;
+        console.warn(`[agenda-scheduler] Orphaned cron job ${row.cron_job_id} for occurrence ${row.id} — will reschedule`);
+      }
+    }
+  }
 
   let scheduled = 0;
 
   for (const event of events) {
     try {
-      const occurrences = await expandOccurrences(event, from, to);
+      const occurrences = await expandOccurrences(event, rruleFrom, to);
+
+      // Sort oldest first so catch-up fires in chronological order
+      occurrences.sort((a, b) => a.getTime() - b.getTime());
 
       for (const scheduledFor of occurrences) {
         // Upsert occurrence row
@@ -273,18 +321,29 @@ async function runCycle() {
         `;
         if (!occ) continue;
 
-        // Skip if already has a cron job or is past terminal state
-        if (occ.cron_job_id || ["succeeded", "failed", "cancelled", "needs_retry"].includes(occ.status)) continue;
+        // Skip terminal states — never re-fire completed/cancelled/failed work
+        if (["succeeded", "failed", "cancelled", "needs_retry"].includes(occ.status)) continue;
 
-        // Only schedule occurrences within the next 48h (don't create hundreds of cron jobs upfront)
+        // Skip if already has a live cron job
+        if (occ.cron_job_id) continue;
+
+        // Schedule window: past occurrences (any age) get fired immediately as catch-up.
+        // Future occurrences beyond 48h get their cron job created when they come closer.
         const hoursUntil = (scheduledFor.getTime() - now.getTime()) / 3600000;
-        if (hoursUntil > 48 || hoursUntil < -1) continue;
+        if (hoursUntil > 48) continue;
+        // Note: no lower floor — hoursUntil may be negative (missed/past), these get --at 30s
 
         // Render the prompt with the stable, occurrence-scoped artifact path baked in.
         const message = await renderPromptForEvent(event, occ.id);
 
         // Persist the rendered prompt so retries always use the exact same message.
         await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
+
+        // Log catch-up fires (past occurrences being scheduled now due to missed window)
+        if (hoursUntil < -0.5) {
+          const hoursAgo = Math.round(-hoursUntil * 10) / 10;
+          console.warn(`[agenda-scheduler] Catch-up: occurrence ${occ.id} was scheduled ${hoursAgo}h ago — firing immediately`);
+        }
 
         // Create the cron job — session target from event config (default: isolated)
         const cronJobId = await createCronJob({

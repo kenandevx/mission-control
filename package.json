@@ -21,7 +21,6 @@
     "bridge:logger:check": "node --check scripts/bridge-logger.mjs",
     "agenda:selfcheck": "node scripts/agenda-selfcheck.mjs",
     "agenda:smoke": "node scripts/agenda-smoke.mjs",
-    "test:worker": "node --test lib/tasks/worker-core.test.mjs",
     "logs:repair-attribution": "node scripts/repair-agent-log-attribution.mjs",
     "dev:kill": "bash scripts/mc-services.sh stop 2>/dev/null; sleep 1; pkill -f 'next dev' 2>/dev/null; pkill -f 'next-server' 2>/dev/null; pkill -f 'next start' 2>/dev/null; pkill -f 'mc-services.*watch' 2>/dev/null; sleep 1; fuser -k 3000/tcp 2>/dev/null; sleep 0.5; lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null; echo 'All Mission Control processes killed. Port 3000 freed.'"
   },

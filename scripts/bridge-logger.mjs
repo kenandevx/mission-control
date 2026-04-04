@@ -7,6 +7,7 @@ import postgres from "postgres";
 import {
   transitionOccurrenceToSucceeded,
   transitionOccurrenceToNeedsRetry,
+  transitionOccurrenceToFailed,
 } from "./agenda-domain.mjs";
 
 const WORKSPACE_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
@@ -886,8 +887,28 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, fallbackModel, error: errorText.slice(0, 400) },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
+    } else if (occ.fallback_attempted) {
+      // Fallback also failed — this is a terminal failure. Mark as 'failed' (not retryable
+      // without a manual Force Retry). Alert the user.
+      await transitionOccurrenceToFailed(sql, {
+        occurrenceId: occ.occurrence_id,
+        attemptNo,
+        reasonText: `FALLBACK_EXHAUSTED: ${errorText.slice(0, 400)}`,
+      });
+      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'failed', occurrenceId: occ.occurrence_id })})`;
+      await emitAgendaLog(sql, {
+        workspaceId: wid, agentDbId,
+        agentId: occ.default_agent_id || 'main',
+        occurrenceId: occ.occurrence_id, sessionKey,
+        eventType: 'agenda.failed', level: 'error',
+        message: `Agenda run permanently failed (fallback also exhausted): "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
+        rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs, terminal: true },
+      });
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${errorText.slice(0, 120)}`);
+      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
     } else {
-      // All retries exhausted, no fallback — mark needs_retry and alert
+      // Retries exhausted, no fallback configured (or fallback not yet attempted via scheduler).
+      // Mark needs_retry — user can manually retry or the fallback signal will kick in.
       await transitionOccurrenceToNeedsRetry(sql, {
         occurrenceId: occ.occurrence_id,
         attemptNo,
@@ -904,8 +925,6 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
-
-      // Send Telegram alert via openclaw message (best-effort)
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
     }
   }

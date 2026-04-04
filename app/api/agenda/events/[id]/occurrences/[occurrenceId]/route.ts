@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { cleanupRunArtifacts, getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 import { FORCE_RETRYABLE_STATUSES, RETRYABLE_STATUSES, OCCURRENCE_STATUSES } from "@/lib/agenda/constants";
 import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
+import { renderPromptForOccurrence } from "@/lib/agenda/render-prompt";
 
 const execFileAsync = promisify(execFile);
 
@@ -160,8 +161,27 @@ export async function POST(
 
     if (!cronJobId) {
       // No existing job (or it disappeared) — create a new one-shot job
-      const retryMessage = (occurrence.rendered_prompt as string | null)
-        || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
+      // On force-retry: always re-render the prompt from the current event definition
+      // so edits made since the last run are picked up.
+      let retryMessage: string;
+      if (forceRetry) {
+        try {
+          retryMessage = await renderPromptForOccurrence(
+            sql,
+            { id: eventId, title: occurrence.title as string, free_prompt: occurrence.free_prompt as string | null },
+            occurrenceId,
+          );
+          // Persist the freshly-rendered prompt so subsequent retries also use the latest version
+          await sql`UPDATE agenda_occurrences SET rendered_prompt = ${retryMessage} WHERE id = ${occurrenceId}`;
+        } catch (renderErr) {
+          console.warn(`[occurrence-retry] Re-render failed, falling back to stored prompt:`, (renderErr as Error).message);
+          retryMessage = (occurrence.rendered_prompt as string | null)
+            || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
+        }
+      } else {
+        retryMessage = (occurrence.rendered_prompt as string | null)
+          || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
+      }
 
       try {
         cronJobId = await createRetryCronJob({

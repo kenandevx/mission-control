@@ -88,6 +88,30 @@ export async function transitionOccurrenceToRunning(sql, {
 }
 
 /**
+ * Permanently fail an occurrence — all retries AND fallback are exhausted.
+ * This is a terminal state: the user cannot retry from the UI (they must use Force Retry).
+ * Only called from bridge-logger when fallback_attempted=true and the fallback also failed.
+ */
+export async function transitionOccurrenceToFailed(sql, {
+  occurrenceId,
+  attemptNo,
+  reasonText,
+}) {
+  const rows = await sql`
+    UPDATE agenda_occurrences
+    SET status = 'failed',
+        latest_attempt_no = GREATEST(latest_attempt_no, ${attemptNo || 0}),
+        locked_at = NULL,
+        last_retry_reason = ${reasonText || 'RETRY_EXHAUSTED'},
+        cron_synced_at = now()
+    WHERE id = ${occurrenceId}
+      AND status IN ('running', 'needs_retry', 'queued')
+    RETURNING id
+  `;
+  return rows[0] || null;
+}
+
+/**
  * Reschedule an occurrence (used when retrying with a new time).
  */
 export async function transitionOccurrenceToScheduledRetry(sql, {
