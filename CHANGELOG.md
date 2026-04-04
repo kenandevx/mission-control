@@ -2,6 +2,11 @@
 
 All notable changes to Mission Control are documented here.
 
+## [2.8.1] - 2026-04-04
+
+### Changed
+- **README**: Complete rewrite — all features, full architecture diagrams, comprehensive API reference, complete DB schema, scripts reference, troubleshooting table, environment variables guide, services overview, log pipeline flow diagrams, Kanban data model, process simulation details, agenda scheduler/bridge-logger deep-dives. Now the single source of truth for developers and AI agents alike.
+
 ## [2.8.0] - 2026-04-04
 
 ### Fixed
