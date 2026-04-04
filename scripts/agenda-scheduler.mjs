@@ -318,7 +318,7 @@ async function runCycle() {
   // and will be recreated below when we process it.
   const liveCronIds = await getLiveCronJobIds();
   if (liveCronIds !== null) {
-    // Find queued occurrences with a cron_job_id that no longer exists in the gateway
+    // ── 1. Queued/scheduled orphans: cron job gone → reschedule ──────────────
     const orphaned = await sql`
       SELECT ao.id, ao.cron_job_id
       FROM agenda_occurrences ao
@@ -328,13 +328,41 @@ async function runCycle() {
     `;
     for (const row of orphaned) {
       if (!liveCronIds.has(row.cron_job_id)) {
-        // Cron job is gone — clear the ID so the loop below will recreate it
         await sql`
           UPDATE agenda_occurrences
           SET cron_job_id = NULL, status = 'scheduled'
           WHERE id = ${row.id} AND status = 'queued' AND cron_job_id = ${row.cron_job_id}
         `;
         console.warn(`[agenda-scheduler] Orphaned cron job ${row.cron_job_id} for occurrence ${row.id} — will reschedule`);
+      }
+    }
+
+    // ── 2. Running orphans: cron job gone mid-run → immediate needs_retry ────
+    // This is faster and more accurate than waiting for execution_window to expire.
+    // If the cron job that launched this run no longer exists, the agent session
+    // died (gateway restart, OOM, etc.) and will never write a result.
+    const runningOrphans = await sql`
+      SELECT ao.id, ao.cron_job_id, ae.title
+      FROM agenda_occurrences ao
+      JOIN agenda_events ae ON ae.id = ao.agenda_event_id
+      WHERE ao.status = 'running'
+        AND ao.cron_job_id IS NOT NULL
+        AND ao.locked_at < NOW() - INTERVAL '2 minutes'
+    `;
+    for (const row of runningOrphans) {
+      if (!liveCronIds.has(row.cron_job_id)) {
+        const updated = await sql`
+          UPDATE agenda_occurrences
+          SET status = 'needs_retry',
+              error_message = 'ORPHANED: cron job disappeared mid-run (gateway restart or crash) — safe to retry',
+              cron_job_id = NULL
+          WHERE id = ${row.id} AND status = 'running'
+          RETURNING id
+        `;
+        if (updated.length > 0) {
+          console.warn(`[agenda-scheduler] Running occurrence ${row.id} ("${row.title}") orphaned (cron job ${row.cron_job_id} gone) → needs_retry`);
+          await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: row.id })})`;
+        }
       }
     }
   }
