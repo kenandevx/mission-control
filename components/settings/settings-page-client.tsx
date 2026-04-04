@@ -17,7 +17,6 @@ import {
   IconCalendarCog,
   IconCloudDownload,
   IconShieldBolt,
-  IconCpu,
   IconSettings,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
@@ -65,9 +64,9 @@ const themeOptions: ThemeOption[] = [
   { value: "system", label: "System", icon: IconDeviceDesktop },
 ];
 
-type SectionKey = "appearance" | "general" | "notifications" | "agenda" | "developer" | "updates" | "danger";
+type SectionKey = "appearance" | "general" | "notifications" | "agenda" | "updates" | "danger";
 
-const BASE_NAV_ITEMS: { key: Exclude<SectionKey, "developer">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const BASE_NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "appearance", label: "Appearance", icon: IconPalette },
   { key: "general", label: "General", icon: IconSettings },
   { key: "notifications", label: "Notifications", icon: IconBell },
@@ -117,7 +116,6 @@ export function SettingsPageClient(): React.ReactNode {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("appearance");
-  const [devModeEnabled, setDevModeEnabled] = useState(false);
   const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
   const [accentPickerOpen, setAccentPickerOpen] = useState(false);
   const [accentId, setAccentId] = useState("purple");
@@ -155,8 +153,6 @@ export function SettingsPageClient(): React.ReactNode {
     setNotifEnabled(s.enabled);
     setNotifSound(s.sound);
 
-    const devMode = localStorage.getItem("mc-dev-mode") === "1";
-    setDevModeEnabled(devMode);
 
     const rawStep = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
     const safeStep = Number.isFinite(rawStep) ? Math.max(0, Math.min(60, rawStep)) : 15;
@@ -166,15 +162,7 @@ export function SettingsPageClient(): React.ReactNode {
     setAccentId(savedAccent);
     applyThemeAccent(savedAccent, false);
 
-    const onDevModeChanged = (event: Event) => {
-      const custom = event as CustomEvent<{ enabled?: boolean }>;
-      const next = custom.detail?.enabled ?? (localStorage.getItem("mc-dev-mode") === "1");
-      setDevModeEnabled(Boolean(next));
-      if (!next && activeSection === "developer") setActiveSection("agenda");
-    };
-
-    window.addEventListener("mc-dev-mode-changed", onDevModeChanged as EventListener);
-    return () => window.removeEventListener("mc-dev-mode-changed", onDevModeChanged as EventListener);
+    return undefined;
   }, [activeSection]);
 
   // Load agenda settings
@@ -550,6 +538,30 @@ export function SettingsPageClient(): React.ReactNode {
         </div>
       </div>
 
+      <div className="mt-4 rounded-xl border bg-card divide-y">
+        <SettingRow
+          label="Time input interval"
+          description="Minute snapping for the event time picker. 0 = free input, 5/10/15/etc = snaps to that interval."
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={60}
+              value={agendaTimeStepMinutes}
+              onChange={(e) => {
+                const v = Math.max(0, Math.min(60, Number(e.target.value) || 0));
+                setAgendaTimeStepMinutes(v);
+                localStorage.setItem("mc-agenda-time-step-minutes", String(v));
+                window.dispatchEvent(new CustomEvent("mc-agenda-time-step-changed", { detail: { value: v } }));
+              }}
+              className="h-9 w-20 text-center text-sm"
+            />
+            <span className="text-sm text-muted-foreground">min</span>
+          </div>
+        </SettingRow>
+      </div>
+
       <div className="mt-5">
         <Button
           disabled={agendaSettingsLoading}
@@ -652,59 +664,19 @@ export function SettingsPageClient(): React.ReactNode {
 
   // ── Section map ────────────────────────────────────────────────────────────
 
-  const renderDeveloper = (): React.ReactNode => (
-    <section>
-      <SectionHeading title="Developer" description="Advanced controls for local development." />
-
-      <div className="rounded-xl border bg-card divide-y">
-        <SettingRow
-          label="Agenda time interval (minutes)"
-          description="0 = free time input (any HH:mm). 5/10/15/etc = dropdown snapping by that interval."
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              min={0}
-              max={60}
-              value={agendaTimeStepMinutes}
-              onChange={(e) => setAgendaTimeStepMinutes(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
-              className="h-9 w-20 text-center text-sm"
-            />
-            <span className="text-sm text-muted-foreground">min</span>
-          </div>
-        </SettingRow>
-      </div>
-
-      <div className="mt-5">
-        <Button
-          className="cursor-pointer gap-2 h-10 px-6"
-          onClick={() => {
-            localStorage.setItem("mc-agenda-time-step-minutes", String(agendaTimeStepMinutes));
-            window.dispatchEvent(new CustomEvent("mc-agenda-time-step-changed", { detail: { value: agendaTimeStepMinutes } }));
-            toast.success("Developer settings saved");
-          }}
-        >
-          Save developer settings
-        </Button>
-      </div>
-    </section>
-  );
-
+  
   const sections: Record<SectionKey, () => React.ReactNode> = {
     appearance: renderAppearance,
     general: renderGeneral,
     notifications: renderNotifications,
     agenda: renderAgenda,
-    developer: renderDeveloper,
     updates: renderUpdates,
     danger: renderDanger,
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const NAV_ITEMS: { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = devModeEnabled
-    ? [...BASE_NAV_ITEMS.slice(0, 3), { key: "developer", label: "Developer", icon: IconCpu }, ...BASE_NAV_ITEMS.slice(3)]
-    : [...BASE_NAV_ITEMS];
+  const NAV_ITEMS = BASE_NAV_ITEMS;
 
   return (
     <div className="flex flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">

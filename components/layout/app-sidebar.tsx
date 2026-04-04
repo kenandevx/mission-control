@@ -134,30 +134,9 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
         {showActivity ? <NavActivity /> : null}
       </SidebarContent>
       <SidebarFooter>
-        <button
-          type="button"
-          className="px-2 pb-2 text-xs text-muted-foreground text-left cursor-pointer hover:text-foreground/80"
-          onClick={() => {
-            const now = Date.now();
-            const w = window as Window & { __mcDevClickCount?: number; __mcDevClickAt?: number };
-            if (!w.__mcDevClickAt || now - w.__mcDevClickAt > 2000) {
-              w.__mcDevClickCount = 0;
-            }
-            w.__mcDevClickAt = now;
-            w.__mcDevClickCount = (w.__mcDevClickCount || 0) + 1;
-
-            if (w.__mcDevClickCount >= 5) {
-              w.__mcDevClickCount = 0;
-              const current = localStorage.getItem("mc-dev-mode") === "1";
-              const next = !current;
-              localStorage.setItem("mc-dev-mode", next ? "1" : "0");
-              window.dispatchEvent(new CustomEvent("mc-dev-mode-changed", { detail: { enabled: next } }));
-              toast.success(next ? "Now in development mode" : "Development mode disabled");
-            }
-          }}
-        >
+        <span className="px-2 pb-2 text-xs text-muted-foreground">
           Version v{appVersion || "\u00A0"}
-        </button>
+        </span>
         {user ? <NavUser user={user} onLogout={handleLogout} /> : null}
       </SidebarFooter>
     </Sidebar>
