@@ -55,7 +55,6 @@ import {
   IconPencil,
   IconTrendingUp,
   IconDownload,
-  IconEye,
   IconPhoto,
   IconFile,
   IconLock,
@@ -316,7 +315,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
 
   if (logs.length === 0) return (
     <p className="text-xs text-muted-foreground py-4 text-center">
-      No agenda logs yet for this occurrence. Logs appear when the run starts.
+      No logs found for this occurrence.
     </p>
   );
 
@@ -403,10 +402,6 @@ function fileIcon(mimeType: string | undefined) {
 function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[] }) {
   if (!files || files.length === 0) return null;
 
-  const previewable = files.filter(
-    (f) => f.mimeType?.startsWith("image/") || f.mimeType === "application/pdf"
-  );
-
   return (
     <div className="flex flex-col gap-2 mt-3">
       <p className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
@@ -436,19 +431,6 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {(isImage || isPdf) && (
-                  <a
-                    href={downloadUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Button size="sm" variant="ghost" className="gap-1.5 h-8 text-xs cursor-pointer">
-                      <IconEye className="size-3" />
-                      View
-                    </Button>
-                  </a>
-                )}
                 <a
                   href={downloadUrl}
                   download={file.name}
@@ -465,8 +447,8 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
         })}
       </div>
 
-      {/* Inline previews */}
-      {previewable.length > 0 && (
+      {/* Inline image previews only — PDFs open via download, no blank iframe blocks */}
+      {files.some((f) => f.mimeType?.startsWith("image/")) && (
         <div className="flex flex-col gap-2 mt-1">
           {files.filter((f) => f.mimeType?.startsWith("image/")).map((file) => (
             <div key={`preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
@@ -475,16 +457,6 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
                 src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
                 alt={file.name}
                 className="max-h-[300px] w-full object-contain"
-              />
-            </div>
-          ))}
-          {files.filter((f) => f.mimeType === "application/pdf").map((file) => (
-            <div key={`pdf-preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
-              <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1 font-medium">{file.name}</p>
-              <iframe
-                src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
-                className="w-full h-[420px]"
-                title={file.name}
               />
             </div>
           ))}
