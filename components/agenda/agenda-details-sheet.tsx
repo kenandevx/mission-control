@@ -951,12 +951,17 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     return deduped;
                   })().map(({ step, totalAttempts }) => {
                     // Extract the prompt/instruction from input_payload
+                    // bridge-logger writes { prompt: "..." } for agenda runs
+                    // process-based runs write { instruction: "..." }
                     let promptText: string | null = null;
                     if (step.input_payload) {
                       const raw = step.input_payload;
                       const payload = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
                       if (payload && typeof payload === "object") {
-                        promptText = (payload as Record<string, unknown>).instruction as string ?? null;
+                        const p = payload as Record<string, unknown>;
+                        promptText = (typeof p.prompt === "string" ? p.prompt : null)
+                          ?? (typeof p.instruction === "string" ? p.instruction : null)
+                          ?? null;
                       }
                     }
                     // Fall back to step_instruction from process definition

@@ -7,14 +7,20 @@ export async function GET() {
   try {
     const sql = getSql();
 
-    const [totalEvents, notRanYetCount, failedCount] = await Promise.all([
-      sql`select count(*) as c from agenda_events`.then(r => Number(r[0]?.c ?? 0)),
+    const [totalEvents, notRanYetCount, runningCount, failedCount] = await Promise.all([
+      // Only count active events (exclude drafts)
+      sql`select count(*) as c from agenda_events where status = 'active'`.then(r => Number(r[0]?.c ?? 0)),
       sql`
         select count(*) as c
         from agenda_occurrences ao
         join agenda_events ae on ae.id = ao.agenda_event_id
         where ae.status = 'active'
           and ao.status in ('scheduled', 'queued')
+      `.then(r => Number(r[0]?.c ?? 0)),
+      sql`
+        select count(*) as c
+        from agenda_occurrences ao
+        where ao.status = 'running'
       `.then(r => Number(r[0]?.c ?? 0)),
       sql`
         with latest_per_event as (
@@ -35,6 +41,7 @@ export async function GET() {
       ok: true,
       totalEvents,
       notRanYetCount,
+      runningCount,
       failedCount,
     });
   } catch (error) {

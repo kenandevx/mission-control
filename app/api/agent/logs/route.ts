@@ -79,14 +79,28 @@ export async function POST(request: Request) {
   const workspaceId = workspace[0]?.id ?? null;
   if (!workspaceId) return NextResponse.json({ ok: false, error: "No workspace found." }, { status: 400 });
 
-  const agentRows = await sql`select id from agents where workspace_id = ${workspaceId} and openclaw_agent_id = ${runtimeAgentId} limit 1`;
-  const agentDbId = agentRows[0]?.id ?? null;
+  let agentDbId: string | null = null;
+  if (runtimeAgentId) {
+    const agentRows = await sql`select id from agents where workspace_id = ${workspaceId} and openclaw_agent_id = ${runtimeAgentId} limit 1`;
+    agentDbId = agentRows[0]?.id ?? null;
+    // Auto-create agent row if missing (agent_id is NOT NULL in agent_logs)
+    if (!agentDbId) {
+      const [created] = await sql`
+        INSERT INTO agents (workspace_id, openclaw_agent_id, name, provider, model, is_active)
+        VALUES (${workspaceId}, ${runtimeAgentId}, ${runtimeAgentId}, 'openclaw', '', true)
+        ON CONFLICT (workspace_id, openclaw_agent_id) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+      `;
+      agentDbId = created?.id ?? null;
+    }
+  }
+  if (!agentDbId) return NextResponse.json({ ok: false, error: "Could not resolve agent for log insertion." }, { status: 400 });
   const inserted = await sql`
     insert into agent_logs (
       workspace_id, agent_id, runtime_agent_id, occurred_at, level, type, message, event_type, session_key,
       channel_type, memory_source, memory_key, collection, query_text, result_count, message_preview
     ) values (
-      ${workspaceId}, ${agentDbId || workspaceId}, ${runtimeAgentId}, now(), ${level}, ${type}, ${message}, ${eventType}, ${sessionKey},
+      ${workspaceId}, ${agentDbId}, ${runtimeAgentId}, now(), ${level}, ${type}, ${message}, ${eventType}, ${sessionKey},
       ${channelType}, ${memorySource}, ${memoryKey}, ${collection}, ${queryText}, ${resultCount}, ${message.slice(0, 240)}
     ) returning *
   `;

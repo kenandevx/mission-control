@@ -17,6 +17,7 @@ import {
 type AgendaStats = {
   totalEvents: number;
   notRanYetCount: number;
+  runningCount: number;
   failedCount: number;
 };
 
@@ -26,6 +27,7 @@ async function fetchStats(): Promise<AgendaStats> {
   return {
     totalEvents: json.totalEvents ?? 0,
     notRanYetCount: json.notRanYetCount ?? 0,
+    runningCount: json.runningCount ?? 0,
     failedCount: json.failedCount ?? 0,
   };
 }
@@ -72,7 +74,7 @@ export function AgendaStatsCards() {
         initial={{ opacity: 0 }}
         animate={{ opacity: stats ? 1 : 0.35 }}
         transition={{ duration: 0.16 }}
-        className="*:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-3"
+        className="*:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 md:grid-cols-4"
       >
       <Card data-slot="card" className="min-h-[150px]">
         <CardHeader>
@@ -90,8 +92,8 @@ export function AgendaStatsCards() {
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">All agenda events</div>
-          <div className="text-muted-foreground">Draft + active</div>
+          <div className="line-clamp-1 flex gap-2 font-medium">Active agenda events</div>
+          <div className="text-muted-foreground">Drafts excluded</div>
         </CardFooter>
       </Card>
 
@@ -113,6 +115,26 @@ export function AgendaStatsCards() {
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="line-clamp-1 flex gap-2 font-medium">Queued + scheduled occurrences</div>
           <div className="text-muted-foreground">Active events only</div>
+        </CardFooter>
+      </Card>
+
+      <Card data-slot="card" className={`min-h-[150px] ${stats && (stats.runningCount ?? 0) > 0 ? "border-indigo-200 dark:border-indigo-900" : ""}`}>
+        <CardHeader>
+          <CardDescription>Running</CardDescription>
+          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats && (stats.runningCount ?? 0) > 0 ? "text-indigo-600" : ""}`}>
+            {stats ? (
+              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.runningCount ?? 0}</motion.span>
+            ) : "—"}
+          </CardTitle>
+          <CardAction>
+            <Badge variant={stats && (stats.runningCount ?? 0) > 0 ? "outline" : "outline"} className={stats && (stats.runningCount ?? 0) > 0 ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : ""}>
+              {stats && (stats.runningCount ?? 0) > 0 ? "● Live" : "Idle"}
+            </Badge>
+          </CardAction>
+        </CardHeader>
+        <CardFooter className="flex-col items-start gap-1.5 text-sm">
+          <div className="line-clamp-1 flex gap-2 font-medium">Currently executing</div>
+          <div className="text-muted-foreground">Active agent runs</div>
         </CardFooter>
       </Card>
 

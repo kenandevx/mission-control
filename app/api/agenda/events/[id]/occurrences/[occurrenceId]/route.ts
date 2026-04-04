@@ -46,7 +46,7 @@ async function createRetryCronJob(params: {
     "--session", target,
     "--message", params.message,
     "--agent", params.agentId || "main",
-    "--keep-after-run",
+    "--delete-after-run",
     "--json",
   ];
   if (params.model?.trim()) args.push("--model", params.model.trim());

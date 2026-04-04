@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { ClearLogsButton } from "@/components/agents/clear-logs-button";
 import { LogsExplorer } from "@/components/agents/logs-explorer";
@@ -47,8 +47,39 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
   const [logs, setLogs] = useState<AgentLog[]>(initialLogs);
   const [pageInfo, setPageInfo] = useState<PageInfo>(initialPageInfo);
   const [activeTab, setActiveTab] = useState("logs");
+  const [agendaLogs, setAgendaLogs] = useState<AgentLog[]>([]);
+  const [agendaPageInfo, setAgendaPageInfo] = useState<PageInfo>({ page: 1, limit: 50, totalCount: 0, pageCount: 1 });
+  const [agendaLoading, setAgendaLoading] = useState(false);
 
   const isFirstPage = pageInfo.page === 1;
+
+  const loadAgendaLogs = useCallback(async (p = 1) => {
+    setAgendaLoading(true);
+    try {
+      const res = await fetch(`/api/agenda/logs?limit=${agendaPageInfo.limit}&page=${p}`, { cache: "reload" });
+      const json = await res.json();
+      if (json.ok) {
+        setAgendaLogs(json.logs ?? []);
+        setAgendaPageInfo((prev) => ({
+          ...prev,
+          page: p,
+          totalCount: json.total ?? 0,
+          pageCount: Math.max(1, Math.ceil((json.total ?? 0) / prev.limit)),
+        }));
+      }
+    } catch { /* ignore */ } finally {
+      setAgendaLoading(false);
+    }
+  }, [agendaPageInfo.limit]);
+
+  // Fetch agenda logs when agenda tab is active
+  useEffect(() => {
+    if (activeTab === "agenda") void loadAgendaLogs(1);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onAgendaPageChange = async (next: number) => {
+    await loadAgendaLogs(Math.max(1, next));
+  };
 
   const handleLiveRow = useCallback((row: LogRow, totalCount: number) => {
     setLogs((prev) => {
@@ -117,16 +148,23 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
           </TabsContent>
 
           <TabsContent value="agenda" className="mt-4">
-            <LogsExplorer
-              agents={agents}
-              logs={logs}
-              page={pageInfo.page}
-              pageCount={pageInfo.pageCount}
-              totalCount={pageInfo.totalCount}
-              initialNowIso={initialNowIso}
-              onPageChange={onPageChange}
-              initialFilterGroup="agenda"
-            />
+            {agendaLoading && agendaLogs.length === 0 ? (
+              <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground px-2">
+                <CalendarClockIcon className="size-4 animate-pulse" />
+                Loading agenda logs…
+              </div>
+            ) : (
+              <LogsExplorer
+                agents={agents}
+                logs={agendaLogs as AgentLog[]}
+                page={agendaPageInfo.page}
+                pageCount={agendaPageInfo.pageCount}
+                totalCount={agendaPageInfo.totalCount}
+                initialNowIso={initialNowIso}
+                onPageChange={onAgendaPageChange}
+                initialFilterGroup="agenda"
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="services" className="mt-4">
