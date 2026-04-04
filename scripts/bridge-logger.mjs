@@ -726,7 +726,7 @@ async function handleCronRunLine(getSql, jobId, line) {
   const occurrences = await sql`
     SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
            ao.fallback_attempted, ao.rendered_prompt, ao.status,
-           ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes
+           ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes, ae.session_target
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
     WHERE ao.cron_job_id = ${jobId}
@@ -817,6 +817,11 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
 
     await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id })})`;
+    // Notify main session (only for isolated runs — main session runs are already in chat)
+    notifyMainSession(occ.session_target || 'isolated', {
+      title: occ.title, status: 'succeeded', summary: summaryText,
+      occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+    }).catch(() => {});
     await emitAgendaLog(sql, {
       workspaceId: wid, agentDbId,
       agentId: occ.default_agent_id || 'main',
@@ -914,6 +919,10 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs, terminal: true },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${errorText.slice(0, 120)}`);
+      notifyMainSession(occ.session_target || 'isolated', {
+        title: occ.title, status: 'failed', summary: errorText.slice(0, 200),
+        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+      }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
     } else {
       // Retries exhausted, no fallback configured (or fallback not yet attempted via scheduler).
@@ -934,11 +943,44 @@ async function handleCronRunLine(getSql, jobId, line) {
         rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
+      notifyMainSession(occ.session_target || 'isolated', {
+        title: occ.title, status: 'needs_retry', summary: errorText.slice(0, 200),
+        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+      }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
     }
   }
 }
 /** Send a Telegram alert for a failed occurrence. Reads chatId from app_settings. */
+/**
+ * Inject a short system event into the main OpenClaw session to notify
+ * the main agent that an agenda task finished.
+ * Only fires for isolated sessions — main session runs already land in chat.
+ * Non-fatal.
+ */
+async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId }) {
+  if (sessionTarget !== 'isolated') return; // main session user already sees the output
+  try {
+    const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
+    const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
+    const snippet = summary ? ` — ${String(summary).slice(0, 120)}${summary.length > 120 ? '…' : ''}` : '';
+    const systemEvent = `${statusEmoji} Agenda task "${title}" ${statusLabel}${snippet}. (Mission Control)`;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    await execFileAsync("openclaw", [
+      "cron", "add",
+      "--at", "5s",
+      "--session", "main",
+      "--system-event", systemEvent,
+      "--delete-after-run",
+      "--json",
+    ], { timeout: 15000 });
+  } catch (err) {
+    console.warn("[bridge-logger] notifyMainSession failed (non-fatal):", err?.message);
+  }
+}
+
 async function sendTelegramAlert(getSql, title, occurrenceId, reason) {
   try {
     const sql = getSql();

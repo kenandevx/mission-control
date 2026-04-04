@@ -124,6 +124,9 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
     "--message", message,
     "--agent", agentId || "main",
     "--delete-after-run",
+    // Isolated runs must not announce back to Telegram — bridge-logger captures
+    // the output into Mission Control UI. Main session runs already land in chat.
+    ...(target === "isolated" ? ["--no-deliver"] : []),
     "--json",
   ];
   if (model?.trim()) {

@@ -86,12 +86,17 @@ export async function POST(request: Request) {
     // Auto-create agent row if missing (agent_id is NOT NULL in agent_logs)
     if (!agentDbId) {
       const [created] = await sql`
-        INSERT INTO agents (workspace_id, openclaw_agent_id, name, provider, model, is_active)
-        VALUES (${workspaceId}, ${runtimeAgentId}, ${runtimeAgentId}, 'openclaw', '', true)
-        ON CONFLICT (workspace_id, openclaw_agent_id) DO UPDATE SET name = EXCLUDED.name
+        INSERT INTO agents (workspace_id, openclaw_agent_id, status, model)
+        VALUES (${workspaceId}, ${runtimeAgentId}, 'active', '')
+        ON CONFLICT (workspace_id, openclaw_agent_id) DO NOTHING
         RETURNING id
       `;
       agentDbId = created?.id ?? null;
+      // If ON CONFLICT fired (row already existed but wasn't found above), re-fetch
+      if (!agentDbId) {
+        const [refetch] = await sql`SELECT id FROM agents WHERE workspace_id = ${workspaceId} AND openclaw_agent_id = ${runtimeAgentId} LIMIT 1`;
+        agentDbId = refetch?.id ?? null;
+      }
     }
   }
   if (!agentDbId) return NextResponse.json({ ok: false, error: "Could not resolve agent for log insertion." }, { status: 400 });
