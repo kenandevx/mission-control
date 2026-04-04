@@ -655,7 +655,7 @@ async function resolveSessionFile(sessionTarget, sessionId) {
  *
  * Returns the text content of the last assistant turn, or null if unreadable.
  */
-async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset = null) {
+async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset = null, occurrenceId = null) {
   if (!sessionTarget) return null;
   const sessionFilePath = await resolveSessionFile(sessionTarget, sessionId);
   if (!sessionFilePath) {
@@ -665,31 +665,68 @@ async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOf
   try {
     const raw = fs.readFileSync(sessionFilePath, 'utf8');
     const lines = raw.split('\n').filter(Boolean);
+
     // Determine the starting index for the scan.
-    // fromLineOffset is the line count BEFORE the task was injected, so we start
-    // from that index (1-indexed offset → 0-indexed array access).
-    // Lines before this index belong to earlier tasks and must not be considered.
+    // fromLineOffset is the line count BEFORE the task was injected.
+    // We scan FORWARD from this point to find the NEXT assistant message —
+    // which is this task's own output, not the last message from a previous task.
+    // This avoids the backward-scan contamination problem entirely.
     const startIdx = fromLineOffset != null ? Math.max(0, fromLineOffset) : 0;
+
     if (startIdx >= lines.length) {
       console.log(`[bridge-logger] readLastAssistantFromSession: fromLineOffset=${fromLineOffset} >= total lines=${lines.length} in ${path.basename(sessionFilePath)} — nothing to scan`);
       return null;
     }
-    // Scan from the last line backwards to find the most recent assistant message
-    // that belongs to this task's injection window.
-    for (let i = lines.length - 1; i >= startIdx; i--) {
+
+    // ── Marker-based scan for main-session tasks ─────────────────────────────────
+    // When occurrenceId is provided, find the [AGENDA_MARKER:occurrence_id=...] line
+    // that marks where this task was injected. This gives us the precise injection
+    // point regardless of session growth between scheduling and firing times.
+    // The marker appears as a user message line in the session file.
+    let injectionLineIdx = null;
+    if (occurrenceId) {
+      const markerPattern = `[AGENDA_MARKER:occurrence_id=${occurrenceId}]`;
+      // Scan backward from end to find the most recent marker for this occurrence.
+      // This correctly handles the case where multiple tasks are pending:
+      // the most recent marker in the file belongs to the most recently fired task.
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(lines[i]);
+          const content = parsed?.message?.content || parsed?.content || '';
+          const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map(c => typeof c === 'string' ? c : c?.text || '').join('') : '';
+          if (text.includes(markerPattern)) {
+            injectionLineIdx = i;
+            console.log(`[bridge-logger] readLastAssistantFromSession: marker found at line ${i+1} for occurrence ${occurrenceId}`);
+            break;
+          }
+        } catch { continue; }
+      }
+      if (injectionLineIdx === null) {
+        console.warn(`[bridge-logger] readLastAssistantFromSession: marker not found for occurrence ${occurrenceId} — falling back to fromLineOffset=${fromLineOffset}`);
+      }
+    }
+
+    // Use marker position if found, otherwise fall back to fromLineOffset
+    const scanStartIdx = injectionLineIdx !== null ? injectionLineIdx : startIdx;
+
+    // Scan FORWARD from the injection point to find this task's assistant response.
+    // The first assistant message AFTER the marker (or fromLineOffset) is the task's output.
+    for (let i = scanStartIdx; i < lines.length; i++) {
       try {
         const parsed = JSON.parse(lines[i]);
         const role = parsed?.role ?? parsed?.message?.role ?? '';
         if (role !== 'assistant') continue;
+        // Found an assistant message after the task injection — this is the task's output.
         const content = parsed?.content ?? parsed?.message?.content ?? '';
         const text = extractContentText(content);
         if (text.trim()) {
-          console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)} at line ${i} (SessionLineOffset=${fromLineOffset})`);
+          console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)} at line ${i+1} (markerLine=${injectionLineIdx !== null} scanStart=${scanStartIdx})`);
           return text.trim().slice(0, 8000);
         }
+        // Empty assistant message — keep scanning (task may be still processing or rate-limited).
       } catch { continue; }
     }
-    console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} after line ${fromLineOffset} (total lines=${lines.length})`);
+    console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} (marker=${injectionLineIdx !== null}, fromLineOffset=${fromLineOffset}) — task produced no output`);
   } catch (err) {
     console.log(`[bridge-logger] readLastAssistantFromSession: session file error: ${err.message}`);
   }
@@ -785,9 +822,11 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
   };
 
   if (sessionTarget === 'main') {
-    // Pass fromLineOffset so only messages written after the task was injected
-    // are considered. This prevents earlier tasks' output from contaminating this result.
-    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset);
+    // Pass fromLineOffset and occurrenceId. The occurrenceId enables marker-based
+    // scanning: bridge-logger finds the [AGENDA_MARKER:occurrence_id=...] line in the
+    // session to precisely locate where this task was injected, regardless of session
+    // growth between scheduling and firing times.
+    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
     if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
       result.output = sessionOutput;
       result.outputSource = 'main_session_assistant';
@@ -801,6 +840,17 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       // Log a warning but still fall back to artifact/summary rather than silently
       // returning the wrong output from an unrelated task.
       console.warn(`[bridge-logger] resolveAgendaOutput: no session output and no fromLineOffset for occurrence ${occurrenceId} — falling back (backward-compat; this may indicate a pre-fix occurrence)`);
+    } else {
+      // fromLineOffset IS set (post-fix) — the task had proper injection boundaries.
+      // readLastAssistantFromSession scanned the bounded range and found nothing.
+      // This means the task produced no output (e.g. rate-limit / early failure).
+      // Do NOT fall back to artifacts or session-global scan — that would contaminate
+      // this task's result with output from a completely unrelated earlier task.
+      // Return NULL so the occurrence is marked failed and the user can retry.
+      console.warn(`[bridge-logger] resolveAgendaOutput: no session output in bounded range (fromLineOffset=${fromLineOffset}) for occurrence ${occurrenceId} — marking no_output (task failed/rate-limited)`);
+      result.output = null;
+      result.outputSource = 'no_output';
+      return result;
     }
   }
 
@@ -979,7 +1029,7 @@ async function handleCronRunLine(getSql, jobId, line) {
 
   const occ = occurrences[0];
   const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
-  const succeeded = run.status === "ok";
+  // succeeded depends on outputResolution which is computed below — placeholder until after resolveAgendaOutput
   const errorText = String(run.error || "").slice(0, 2000);
   const summaryText = String(run.summary || "").slice(0, 8000);
   const startedAt = new Date(run.runAtMs || Date.now());
@@ -1064,8 +1114,13 @@ async function handleCronRunLine(getSql, jobId, line) {
     summaryText,
     fromLineOffset: occ.session_line_offset ?? null,
   });
+  // A run is succeeded only if: the cron job itself succeeded (status=ok) AND the task
+  // produced actual output. If outputSource='no_output', the task ran but produced
+  // nothing (e.g. rate-limit / session failure) — treat that as a failure so it can retry.
+  const succeeded = run.status === 'ok' && outputResolution.outputSource !== 'no_output';
   const agentOutput = outputResolution.output;
-  console.log(`[bridge-logger] cron ${jobId} → output source=${outputResolution.outputSource} (${agentOutput.length} chars)`);
+  const outputLen = agentOutput != null ? agentOutput.length : 0;
+  console.log(`[bridge-logger] cron ${jobId} → output source=${outputResolution.outputSource} (${outputLen} chars)`);
   await emitAgendaLog(sql, {
     workspaceId: wid,
     agentDbId,
@@ -1182,6 +1237,10 @@ async function handleCronRunLine(getSql, jobId, line) {
     const globalFallback = String(settings?.default_fallback_model || "").trim();
     const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
     const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
+    const isNoOutput = outputResolution.outputSource === 'no_output';
+    const failureReason = isNoOutput
+      ? `no_output: task produced no output (possible rate-limit / session failure, model=${run.model || 'unknown'})`
+      : String(run.error || '').slice(0, 2000);
     const targetStatus = shouldTryFallback ? 'needs_retry' : (occ.fallback_attempted ? 'failed' : 'needs_retry');
 
     // CRITICAL: always update status before SSE — same race-guard fix as success path.
@@ -1208,7 +1267,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         (occurrence_id, attempt_no, cron_job_id, status, started_at, finished_at, summary, error_message)
       VALUES
         (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'failed',
-         ${startedAt}, ${finishedAt}, ${agentOutput}, ${errorText})
+         ${startedAt}, ${finishedAt}, ${agentOutput}, ${failureReason})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -1224,7 +1283,7 @@ async function handleCronRunLine(getSql, jobId, line) {
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
            ${sql.json({ output: agentOutput, outputSource: outputResolution.outputSource, outputMeta: outputResolution.outputMeta })},
            ${artifactPayloadFail ? sql.json(artifactPayloadFail) : null},
-           'failed', ${startedAt}, ${finishedAt}, ${errorText})
+           'failed', ${startedAt}, ${finishedAt}, ${failureReason})
         ON CONFLICT DO NOTHING
       `;
     }
@@ -1256,7 +1315,7 @@ async function handleCronRunLine(getSql, jobId, line) {
           cronJobId: jobId,
           attemptNo,
           fallbackModel,
-          error: errorText.slice(0, 400),
+          error: failureReason.slice(0, 400),
           scheduledFor: occ.scheduled_for || null,
           startedAt,
           finishedAt,
@@ -1275,11 +1334,11 @@ async function handleCronRunLine(getSql, jobId, line) {
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
         eventType: 'agenda.failed', level: 'error',
-        message: `Agenda run permanently failed (fallback also exhausted): "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
+        message: `Agenda run permanently failed (fallback also exhausted): "${occ.title}" (attempt ${attemptNo}) — ${failureReason.slice(0, 300)}`,
         rawPayload: {
           cronJobId: jobId,
           attemptNo,
-          error: errorText.slice(0, 1000),
+          error: failureReason.slice(0, 1000),
           durationMs: run.durationMs,
           terminal: true,
           scheduledFor: occ.scheduled_for || null,
@@ -1290,13 +1349,13 @@ async function handleCronRunLine(getSql, jobId, line) {
           outputSource: outputResolution.outputSource,
         },
       });
-      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${errorText.slice(0, 120)}`);
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${failureReason.slice(0, 120)}`);
       notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'failed', summary: agentOutput || errorText.slice(0, 200),
+        title: occ.title, status: 'failed', summary: agentOutput || failureReason.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
         sessionId: run.sessionId || null,
       }).catch(() => {});
-      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
+      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
     } else {
       // Retries exhausted, no fallback configured. Status already set to 'needs_retry' above.
@@ -1306,11 +1365,11 @@ async function handleCronRunLine(getSql, jobId, line) {
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
         eventType: 'agenda.failed', level: 'error',
-        message: `Agenda run failed: "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
+        message: `Agenda run failed: "${occ.title}" (attempt ${attemptNo}) — ${failureReason.slice(0, 300)}`,
         rawPayload: {
           cronJobId: jobId,
           attemptNo,
-          error: errorText.slice(0, 1000),
+          error: failureReason.slice(0, 1000),
           durationMs: run.durationMs,
           scheduledFor: occ.scheduled_for || null,
           startedAt,
@@ -1320,14 +1379,14 @@ async function handleCronRunLine(getSql, jobId, line) {
           outputSource: outputResolution.outputSource,
         },
       });
-      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${failureReason.slice(0, 120)}`);
       deleteCronJobSilently(jobId).catch(() => {});
       notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'needs_retry', summary: agentOutput || errorText.slice(0, 200),
+        title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
         sessionId: run.sessionId || null,
       }).catch(() => {});
-      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
+      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
     }
   }
 }

@@ -318,12 +318,19 @@ async function renderPromptForEvent(event, occurrenceId) {
     occurrenceId: occurrenceId || "unknown",
   });
 
-  return renderUnifiedTaskMessage({
+  // Inject a unique marker into the task text. Bridge-logger uses this to locate
+  // the exact injection point in the session file regardless of when the task fired,
+  // solving the session_line_offset capture-time mismatch problem.
+  const markerLine = `[AGENDA_MARKER:occurrence_id=${occurrenceId}]`;
+
+  const rendered = renderUnifiedTaskMessage({
     title: event.title,
     instructions: composedSteps,
     request: event.free_prompt ? String(event.free_prompt) : "",
     artifactDir,
   });
+
+  return `${markerLine}\n\n${rendered}`;
 }
 
 
@@ -463,7 +470,7 @@ async function runCycle() {
         const updated = await sql`
           UPDATE agenda_occurrences
           SET status = 'needs_retry',
-              error_message = 'ORPHANED: cron job disappeared mid-run (gateway restart or crash) — safe to retry',
+              last_retry_reason = 'ORPHANED: cron job disappeared mid-run (gateway restart or crash) — safe to retry',
               cron_job_id = NULL
           WHERE id = ${row.id} AND status = 'running'
           RETURNING id
