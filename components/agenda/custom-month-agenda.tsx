@@ -624,6 +624,7 @@ function WeekHourCell({
   allHourEvts,
   isTodayCol,
   isDragOver,
+  nowLineAt,
   onEventClick,
   onEventDrop,
   onDragEnter,
@@ -638,6 +639,7 @@ function WeekHourCell({
   allHourEvts: CalendarEvent[];
   isTodayCol: boolean;
   isDragOver: boolean;
+  nowLineAt: number | null; // minute offset (0-59) to render now-line, or null
   onEventClick: (evt: CalendarEvent) => void;
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   onDragEnter: () => void;
@@ -650,7 +652,7 @@ function WeekHourCell({
     <>
       <div
         className={cn(
-          "border-b border-l border-dashed border-border/30 p-1 min-h-[60px] flex flex-col gap-1 transition-colors",
+          "relative border-b border-l border-dashed border-border/30 p-1 min-h-[60px] flex flex-col gap-1 transition-colors",
           isTodayCol ? "bg-primary/[0.025]" : "",
           isDragOver ? "bg-primary/10" : "",
         )}
@@ -662,6 +664,15 @@ function WeekHourCell({
           if (id) onDropEvent(id);
         }}
       >
+        {/* Now line — spans full width at the minute fraction */}
+        {nowLineAt !== null && (
+          <div
+            className="absolute left-0 right-0 pointer-events-none z-10"
+            style={{ top: `${(nowLineAt / 60) * 100}%` }}
+          >
+            <div className="w-full h-[2px] bg-primary" style={{ boxShadow: "0 0 6px hsl(var(--accent) / 0.4)" }} />
+          </div>
+        )}
         {visible.map((evt) => (
           <div
             key={evt.id}
@@ -790,6 +801,9 @@ function WeekView({
   onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   className?: string;
 }) {
+  const now = useNow(60_000);
+  const nowHour = now.getHours();
+  const nowMinute = now.getMinutes();
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -841,11 +855,20 @@ function WeekView({
               {/* Hour gutter label */}
               <div
                 key={`gutter-${h}`}
-                className="border-b border-r border-dashed border-border/30 flex items-start justify-end pr-2 pt-1 min-h-[60px]"
+                className="relative border-b border-r border-dashed border-border/30 flex items-start justify-end pr-2 pt-1 min-h-[60px]"
               >
                 <span className="text-[10px] text-muted-foreground/50 font-semibold tabular-nums">
                   {String(h).padStart(2, "0")}:00
                 </span>
+                {/* Now dot on gutter — only for the current hour */}
+                {h === nowHour && (
+                  <div
+                    className="absolute right-0 pointer-events-none z-10"
+                    style={{ top: `${(nowMinute / 60) * 100}%` }}
+                  >
+                    <div className="size-[10px] rounded-full bg-primary translate-x-[5px] -translate-y-[5px]" style={{ boxShadow: "0 0 8px var(--primary-glow)" }} />
+                  </div>
+                )}
               </div>
 
               {/* One cell per day for this hour */}
@@ -871,6 +894,7 @@ function WeekView({
                     allHourEvts={hourEvts}
                     isTodayCol={isToday(day)}
                     isDragOver={dragOverCell === cellKey}
+                    nowLineAt={h === nowHour && isToday(day) ? nowMinute : null}
                     onEventClick={onEventClick}
                     onEventDrop={onEventDrop}
                     onDragEnter={() => setDragOverCell(cellKey)}
