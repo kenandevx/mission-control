@@ -43,6 +43,7 @@ import { IconDotsVertical } from "@tabler/icons-react";
 import { useNow, formatDuration, LiveDuration } from "@/hooks/use-now";
 import {
   IconCalendar,
+  IconCalendarClock,
   IconClock,
   IconRepeat,
   IconRefresh,
@@ -86,6 +87,9 @@ export type AgendaEventSummary = {
   executionWindowMinutes?: number;
   fallbackModel?: string;
   sessionTarget?: "isolated" | "main";
+  createdAt?: string | null;
+  dependsOnEventId?: string | null;
+  dependsOnEventTitle?: string | null;
 };
 
 type RunAttempt = {
@@ -824,6 +828,79 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     </CardFooter>
                   </Card>
 
+                  {/* Created At */}
+                  <Card data-slot="card">
+                    <CardHeader>
+                      <CardDescription>Created At</CardDescription>
+                      <CardTitle className="text-lg font-semibold tabular-nums">
+                        {event.createdAt ? formatTime(event.createdAt) : "—"}
+                      </CardTitle>
+                      <CardAction>
+                        <Badge variant="outline">
+                          <IconCalendarClock className="size-3" />
+                          Event created
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <div className="text-muted-foreground text-xs">
+                        {event.createdAt
+                          ? `In ${event.timezone || "local"} timezone`
+                          : "Not recorded yet"}
+                      </div>
+                    </CardFooter>
+                  </Card>
+
+                  {/* Model */}
+                  <Card data-slot="card">
+                    <CardHeader>
+                      <CardDescription>Model</CardDescription>
+                      <CardTitle className="text-lg font-semibold truncate">
+                        {event.modelOverride || "Agent default"}
+                      </CardTitle>
+                      <CardAction>
+                        <Badge variant="outline">
+                          <IconBrain className="size-3" />
+                          {event.modelOverride ? "Override" : "Default"}
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <div className="text-muted-foreground text-xs">
+                        {event.modelOverride
+                          ? `Model override for this event`
+                          : "Using the agent\'s default model"}
+                      </div>
+                    </CardFooter>
+                  </Card>
+
+                  {/* Status */}
+                  <Card data-slot="card">
+                    <CardHeader>
+                      <CardDescription>Current Status</CardDescription>
+                      <CardTitle className="text-lg font-semibold">
+                        {selectedOccurrence ? (
+                          <ResultBadge status={selectedOccurrence.status} />
+                        ) : (
+                          <span className="text-muted-foreground text-sm font-normal">No runs yet</span>
+                        )}
+                      </CardTitle>
+                      <CardAction>
+                        <Badge variant="outline">
+                          <IconClock className="size-3" />
+                          {selectedOccurrence ? "Latest run" : "No occurrence"}
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <div className="text-muted-foreground text-xs">
+                        {selectedOccurrence
+                          ? `Run on ${formatTime(selectedOccurrence.scheduled_for, event.timezone)}`
+                          : "This event has not run yet"}
+                      </div>
+                    </CardFooter>
+                  </Card>
+
                   {/* Recurrence */}
                   {isRecurring && (
                     <Card data-slot="card">
@@ -1090,6 +1167,24 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               ) : null}
                             </div>
                           )}
+
+                          {/* Prompt sent to agent (collapsible) */}
+                          {(() => {
+                            const raw = step.input_payload;
+                            const payload = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : (raw as Record<string, unknown> | null);
+                            const promptText = payload?.prompt as string ?? payload?.instruction as string ?? null;
+                            return promptText ? (
+                              <details className="group mt-1">
+                                <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 select-none py-1 list-none">
+                                  <svg className="size-3 transition-transform group-open:rotate-90" viewBox="0 0 12 12" fill="currentColor"><path d="M4 2l5 4-5 4V2z"/></svg>
+                                  Prompt sent to agent
+                                </summary>
+                                <div className="mt-1.5 rounded-lg bg-muted/30 border p-3 text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed max-h-[200px] overflow-y-auto">
+                                  {promptText}
+                                </div>
+                              </details>
+                            ) : null;
+                          })()}
 
                           {/* Output */}
                           {step.error_message && (

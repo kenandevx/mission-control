@@ -1191,7 +1191,7 @@ export function CustomMonthAgenda({
       </div>
 
       <Dialog open={showStatusLegend} onOpenChange={setShowStatusLegend}>
-        <DialogContent className="sm:max-w-[400px] p-0 gap-0 overflow-hidden">
+        <DialogContent className="sm:max-w-[440px] p-0 gap-0 overflow-hidden">
           <div className="px-5 pt-5 pb-3">
             <DialogHeader className="space-y-1">
               <DialogTitle className="text-base font-semibold">Status Guide</DialogTitle>
@@ -1200,31 +1200,96 @@ export function CustomMonthAgenda({
               </DialogDescription>
             </DialogHeader>
           </div>
-          <div className="px-5 pb-5 flex flex-col gap-1.5">
-            {STATUS_GUIDE_ENTRIES.map((item) => {
-              const ec = EVENT_COLORS[item.colorKey];
-              return (
-                <div
-                  key={item.key}
-                  className={`flex items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset ${item.bg} ${item.ring} ${item.muted ? "opacity-60" : ""}`}
-                >
-                  {/* Mini pill preview */}
+          <div className="px-5 pb-5 flex flex-col gap-4">
+
+            {/* Lifecycle group */}
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-1.5">
+                Lifecycle
+              </p>
+              {(["scheduled", "queued", "running", "auto_retry", "force_retry", "stale_recovery", "succeeded"] as const).map((key) => {
+                const item = STATUS_GUIDE_ENTRIES.find((e) => e.key === key);
+                if (!item) return null;
+                const dotColor = DOT_COLORS[item.colorKey];
+                return (
                   <div
-                    className="shrink-0 rounded px-2 py-0.5 text-[10px] font-bold leading-tight"
-                    style={{
-                      backgroundColor: ec.bg,
-                      borderLeft: `2.5px solid ${ec.text}`,
-                      color: ec.text,
-                    }}
+                    key={item.key}
+                    className={`flex items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset ${item.bg} ${item.ring}`}
                   >
-                    {item.label}
+                    {/* Colored dot */}
+                    <div
+                      className={`shrink-0 rounded-full w-2.5 h-2.5 ${item.animated ? "animate-pulse" : ""}`}
+                      style={{ backgroundColor: dotColor, boxShadow: `0 0 4px ${dotColor}60` }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                      </div>
+                      <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
+                );
+              })}
+            </div>
+
+            {/* Action needed group */}
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-1.5">
+                Action Needed
+              </p>
+              {(["needs_retry", "failed"] as const).map((key) => {
+                const item = STATUS_GUIDE_ENTRIES.find((e) => e.key === key);
+                if (!item) return null;
+                const dotColor = DOT_COLORS[item.colorKey];
+                return (
+                  <div
+                    key={item.key}
+                    className={`flex items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset ${item.bg} ${item.ring}`}
+                  >
+                    <div
+                      className="shrink-0 rounded-full w-2.5 h-2.5"
+                      style={{ backgroundColor: dotColor, boxShadow: `0 0 4px ${dotColor}60` }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                      </div>
+                      <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+
+            {/* Inactive group */}
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-1.5">
+                Inactive
+              </p>
+              {(["cancelled", "skipped", "draft"] as const).map((key) => {
+                const item = STATUS_GUIDE_ENTRIES.find((e) => e.key === key);
+                if (!item) return null;
+                const dotColor = DOT_COLORS[item.colorKey];
+                return (
+                  <div
+                    key={item.key}
+                    className={`flex items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset ${item.bg} ${item.ring} opacity-60`}
+                  >
+                    <div
+                      className="shrink-0 rounded-full w-2.5 h-2.5"
+                      style={{ backgroundColor: dotColor, boxShadow: `0 0 4px ${dotColor}40` }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                      </div>
+                      <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
           </div>
         </DialogContent>
       </Dialog>

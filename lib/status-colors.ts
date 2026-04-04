@@ -44,22 +44,30 @@ export const DOT_COLORS: Record<EventColor, string> = {
 // ── Status → color key mapping ──────────────────────────────────────────────
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:   "gray",   // upcoming — gray dot, no badge (blue is for user-chosen event color)
-  queued:      "gray",   // cron job created, waiting to fire — neutral gray
-  running:     "indigo", // agent actively executing — indigo pulse
-  succeeded:   "green",  // done ✓
-  failed:      "rose",   // terminal failure
-  needs_retry: "amber",  // user action required
-  cancelled:   "gray",   // dismissed
+  // Status → calendar pill color mapping (single source of truth):
+  //   Gray  = scheduled | queued (waiting in cron, NOT active yet)
+  //   Blue  = running ONLY (agent actively executing right now)
+  //   Green = succeeded
+  //   Amber = needs_retry
+  //   Rose  = failed
+  //   Gray muted = cancelled / skipped / draft (handled via opacity in resolveEventColorKey)
+  scheduled:    "gray",
+  queued:       "gray",   // cron assigned, waiting to fire — NOT blue; blue = only running
+  running:      "blue",   // agent actively executing
+  succeeded:    "green",
+  failed:       "rose",
+  needs_retry:  "amber",
+  cancelled:    "gray",
+  skipped:      "gray",
 };
 
 export function resolveEventColorKey(event: { status?: string; latestResult?: string | null; color?: EventColor }): EventColor {
-  if (event.status === "draft") return "gray";
+  if (event.status === "draft") return "gray"; // draft = gray/muted
   if (event.latestResult && STATUS_COLOR_MAP[event.latestResult]) {
     return STATUS_COLOR_MAP[event.latestResult];
   }
-  // Active event with no occurrence yet → use user-chosen color or default blue
-  if (event.status === "active") return event.color || "blue";
+  // Active event with no occurrence yet, or occurrence is scheduled = gray (not yet running)
+  if (event.status === "active") return "gray";
   return "gray";
 }
 
@@ -93,26 +101,59 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
   bg: string; ring: string; animated?: boolean; muted?: boolean;
 }> = [
   {
-    key: "running",
-    label: "Running",
-    desc: "Currently being executed by an agent.",
-    colorKey: "indigo" as EventColor,
-    bg: "bg-blue-500/8 dark:bg-blue-500/10",
-    ring: "ring-blue-500/20",
-    animated: true,
-  },
-  {
     key: "scheduled",
     label: "Scheduled",
-    desc: "Queued and waiting for its time slot.",
+    desc: "Created and scheduled — waiting for its time slot. No cron job fired yet.",
     colorKey: "gray" as EventColor,
     bg: "bg-slate-500/8 dark:bg-slate-500/10",
     ring: "ring-slate-500/15",
   },
   {
+    key: "queued",
+    label: "Queued",
+    desc: "Cron job assigned in the gateway — waiting for its scheduled time slot. Agent has not started yet.",
+    colorKey: "gray" as EventColor,
+    bg: "bg-slate-500/8 dark:bg-slate-500/10",
+    ring: "ring-slate-500/15",
+  },
+  {
+    key: "auto_retry",
+    label: "Auto-retrying",
+    desc: "Automatically retrying with the configured fallback model after primary model failure.",
+    colorKey: "indigo" as EventColor,
+    bg: "bg-indigo-500/8 dark:bg-indigo-500/10",
+    ring: "ring-indigo-500/20",
+    animated: true,
+  },
+  {
+    key: "force_retry",
+    label: "Force Retry",
+    desc: "Manually triggered re-run of a completed or failed occurrence.",
+    colorKey: "purple" as EventColor,
+    bg: "bg-purple-500/8 dark:bg-purple-500/10",
+    ring: "ring-purple-500/20",
+  },
+  {
+    key: "stale_recovery",
+    label: "Stale Recovery",
+    desc: "Recovered from a stuck or stale running state — was not completed cleanly.",
+    colorKey: "orange" as EventColor,
+    bg: "bg-orange-500/8 dark:bg-orange-500/10",
+    ring: "ring-orange-500/20",
+  },
+  {
+    key: "running",
+    label: "Running",
+    desc: "Agent is actively executing this task right now.",
+    colorKey: "blue" as EventColor,
+    bg: "bg-blue-500/8 dark:bg-blue-500/10",
+    ring: "ring-blue-500/20",
+    animated: true,
+  },
+  {
     key: "succeeded",
     label: "Succeeded",
-    desc: "Completed successfully.",
+    desc: "Task completed successfully. Output and artifacts are available.",
     colorKey: "green" as EventColor,
     bg: "bg-emerald-500/8 dark:bg-emerald-500/10",
     ring: "ring-emerald-500/20",
@@ -120,7 +161,7 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
   {
     key: "needs_retry",
     label: "Needs Retry",
-    desc: "Failed — awaiting manual or automatic retry.",
+    desc: "Run failed but retries remain. Waiting for manual or automatic retry.",
     colorKey: "amber" as EventColor,
     bg: "bg-amber-500/8 dark:bg-amber-500/10",
     ring: "ring-amber-500/20",
@@ -128,15 +169,33 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
   {
     key: "failed",
     label: "Failed",
-    desc: "All retry attempts exhausted.",
+    desc: "All retry attempts exhausted — terminal failure. Check output for errors.",
     colorKey: "rose" as EventColor,
     bg: "bg-red-500/8 dark:bg-red-500/10",
     ring: "ring-red-500/20",
   },
   {
+    key: "skipped",
+    label: "Skipped",
+    desc: "Skipped because a dependency event failed or timed out.",
+    colorKey: "gray" as EventColor,
+    bg: "bg-slate-500/8 dark:bg-slate-500/10",
+    ring: "ring-slate-500/15",
+    muted: true,
+  },
+  {
+    key: "cancelled",
+    label: "Cancelled",
+    desc: "Manually dismissed — will not run or retry.",
+    colorKey: "gray" as EventColor,
+    bg: "bg-slate-500/8 dark:bg-slate-500/10",
+    ring: "ring-slate-500/15",
+    muted: true,
+  },
+  {
     key: "draft",
     label: "Draft",
-    desc: "Inactive — won't run until activated.",
+    desc: "Inactive event — won't schedule or run until set to Active.",
     colorKey: "gray" as EventColor,
     bg: "bg-muted/60",
     ring: "ring-border",
