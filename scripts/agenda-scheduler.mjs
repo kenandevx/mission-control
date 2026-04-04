@@ -116,17 +116,22 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
   const msUntil = scheduledMs - Date.now();
   const atValue = msUntil > 30_000 ? new Date(scheduledFor).toISOString() : "30s";
   const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
+  // Main session cron jobs require --system-event; isolated sessions use --message.
+  const isMain = target === "main";
   const args = [
     "add",
     "--name", `MC: ${title}`,
     "--at", atValue,
     "--session", target,
-    "--message", message,
+    // OpenClaw requires --system-event for main session cron jobs.
+    // --message is only valid for isolated agent sessions.
+    isMain ? "--system-event" : "--message",
+    message,
     "--agent", agentId || "main",
     "--delete-after-run",
     // Isolated runs must not announce back to Telegram — bridge-logger captures
     // the output into Mission Control UI. Main session runs already land in chat.
-    ...(target === "isolated" ? ["--no-deliver"] : []),
+    ...(isMain ? [] : ["--no-deliver"]),
     "--json",
   ];
   if (model?.trim()) {
