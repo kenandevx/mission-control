@@ -326,6 +326,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
   };
   const eventLabel: Record<string, string> = {
     "agenda.started": "▶ Started",
+    "agenda.output_captured": "📥 Output captured",
     "agenda.succeeded": "✅ Succeeded",
     "agenda.failed": "❌ Failed",
     "agenda.fallback": "⚠️ Fallback queued",
@@ -344,11 +345,18 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
             </span>
           </div>
           <p className="text-muted-foreground leading-relaxed">{log.message}</p>
-          {log.raw_payload?.durationMs ? (
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Duration: {Math.round(Number(log.raw_payload.durationMs) / 1000)}s
-              {log.raw_payload.model ? ` · Model: ${log.raw_payload.model}` : ""}
-            </p>
+          {(log.raw_payload?.durationMs || log.raw_payload?.model || log.raw_payload?.runDelaySeconds != null || log.raw_payload?.outputSource || log.raw_payload?.artifactName) ? (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+              {log.raw_payload?.durationMs ? (
+                <span>Duration: {Math.round(Number(log.raw_payload.durationMs) / 1000)}s</span>
+              ) : null}
+              {log.raw_payload?.runDelaySeconds != null ? (
+                <span>Delay: {Number(log.raw_payload.runDelaySeconds)}s</span>
+              ) : null}
+              {log.raw_payload?.model ? <span>Model: {String(log.raw_payload.model)}</span> : null}
+              {log.raw_payload?.outputSource ? <span>Source: {String(log.raw_payload.outputSource)}</span> : null}
+              {log.raw_payload?.artifactName ? <span>Artifact: {String(log.raw_payload.artifactName)}</span> : null}
+            </div>
           ) : null}
         </div>
       ))}
@@ -359,6 +367,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
 function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
   if (!outputPayload) return null;
   let outputText = "";
+  let outputSource = "";
   // output_payload is jsonb — postgres driver may return a parsed object or a string
   const raw = outputPayload;
   if (typeof raw === "object" && raw !== null) {
@@ -366,12 +375,16 @@ function AgentOutput({ outputPayload }: { outputPayload: string | Record<string,
     outputText = typeof (raw as Record<string, unknown>).output === "string"
       ? (raw as Record<string, unknown>).output as string
       : JSON.stringify(raw);
+    outputSource = typeof (raw as Record<string, unknown>).outputSource === "string"
+      ? (raw as Record<string, unknown>).outputSource as string
+      : "";
   } else if (typeof raw === "string") {
     outputText = raw;
     try {
       const parsed = JSON.parse(raw);
       if (typeof parsed === "object" && parsed !== null && typeof parsed.output === "string") {
         outputText = parsed.output;
+        outputSource = typeof parsed.outputSource === "string" ? parsed.outputSource : "";
       } else if (typeof parsed === "string") {
         outputText = parsed;
       }
@@ -379,7 +392,12 @@ function AgentOutput({ outputPayload }: { outputPayload: string | Record<string,
   }
   const cleaned = outputText.replace(/\n*>\s*`Agent:.*`$/, "").trim();
   return (
-    <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-0.5">
+    <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-2">
+      {outputSource ? (
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          Source: {outputSource}
+        </p>
+      ) : null}
       {renderMarkdown(cleaned)}
     </div>
   );
@@ -846,32 +864,75 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     </CardFooter>
                   </Card>
 
-                  {/* Status */}
-                  <Card data-slot="card">
-                    <CardHeader>
-                      <CardDescription>Current Status</CardDescription>
-                      <CardTitle className="text-lg font-semibold">
-                        {selectedOccurrence ? (
-                          <ResultBadge status={selectedOccurrence.status} />
-                        ) : (
-                          <span className="text-muted-foreground text-sm font-normal">No runs yet</span>
+                  {/* Status — merged: shows occurrence + attempt status, attempt no, time, and retry action */}
+                  {selectedOccurrence && (
+                    <Card
+                      data-slot="card"
+                      className={
+                        (selectedAttempt?.status ?? selectedOccurrence.status) === "failed"
+                          ? "border-red-200 dark:border-red-900"
+                          : (selectedAttempt?.status ?? selectedOccurrence.status) === "running"
+                            ? "border-blue-200 dark:border-blue-900"
+                            : ""
+                      }
+                    >
+                      <CardHeader>
+                        <CardDescription>
+                          {isRecurring ? "Occurrence Status" : "Status"}
+                        </CardDescription>
+                        <CardTitle className="text-lg font-semibold flex items-center gap-2 flex-wrap">
+                          {selectedAttempt ? (
+                            <ResultBadge status={selectedAttempt.status} />
+                          ) : (
+                            <ResultBadge status={selectedOccurrence.status} />
+                          )}
+                        </CardTitle>
+                        <CardAction>
+                          <Badge variant="outline">
+                            <IconClock className="size-3" />
+                            {selectedAttempt
+                              ? `Attempt ${selectedAttempt.attempt_no}`
+                              : selectedOccurrence.latest_attempt_no > 0
+                                ? `Attempt ${selectedOccurrence.latest_attempt_no} (no attempt selected)`
+                                : "Not started"}
+                          </Badge>
+                        </CardAction>
+                      </CardHeader>
+                      <CardFooter className="flex-col items-start gap-1.5 text-sm">
+                        {selectedAttempt?.started_at ? (
+                          <div className="text-muted-foreground text-xs">
+                            {formatTime(selectedAttempt.started_at, event.timezone)}
+                            {selectedAttempt.finished_at && (
+                              <>
+                                {" "}({formatDuration(selectedAttempt.started_at, selectedAttempt.finished_at)})
+                              </>
+                            )}
+                          </div>
+                        ) : selectedOccurrence.scheduled_for ? (
+                          <div className="text-muted-foreground text-xs">
+                            Scheduled for {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
+                          </div>
+                        ) : null}
+                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 h-7 text-xs mt-0.5 cursor-pointer"
+                            onClick={() => {
+                              if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
+                                setForceRetryDialogOpen(true);
+                                return;
+                              }
+                              onRetry(selectedOccurrenceId!);
+                            }}
+                          >
+                            <IconRefresh className="size-3" />
+                            {["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
+                          </Button>
                         )}
-                      </CardTitle>
-                      <CardAction>
-                        <Badge variant="outline">
-                          <IconClock className="size-3" />
-                          {selectedOccurrence ? "Latest run" : "No occurrence"}
-                        </Badge>
-                      </CardAction>
-                    </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
-                      <div className="text-muted-foreground text-xs">
-                        {selectedOccurrence
-                          ? `Run on ${formatTime(selectedOccurrence.scheduled_for, event.timezone)}`
-                          : "This event has not run yet"}
-                      </div>
-                    </CardFooter>
-                  </Card>
+                      </CardFooter>
+                    </Card>
+                  )}
 
                   {/* Recurrence */}
                   {isRecurring && (
@@ -890,55 +951,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       </CardHeader>
                       <CardFooter className="flex-col items-start gap-1 text-sm">
                         <div className="text-muted-foreground text-xs">Repeating schedule</div>
-                      </CardFooter>
-                    </Card>
-                  )}
-
-
-                  {/* Latest Attempt */}
-                  {selectedOccurrence && (
-                    <Card data-slot="card" className={(selectedAttempt?.status ?? selectedOccurrence.status) === "failed" ? "border-red-200 dark:border-red-900" : ""}>
-                      <CardHeader>
-                        <CardDescription>Latest Run</CardDescription>
-                        <CardTitle className="text-lg font-semibold">
-                          {selectedAttempt ? (
-                            <ResultBadge status={selectedAttempt.status} />
-                          ) : (
-                            <span className="text-muted-foreground text-sm font-normal">No attempt yet</span>
-                          )}
-                        </CardTitle>
-                        <CardAction>
-                          <Badge variant="outline">
-                            <IconClock className="size-3" />
-                            Attempt {selectedAttempt?.attempt_no ?? selectedOccurrence.latest_attempt_no}
-                          </Badge>
-                        </CardAction>
-                      </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1 text-sm">
-                        {selectedAttempt?.started_at ? (
-                          <div className="text-muted-foreground text-xs">
-                            {formatTime(selectedAttempt.started_at, event.timezone)}
-                          </div>
-                        ) : selectedOccurrence.status === "queued" || selectedOccurrence.status === "scheduled" ? (
-                          <div className="text-muted-foreground text-xs">Waiting for run to start…</div>
-                        ) : null}
-                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1 h-7 text-xs mt-1 cursor-pointer"
-                            onClick={() => {
-                              if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
-                                setForceRetryDialogOpen(true);
-                                return;
-                              }
-                              onRetry(selectedOccurrenceId!);
-                            }}
-                          >
-                            <IconRefresh className="size-3" />
-                            {["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
-                          </Button>
-                        )}
                       </CardFooter>
                     </Card>
                   )}

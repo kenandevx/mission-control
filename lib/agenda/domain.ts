@@ -15,7 +15,7 @@ export async function transitionToScheduledManualRetry(sql: SqlClient, params: {
         latest_attempt_no = ${params.latestAttemptNo},
         retry_requested_at = now(),
         last_retry_reason = ${RETRY_REASON_CODES.MANUAL_RETRY},
-        queue_job_id = null,
+        cron_job_id = null,
         queued_at = null,
         fallback_attempted = false
     where id = ${params.occurrenceId}

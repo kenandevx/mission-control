@@ -4,11 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import os from "node:os";
 import postgres from "postgres";
-import {
-  transitionOccurrenceToSucceeded,
-  transitionOccurrenceToNeedsRetry,
-  transitionOccurrenceToFailed,
-} from "./agenda-domain.mjs";
+
 import { getOccurrenceArtifactDir, scanArtifactDirRecursive } from "./runtime-artifacts.mjs";
 
 const WORKSPACE_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
@@ -618,6 +614,197 @@ function cronJobIdFromPath(filePath) {
 }
 
 /**
+ * Find the session file path for a given session target.
+ * - For 'isolated': sessionId is the UUID from run.sessionId
+ * - For 'main': look up agent:main:main in sessions.json to get the session file
+ * Returns null if the session cannot be resolved.
+ */
+async function resolveSessionFile(sessionTarget, sessionId) {
+  if (sessionTarget === 'main') {
+    try {
+      const sessionsFile = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', 'sessions.json');
+      const raw = fs.readFileSync(sessionsFile, 'utf8');
+      const sessions = JSON.parse(raw);
+      const mainEntry = sessions['agent:main:main'];
+      if (!mainEntry?.sessionFile) {
+        console.log(`[bridge-logger] resolveSessionFile: agent:main:main not found in sessions.json`);
+        return null;
+      }
+      const sessionFilePath = mainEntry.sessionFile;
+      console.log(`[bridge-logger] resolveSessionFile: agent:main:main → ${path.basename(sessionFilePath)} (status=${mainEntry.status})`);
+      return sessionFilePath;
+    } catch (err) {
+      console.log(`[bridge-logger] resolveSessionFile: sessions.json read error: ${err.message}`);
+      return null;
+    }
+  }
+  // Isolated: sessionId is the UUID
+  if (sessionId) {
+    return path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', `${sessionId}.jsonl`);
+  }
+  return null;
+}
+
+/**
+ * Read the last assistant message from a session JSONL file.
+ * Used for main session runs where run.summary is the rendered prompt (input),
+ * not the agent's actual output.
+ *
+ * For 'main' sessions: resolves via sessions.json → agent:main:main → sessionFile
+ * For 'isolated' sessions: uses the sessionId from run.sessionId
+ *
+ * Returns the text content of the last assistant turn, or null if unreadable.
+ */
+async function readLastAssistantFromSession(sessionTarget, sessionId) {
+  if (!sessionTarget) return null;
+  const sessionFilePath = await resolveSessionFile(sessionTarget, sessionId);
+  if (!sessionFilePath) {
+    console.log(`[bridge-logger] readLastAssistantFromSession: no session file resolved for ${sessionTarget}/${sessionId}`);
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(sessionFilePath, 'utf8');
+    const lines = raw.split('\n').filter(Boolean);
+    // Find the last assistant message (scan backwards for efficiency)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const parsed = JSON.parse(lines[i]);
+        const role = parsed?.role ?? parsed?.message?.role ?? '';
+        if (role !== 'assistant') continue;
+        const content = parsed?.content ?? parsed?.message?.content ?? '';
+        const text = extractContentText(content);
+        if (text.trim()) {
+          console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)}`);
+          return text.trim().slice(0, 8000);
+        }
+      } catch { continue; }
+    }
+    console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} (${lines.length} lines)`);
+  } catch (err) {
+    console.log(`[bridge-logger] readLastAssistantFromSession: session file error: ${err.message}`);
+  }
+  return null;
+}
+
+function extractContentText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => {
+    if (typeof part === 'string') return part;
+    if (part && typeof part === 'object') {
+      if (typeof part.text === 'string') return part.text;
+      if (typeof part.content === 'string') return part.content;
+    }
+    return '';
+  }).join('');
+}
+
+function normalizeComparableText(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function looksLikePromptEcho(candidate, renderedPrompt, summaryText) {
+  const candidateNorm = normalizeComparableText(candidate);
+  if (!candidateNorm) return true;
+  const promptNorm = normalizeComparableText(renderedPrompt);
+  const summaryNorm = normalizeComparableText(summaryText);
+  return Boolean(
+    (promptNorm && candidateNorm === promptNorm) ||
+    (summaryNorm && candidateNorm === summaryNorm)
+  );
+}
+
+async function readBestArtifactText(eventId, occurrenceId, maxChars = 8000) {
+  try {
+    const canonicalDir = getOccurrenceArtifactDir({ eventId, occurrenceId });
+    const files = await scanArtifactDirRecursive(canonicalDir, 3);
+    if (!files?.length) return null;
+    const ranked = [...files].sort((a, b) => {
+      const score = (name) => {
+        const lower = String(name || '').toLowerCase();
+        if (lower.endsWith('.txt') || lower.endsWith('.md')) return 0;
+        if (lower.endsWith('.json')) return 1;
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) return 2;
+        return 3;
+      };
+      return score(a.name) - score(b.name);
+    });
+    for (const file of ranked) {
+      try {
+        const stat = await fs.promises.stat(file.path);
+        if (!stat.isFile()) continue;
+        if (stat.size > 512 * 1024) continue;
+        const raw = await fs.promises.readFile(file.path, 'utf8');
+        const text = String(raw || '').trim();
+        if (!text) continue;
+        return {
+          text: text.slice(0, maxChars),
+          path: file.path,
+          name: file.name,
+          size: stat.size,
+        };
+      } catch {
+        continue;
+      }
+    }
+  } catch (err) {
+    console.warn('[bridge-logger] readBestArtifactText failed (non-fatal):', err?.message);
+  }
+  return null;
+}
+
+async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurrenceId, renderedPrompt, summaryText }) {
+  const result = {
+    output: String(summaryText || ''),
+    outputSource: 'cron_summary',
+    outputMeta: {
+      sessionTarget: sessionTarget || null,
+      sessionId: sessionId || null,
+      promptEchoDetected: false,
+      sessionOutputUsed: false,
+      artifactUsed: false,
+      artifactPath: null,
+      artifactName: null,
+      artifactSize: null,
+    },
+  };
+
+  if (sessionTarget === 'main') {
+    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId);
+    if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
+      result.output = sessionOutput;
+      result.outputSource = 'main_session_assistant';
+      result.outputMeta.sessionOutputUsed = true;
+      return result;
+    }
+    if (sessionOutput) {
+      result.outputMeta.promptEchoDetected = true;
+    }
+  }
+
+  const artifactText = await readBestArtifactText(eventId, occurrenceId);
+  if (artifactText && !looksLikePromptEcho(artifactText.text, renderedPrompt, summaryText)) {
+    result.output = artifactText.text;
+    result.outputSource = 'artifact_text';
+    result.outputMeta.artifactUsed = true;
+    result.outputMeta.artifactPath = artifactText.path;
+    result.outputMeta.artifactName = artifactText.name;
+    result.outputMeta.artifactSize = artifactText.size;
+    return result;
+  }
+
+  result.outputMeta.promptEchoDetected = looksLikePromptEcho(result.output, renderedPrompt, summaryText);
+  if (result.outputMeta.promptEchoDetected && renderedPrompt) {
+    result.outputSource = 'prompt_echo_fallback';
+  }
+  return result;
+}
+
+/**
  * Delete Qdrant memory entries that were written by a failed isolated session.
  * Parses the session JSONL for memory_store tool result IDs.
  * We use proper JSON parsing (not regex) to avoid false positives.
@@ -734,7 +921,7 @@ async function handleCronRunLine(getSql, jobId, line) {
   // Find the occurrence that owns this cron job.
   const occurrences = await sql`
     SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
-           ao.fallback_attempted, ao.rendered_prompt, ao.status,
+           ao.fallback_attempted, ao.rendered_prompt, ao.status, ao.scheduled_for,
            ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes, ae.session_target
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
@@ -806,10 +993,9 @@ async function handleCronRunLine(getSql, jobId, line) {
       RETURNING id
     `;
     if (!updated) {
-      console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} already claimed by another process, skipping started transition`);
+      console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} already claimed by another process`);
     } else {
       console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} claimed as running (was queued)`);
-      // Emit: agenda run started
       await emitAgendaLog(sql, {
         workspaceId: wid,
         agentDbId,
@@ -821,28 +1007,99 @@ async function handleCronRunLine(getSql, jobId, line) {
         message: `Agenda run started: "${occ.title}" (attempt ${attemptNo}, cron job ${jobId})`,
         rawPayload: { cronJobId: jobId, attemptNo, model: run.model || null, sessionId: run.sessionId || null },
       });
-      // Notify SSE stream so UI immediately sees the running state
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'started', occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id })})`;
-      console.log(`[bridge-logger] cron ${jobId} → SSE notified for running state (occurrence ${occ.occurrence_id})`);
     }
   } else {
-    console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} status=${occ.status}, skipping started transition`);
+    // Not queued — already running (e.g. promotePastDueToRunning claimed it first).
+    // Emit started log anyway so agenda logs are complete.
+    if (occ.status === 'running') {
+      await emitAgendaLog(sql, {
+        workspaceId: wid,
+        agentDbId,
+        agentId: occ.default_agent_id || 'main',
+        occurrenceId: occ.occurrence_id,
+        sessionKey,
+        eventType: 'agenda.started',
+        level: 'info',
+        message: `Agenda run started: "${occ.title}" (attempt ${attemptNo}, cron job ${jobId})`,
+        rawPayload: { cronJobId: jobId, attemptNo, model: run.model || null, sessionId: run.sessionId || null },
+      });
+    }
   }
+
+  // Always notify SSE of 'running' state — even if already running (promotePastDueToRunning
+  // may have claimed it first). This ensures the UI always sees the running state transition.
+  await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'started', occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id })})`;
+  console.log(`[bridge-logger] cron ${jobId} → SSE notified for running state (occurrence ${occ.occurrence_id})`);
+
+  // For main session runs, read the actual agent output from the session JSONL.
+  // run.summary is the rendered prompt (input), not the agent's response.
+  // The cron run JSON has no sessionId field, so we resolve the session file via sessions.json.
+  const outputResolution = await resolveAgendaOutput({
+    sessionTarget: occ.session_target,
+    sessionId: run.sessionId || null,
+    eventId: occ.agenda_event_id,
+    occurrenceId: occ.occurrence_id,
+    renderedPrompt: occ.rendered_prompt,
+    summaryText,
+  });
+  const agentOutput = outputResolution.output;
+  console.log(`[bridge-logger] cron ${jobId} → output source=${outputResolution.outputSource} (${agentOutput.length} chars)`);
+  await emitAgendaLog(sql, {
+    workspaceId: wid,
+    agentDbId,
+    agentId: occ.default_agent_id || 'main',
+    occurrenceId: occ.occurrence_id,
+    sessionKey,
+    eventType: 'agenda.output_captured',
+    level: outputResolution.outputSource === 'prompt_echo_fallback' ? 'warn' : 'info',
+    message: `Output captured from ${outputResolution.outputSource.replaceAll('_', ' ')} for "${occ.title}"`,
+    rawPayload: {
+      cronJobId: jobId,
+      outputSource: outputResolution.outputSource,
+      sessionTarget: occ.session_target || null,
+      promptEchoDetected: outputResolution.outputMeta.promptEchoDetected,
+      artifactPath: outputResolution.outputMeta.artifactPath,
+      artifactName: outputResolution.outputMeta.artifactName || null,
+      artifactSize: outputResolution.outputMeta.artifactSize || null,
+      outputPreview: String(agentOutput || '').slice(0, 300),
+    },
+  });
+
+  const runDelayMs = startedAt.getTime() - new Date(occ.scheduled_for || startedAt).getTime();
 
   if (succeeded) {
     // ── Success path ──────────────────────────────────────────────────────────
-    const written = await transitionOccurrenceToSucceeded(sql, {
-      occurrenceId: occ.occurrence_id,
-      attemptNo,
-    });
-    if (!written) return; // Another process got there first (race guard)
+    // CRITICAL: update status BEFORE SSE so calendar always reloads with correct status.
+    // transitionOccurrenceToSucceeded requires status='running' — if promotePastDueToRunning
+    // won the race 5s earlier, this would return null and leave the DB with stale status='running',
+    // causing the SSE-reload to show 'running' (blue) instead of 'succeeded' (green).
+    // Solution: unconditional UPDATE to 'succeeded', then SSE, then write attempt.
+    const [updated] = await sql`
+      UPDATE agenda_occurrences
+      SET status = 'succeeded',
+          latest_attempt_no = ${attemptNo},
+          cron_job_id = NULL,
+          queued_at = NULL,
+          locked_at = NULL,
+          cron_synced_at = now()
+      WHERE id = ${occ.occurrence_id}
+        AND status IN ('running', 'queued', 'scheduled')
+      RETURNING id
+    `;
+    // Always notify SSE of final status — calendar reloads and finds status='succeeded'.
+    await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id })})`;
+    console.log(`[bridge-logger] cron ${jobId} → SSE notified for succeeded state (occurrence ${occ.occurrence_id}, updated=${!!updated})`);
+    if (!updated) {
+      // Occurrence already succeeded by another process — log but continue (attempt may differ)
+      console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} already succeeded (race guard)`);
+    }
 
     const [attempt] = await sql`
       INSERT INTO agenda_run_attempts
         (occurrence_id, attempt_no, cron_job_id, status, started_at, finished_at, summary)
       VALUES
         (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'succeeded',
-         ${startedAt}, ${finishedAt}, ${summaryText})
+         ${startedAt}, ${finishedAt}, ${agentOutput})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -855,7 +1112,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
-           ${sql.json({ output: summaryText })},
+           ${sql.json({ output: agentOutput, outputSource: outputResolution.outputSource, outputMeta: outputResolution.outputMeta })},
            ${artifactPayload ? sql.json(artifactPayload) : null},
            'succeeded', ${startedAt}, ${finishedAt})
         ON CONFLICT DO NOTHING
@@ -865,10 +1122,9 @@ async function handleCronRunLine(getSql, jobId, line) {
       }
     }
 
-    await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'succeeded', occurrenceId: occ.occurrence_id })})`;
-    // Notify main session (only for isolated runs — main session runs are already in chat)
+    // Notify main session (isolated runs: system event in main session; main runs: Telegram)
     notifyMainSession(occ.session_target || 'isolated', {
-      title: occ.title, status: 'succeeded', summary: summaryText,
+      title: occ.title, status: 'succeeded', summary: agentOutput,
       occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
       sessionId: run.sessionId || null,
     }).catch(() => {});
@@ -878,7 +1134,19 @@ async function handleCronRunLine(getSql, jobId, line) {
       occurrenceId: occ.occurrence_id, sessionKey,
       eventType: 'agenda.succeeded', level: 'info',
       message: `Agenda run succeeded: "${occ.title}" (attempt ${attemptNo}, ${run.durationMs ? Math.round(run.durationMs/1000)+'s' : 'unknown duration'})`,
-      rawPayload: { cronJobId: jobId, attemptNo, durationMs: run.durationMs, summary: summaryText, model: run.model || null },
+      rawPayload: {
+        cronJobId: jobId,
+        attemptNo,
+        durationMs: run.durationMs,
+        summary: agentOutput,
+        model: run.model || null,
+        scheduledFor: occ.scheduled_for || null,
+        startedAt,
+        finishedAt,
+        runDelayMs,
+        runDelaySeconds: Math.round(runDelayMs / 1000),
+        outputSource: outputResolution.outputSource,
+      },
     });
     console.log(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} succeeded (attempt ${attemptNo})`);
     // Clean up the cron job from the gateway — output is in DB, no longer needed.
@@ -886,12 +1154,39 @@ async function handleCronRunLine(getSql, jobId, line) {
 
   } else {
     // ── Failure path ──────────────────────────────────────────────────────────
+    // Load settings first (needed to determine targetStatus before unconditional update)
+    const [settings] = await sql`SELECT max_retries, default_fallback_model FROM worker_settings WHERE id = 1 LIMIT 1`;
+    const maxRetries = Math.max(1, Number(settings?.max_retries ?? 1));
+    const globalFallback = String(settings?.default_fallback_model || "").trim();
+    const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
+    const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
+    const targetStatus = shouldTryFallback ? 'needs_retry' : (occ.fallback_attempted ? 'failed' : 'needs_retry');
+
+    // CRITICAL: always update status before SSE — same race-guard fix as success path.
+    // transitionOccurrenceToNeedsRetry/Failed require status='running'; if promotePastDueToRunning
+    // won the race, those functions would return null and the DB would keep status='running',
+    // causing the SSE-reload to never show 'needs_retry'/'failed' in the calendar.
+    const [statusUpdated] = await sql`
+      UPDATE agenda_occurrences
+      SET status = ${targetStatus},
+          latest_attempt_no = ${attemptNo},
+          cron_job_id = NULL,
+          queued_at = NULL,
+          locked_at = NULL,
+          cron_synced_at = now()
+      WHERE id = ${occ.occurrence_id}
+        AND status IN ('running', 'queued', 'scheduled')
+      RETURNING id
+    `;
+    await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: targetStatus, occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id })})`;
+    console.log(`[bridge-logger] cron ${jobId} → SSE notified for ${targetStatus} (occurrence ${occ.occurrence_id}, dbUpdated=${!!statusUpdated})`);
+
     const [attempt] = await sql`
       INSERT INTO agenda_run_attempts
         (occurrence_id, attempt_no, cron_job_id, status, started_at, finished_at, summary, error_message)
       VALUES
         (${occ.occurrence_id}, ${attemptNo}, ${jobId}, 'failed',
-         ${startedAt}, ${finishedAt}, ${summaryText}, ${errorText})
+         ${startedAt}, ${finishedAt}, ${agentOutput}, ${errorText})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -905,7 +1200,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
            ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
-           ${sql.json({ output: errorText || summaryText })},
+           ${sql.json({ output: agentOutput, outputSource: outputResolution.outputSource, outputMeta: outputResolution.outputMeta })},
            ${artifactPayloadFail ? sql.json(artifactPayloadFail) : null},
            'failed', ${startedAt}, ${finishedAt}, ${errorText})
         ON CONFLICT DO NOTHING
@@ -919,14 +1214,6 @@ async function handleCronRunLine(getSql, jobId, line) {
       );
     }
 
-    // Load settings to check fallback model threshold
-    const [settings] = await sql`SELECT max_retries, default_fallback_model FROM worker_settings WHERE id = 1 LIMIT 1`;
-    const maxRetries = Math.max(1, Number(settings?.max_retries ?? 1));
-    const globalFallback = String(settings?.default_fallback_model || "").trim();
-    const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
-
-    const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
-
     if (shouldTryFallback) {
       // Mark fallback_attempted before transitioning — prevents a second fallback attempt
       // if the scheduler sees this before the status updates.
@@ -935,74 +1222,86 @@ async function handleCronRunLine(getSql, jobId, line) {
         SET fallback_attempted = true, cron_synced_at = now()
         WHERE id = ${occ.occurrence_id}
       `;
-      await transitionOccurrenceToNeedsRetry(sql, {
-        occurrenceId: occ.occurrence_id,
-        attemptNo,
-        reasonText: 'RETRY_EXHAUSTED: primary retries exhausted, fallback model queued',
-      });
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({
-        action: 'needs_retry',
-        occurrenceId: occ.occurrence_id,
-        fallbackModel,
-        scheduleFallback: true,
-      })})`;
+      // Status already set to 'needs_retry' by the unconditional update above.
+      // Just emit the fallback-specific log.
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
         eventType: 'agenda.fallback', level: 'warn',
         message: `Agenda run exhausted primary retries, queuing fallback model for "${occ.title}" (attempt ${attemptNo})`,
-        rawPayload: { cronJobId: jobId, attemptNo, fallbackModel, error: errorText.slice(0, 400) },
+        rawPayload: {
+          cronJobId: jobId,
+          attemptNo,
+          fallbackModel,
+          error: errorText.slice(0, 400),
+          scheduledFor: occ.scheduled_for || null,
+          startedAt,
+          finishedAt,
+          runDelayMs,
+          runDelaySeconds: Math.round(runDelayMs / 1000),
+          outputSource: outputResolution.outputSource,
+        },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
       deleteCronJobSilently(jobId).catch(() => {});
     } else if (occ.fallback_attempted) {
-      // Fallback also failed — this is a terminal failure. Mark as 'failed' (not retryable
-      // without a manual Force Retry). Alert the user.
-      await transitionOccurrenceToFailed(sql, {
-        occurrenceId: occ.occurrence_id,
-        attemptNo,
-        reasonText: `FALLBACK_EXHAUSTED: ${errorText.slice(0, 400)}`,
-      });
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'failed', occurrenceId: occ.occurrence_id })})`;
+      // Fallback also failed — terminal failure. Status already set to 'failed' by the
+      // unconditional update above. Alert the user.
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
         eventType: 'agenda.failed', level: 'error',
         message: `Agenda run permanently failed (fallback also exhausted): "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
-        rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs, terminal: true },
+        rawPayload: {
+          cronJobId: jobId,
+          attemptNo,
+          error: errorText.slice(0, 1000),
+          durationMs: run.durationMs,
+          terminal: true,
+          scheduledFor: occ.scheduled_for || null,
+          startedAt,
+          finishedAt,
+          runDelayMs,
+          runDelaySeconds: Math.round(runDelayMs / 1000),
+          outputSource: outputResolution.outputSource,
+        },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${errorText.slice(0, 120)}`);
       notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'failed', summary: errorText.slice(0, 200),
+        title: occ.title, status: 'failed', summary: agentOutput || errorText.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
         sessionId: run.sessionId || null,
       }).catch(() => {});
       sendTelegramAlert(getSql, occ.title, occ.occurrence_id, errorText).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
     } else {
-      // Retries exhausted, no fallback configured (or fallback not yet attempted via scheduler).
-      // Mark needs_retry — user can manually retry or the fallback signal will kick in.
-      await transitionOccurrenceToNeedsRetry(sql, {
-        occurrenceId: occ.occurrence_id,
-        attemptNo,
-        reasonText: `RETRY_EXHAUSTED: ${errorText.slice(0, 400)}`,
-      });
-      await sql`UPDATE agenda_occurrences SET cron_synced_at = now() WHERE id = ${occ.occurrence_id}`;
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'needs_retry', occurrenceId: occ.occurrence_id })})`;
+      // Retries exhausted, no fallback configured. Status already set to 'needs_retry' above.
+      // User can manually retry or the fallback signal will kick in on next scan.
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
         eventType: 'agenda.failed', level: 'error',
         message: `Agenda run failed: "${occ.title}" (attempt ${attemptNo}) — ${errorText.slice(0, 300)}`,
-        rawPayload: { cronJobId: jobId, attemptNo, error: errorText.slice(0, 1000), durationMs: run.durationMs },
+        rawPayload: {
+          cronJobId: jobId,
+          attemptNo,
+          error: errorText.slice(0, 1000),
+          durationMs: run.durationMs,
+          scheduledFor: occ.scheduled_for || null,
+          startedAt,
+          finishedAt,
+          runDelayMs,
+          runDelaySeconds: Math.round(runDelayMs / 1000),
+          outputSource: outputResolution.outputSource,
+        },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${errorText.slice(0, 120)}`);
       deleteCronJobSilently(jobId).catch(() => {});
       notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'needs_retry', summary: errorText.slice(0, 200),
+        title: occ.title, status: 'needs_retry', summary: agentOutput || errorText.slice(0, 200),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
         sessionId: run.sessionId || null,
       }).catch(() => {});
@@ -1084,31 +1383,14 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
         }
       } catch { /* no sessions file yet */ }
       if (chatId) {
-        // For main-session runs the cron `summary` field is the rendered prompt
-        // (the input), not the agent output. Read the actual last assistant reply
-        // from the main session JSONL instead.
+        // For main-session runs the cron `summary` field may be the rendered prompt
+        // rather than the real assistant output. Resolve the main session file the
+        // same way as the run-sync path and prefer the assistant text when it does
+        // not look like a prompt echo.
         let actualOutput = snippet; // fallback to summary snippet
-        if (sessionId) {
-          try {
-            const sessionFilePath = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', `${sessionId}.jsonl`);
-            const raw = fs.readFileSync(sessionFilePath, 'utf8');
-            const lines = raw.split('\n').filter(Boolean);
-            // Find the last assistant message
-            for (let i = lines.length - 1; i >= 0; i--) {
-              try {
-                const parsed = JSON.parse(lines[i]);
-                const role = parsed?.role ?? parsed?.message?.role ?? '';
-                if (role !== 'assistant') continue;
-                const content = parsed?.content ?? parsed?.message?.content ?? '';
-                const text = typeof content === 'string' ? content
-                  : Array.isArray(content) ? content.map(c => typeof c === 'string' ? c : c?.text ?? '').join('') : '';
-                if (text.trim()) {
-                  actualOutput = `\n\n${text.trim().slice(0, 600)}${text.length > 600 ? '\u2026' : ''}`;
-                  break;
-                }
-              } catch { continue; }
-            }
-          } catch { /* session file unreadable — use summary fallback */ }
+        const sessionText = await readLastAssistantFromSession('main', sessionId || null);
+        if (sessionText && !looksLikePromptEcho(sessionText, '', summary)) {
+          actualOutput = `\n\n${sessionText.trim().slice(0, 600)}${sessionText.length > 600 ? '\u2026' : ''}`;
         }
         const text = `${statusEmoji} Agenda task "${title}" ${statusLabel}${actualOutput}`;
         await execFileAsync('openclaw', [
