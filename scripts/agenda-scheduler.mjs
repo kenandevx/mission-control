@@ -112,12 +112,12 @@ async function cronCmd(args, timeoutMs = 15000) {
 
 /** Create a one-shot cron job for an occurrence. Returns the cron job ID. */
 async function createCronJob({ title, message, agentId, model, scheduledFor, sessionTarget, timeoutSeconds }) {
-  // If the scheduled time is already past, use "0s" to fire immediately (the occurrence
-  // is already overdue — no point adding more delay). Otherwise always use the absolute
-  // ISO timestamp so the cron fires at the exact scheduled second.
+  // If the scheduled time is already past, use a tiny valid duration so the cron
+  // fires immediately. OpenClaw rejects "0s", so use "1s" for overdue runs.
+  // Otherwise always use the absolute ISO timestamp so the cron fires at the exact scheduled second.
   const scheduledMs = new Date(scheduledFor).getTime();
   const msUntil = scheduledMs - Date.now();
-  const atValue = msUntil > 0 ? new Date(scheduledFor).toISOString() : "0s";
+  const atValue = msUntil > 0 ? new Date(scheduledFor).toISOString() : "1s";
   if (msUntil <= 0) {
     console.log(`[agenda-scheduler] createCronJob: scheduling IMMEDIATE (was due ${Math.round(-msUntil/1000)}s ago, at=${atValue}) for "${title}"`);
   }
