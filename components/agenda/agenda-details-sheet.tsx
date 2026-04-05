@@ -790,15 +790,15 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Schedule</CardDescription>
-                      <CardTitle className="text-sm font-semibold tabular-nums truncate">
-                        {getScheduleDisplay(event)}
-                      </CardTitle>
-                      <CardAction>
-                        <Badge variant="outline">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-sm font-semibold tabular-nums min-w-0 flex-1">
+                          {getScheduleDisplay(event)}
+                        </CardTitle>
+                        <Badge variant="outline" className="shrink-0">
                           <IconCalendar className="size-3" />
-                          {event.startDate ? event.startDate : "Not set"}
+                          {event.startDate ?? "Not set"}
                         </Badge>
-                      </CardAction>
+                      </div>
                     </CardHeader>
                     <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">{event.timezone}</div>
