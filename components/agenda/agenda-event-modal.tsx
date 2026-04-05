@@ -763,8 +763,7 @@ setAgendaTimeStepMinutes(safe);
           </Select>
         </div>
 
-        <>
-            {/* Model Override */
+        {/* Model Override */}
             <div className="flex flex-col gap-1.5 min-w-0">
               <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
                 <IconCpu className="size-3.5 text-primary" />
@@ -827,7 +826,6 @@ setAgendaTimeStepMinutes(safe);
                 </SelectContent>
               </Select>
             </div>
-        </>
       </div>
 
       {/* Session Target */}
