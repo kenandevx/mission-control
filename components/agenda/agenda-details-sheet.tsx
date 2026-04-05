@@ -1229,7 +1229,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               </p>
                               <div className="rounded-lg border bg-muted/40 p-4">
                                 <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-[400px] overflow-y-auto">
-                                  {promptText.length > 1000 ? promptText.slice(0, 1000) + "\u2026" : promptText}
+                                  {promptText}
                                 </p>
                               </div>
                             </>
