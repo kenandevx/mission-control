@@ -197,7 +197,7 @@ function RunningBadge() {
         <span className="absolute inset-0 rounded-full bg-indigo-500/30 animate-ping" />
         <span className="size-3 rounded-full border-[2.5px] border-indigo-500 border-t-transparent animate-spin" />
       </span>
-      <span className="animate-pulse">Running</span>
+      <span>Running</span>
     </span>
   );
 }
@@ -432,7 +432,8 @@ function DayCell({
   const [dragOver, setDragOver] = useState(false);
   const [showAllDialog, setShowAllDialog] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
-  const dayEvents = events.filter((e) => e.date === dateStr);
+  const dayEvents = events.filter((e) => e.date === dateStr)
+    .sort((a, b) => (a.scheduledFor ?? a.start ?? "").localeCompare(b.scheduledFor ?? b.start ?? ""));
   const visible = dayEvents.slice(0, MAX_VISIBLE);
   const overflow = dayEvents.length - MAX_VISIBLE;
   const hasEvents = dayEvents.length > 0;
