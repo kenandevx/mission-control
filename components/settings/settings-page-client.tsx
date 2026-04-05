@@ -441,7 +441,7 @@ export function SettingsPageClient(): React.ReactNode {
             </button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            {THEME_ACCENTS.filter((accent) => !accent.id.startsWith("pastel-")).map((accent) => {
+            {THEME_ACCENTS.filter((accent) => !accent.id.startsWith("extra-")).map((accent) => {
               const active = accent.id === accentId;
               return (
                 <button
@@ -870,65 +870,55 @@ export function SettingsPageClient(): React.ReactNode {
               </div>
             </div>
           </div>
-          <div className="max-h-[55vh] overflow-y-auto pr-1 space-y-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-3">Core</p>
-              <div className="grid grid-cols-5 sm:grid-cols-8 gap-3">
-                {THEME_ACCENTS.filter((accent) => !accent.id.startsWith("pastel-")).map((accent) => {
-                  const active = accentId === accent.id;
-                  return (
-                    <button
-                      key={accent.id}
-                      type="button"
-                      title={accent.label}
-                      onClick={() => {
-                        setAccentId(accent.id);
-                        localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent.id);
-                        applyThemeAccent(accent.id, true);
-                        window.dispatchEvent(new CustomEvent("mc-theme-accent-changed", { detail: { id: accent.id } }));
-                        toast.success(`Main color set to ${accent.label}`);
-                      }}
-                      className={[
-                        "group flex flex-col items-center gap-2 rounded-2xl border bg-background/80 p-2 transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer",
-                        active ? "border-foreground shadow-sm" : "border-border hover:border-primary/30",
-                      ].join(" ")}
-                    >
-                      <span className="size-9 rounded-xl ring-1 ring-black/5" style={{ backgroundColor: accent.swatch }} />
-                      <span className="text-[10px] text-center leading-tight text-muted-foreground group-hover:text-foreground">{accent.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-3">Pastels</p>
-              <div className="grid grid-cols-5 sm:grid-cols-8 gap-3">
-                {THEME_ACCENTS.filter((accent) => accent.id.startsWith("pastel-")).map((accent) => {
-                  const active = accentId === accent.id;
-                  return (
-                    <button
-                      key={accent.id}
-                      type="button"
-                      title={accent.label}
-                      onClick={() => {
-                        setAccentId(accent.id);
-                        localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent.id);
-                        applyThemeAccent(accent.id, true);
-                        window.dispatchEvent(new CustomEvent("mc-theme-accent-changed", { detail: { id: accent.id } }));
-                        toast.success(`Main color set to ${accent.label}`);
-                      }}
-                      className={[
-                        "group flex flex-col items-center gap-2 rounded-2xl border bg-background/80 p-2 transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer",
-                        active ? "border-foreground shadow-sm" : "border-border hover:border-primary/30",
-                      ].join(" ")}
-                    >
-                      <span className="size-9 rounded-xl ring-1 ring-black/5" style={{ backgroundColor: accent.swatch }} />
-                      <span className="text-[10px] text-center leading-tight text-muted-foreground group-hover:text-foreground">{accent.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+          <div className="max-h-[62vh] overflow-y-auto pr-1 space-y-6">
+            {([
+              { label: "Core",  filter: (a: { id: string }) => !a.id.startsWith("extra-") },
+              { label: "Extended Palette", filter: (a: { id: string }) => a.id.startsWith("extra-") },
+            ] as const).map(({ label, filter }) => {
+              const group = THEME_ACCENTS.filter(filter);
+              return (
+                <div key={label}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+                    <span className="text-[10px] text-muted-foreground/60">({group.length})</span>
+                  </div>
+                  <div className="grid grid-cols-6 sm:grid-cols-10 gap-2">
+                    {group.map((accent) => {
+                      const active = accentId === accent.id;
+                      return (
+                        <button
+                          key={accent.id}
+                          type="button"
+                          title={accent.label}
+                          onClick={() => {
+                            setAccentId(accent.id);
+                            localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent.id);
+                            applyThemeAccent(accent.id, true);
+                            window.dispatchEvent(new CustomEvent("mc-theme-accent-changed", { detail: { id: accent.id } }));
+                            toast.success(`Color set to ${accent.label}`);
+                          }}
+                          className={[
+                            "group flex flex-col items-center gap-1.5 rounded-xl border p-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md cursor-pointer",
+                            active ? "border-foreground bg-foreground/5 shadow-sm" : "border-transparent hover:border-border",
+                          ].join(" ")}
+                        >
+                          <span
+                            className={[
+                              "size-8 rounded-lg ring-1 ring-black/10 transition-transform",
+                              active ? "scale-110" : "",
+                            ].join(" ")}
+                            style={{ backgroundColor: accent.swatch }}
+                          />
+                          <span className="text-[9px] text-center leading-tight text-muted-foreground group-hover:text-foreground truncate w-full px-0.5">
+                            {accent.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </DialogContent>
       </Dialog>

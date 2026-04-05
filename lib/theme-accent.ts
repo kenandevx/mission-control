@@ -390,55 +390,132 @@ const BASE_THEME_ACCENTS: ThemeAccent[] = [
   },
 ];
 
-function makePastelAccent(id: string, label: string, hue: number): ThemeAccent {
-  const swatch = `hsl(${Math.round(hue)} 82% 78%)`;
+// 60 hand-picked distinct hue stops + labels + chroma tier
+// Tier: "vivid" | "soft" | "muted" controls lightness/chroma
+const EXTRA_ACCENT_SPECS: Array<{ hue: number; label: string; tier: "vivid" | "soft" | "muted" }> = [
+  { hue: 0,   label: "Crimson",        tier: "vivid" },
+  { hue: 10,  label: "Vermilion",      tier: "vivid" },
+  { hue: 20,  label: "Tangerine",      tier: "soft"  },
+  { hue: 30,  label: "Amber",          tier: "soft"  },
+  { hue: 40,  label: "Marigold",       tier: "soft"  },
+  { hue: 50,  label: "Gold",           tier: "soft"  },
+  { hue: 60,  label: "Sunflower",      tier: "soft"  },
+  { hue: 70,  label: "Chartreuse",     tier: "soft"  },
+  { hue: 80,  label: "Lime",           tier: "vivid" },
+  { hue: 90,  label: "Grass",          tier: "soft"  },
+  { hue: 100, label: "Meadow",         tier: "soft"  },
+  { hue: 110, label: "Fern",           tier: "muted" },
+  { hue: 120, label: "Emerald",        tier: "vivid" },
+  { hue: 130, label: "Jade",           tier: "soft"  },
+  { hue: 140, label: "Mint",           tier: "soft"  },
+  { hue: 150, label: "Sea Green",      tier: "soft"  },
+  { hue: 160, label: "Aquamarine",     tier: "soft"  },
+  { hue: 170, label: "Seafoam",        tier: "soft"  },
+  { hue: 180, label: "Cyan",           tier: "vivid" },
+  { hue: 188, label: "Lagoon",         tier: "soft"  },
+  { hue: 196, label: "Teal",           tier: "soft"  },
+  { hue: 205, label: "Steel Blue",     tier: "muted" },
+  { hue: 215, label: "Denim",          tier: "soft"  },
+  { hue: 225, label: "Cornflower",     tier: "soft"  },
+  { hue: 235, label: "Cobalt",         tier: "vivid" },
+  { hue: 245, label: "Bluebell",       tier: "soft"  },
+  { hue: 252, label: "Periwinkle",     tier: "soft"  },
+  { hue: 258, label: "Iris",           tier: "soft"  },
+  { hue: 265, label: "Wisteria",       tier: "muted" },
+  { hue: 270, label: "Lavender",       tier: "soft"  },
+  { hue: 278, label: "Heather",        tier: "soft"  },
+  { hue: 285, label: "Lilac",          tier: "soft"  },
+  { hue: 293, label: "Purple",         tier: "vivid" },
+  { hue: 300, label: "Violet",         tier: "soft"  },
+  { hue: 308, label: "Orchid",         tier: "soft"  },
+  { hue: 315, label: "Magenta",        tier: "vivid" },
+  { hue: 320, label: "Fuchsia",        tier: "vivid" },
+  { hue: 327, label: "Hot Pink",       tier: "soft"  },
+  { hue: 335, label: "Rose",           tier: "soft"  },
+  { hue: 342, label: "Blush",          tier: "soft"  },
+  { hue: 348, label: "Flamingo",       tier: "soft"  },
+  { hue: 355, label: "Candy Red",      tier: "soft"  },
+  // Muted / earthy
+  { hue: 25,  label: "Terracotta",     tier: "muted" },
+  { hue: 35,  label: "Sand",           tier: "muted" },
+  { hue: 55,  label: "Honey",          tier: "muted" },
+  { hue: 95,  label: "Olive",          tier: "muted" },
+  { hue: 115, label: "Sage",           tier: "muted" },
+  { hue: 175, label: "Patina",         tier: "muted" },
+  { hue: 232, label: "Slate Blue",     tier: "muted" },
+  { hue: 260, label: "Dusty Purple",   tier: "muted" },
+  { hue: 330, label: "Dusty Rose",     tier: "muted" },
+  { hue: 345, label: "Mauve",          tier: "muted" },
+  // Deep / dark primaries
+  { hue: 5,   label: "Deep Red",       tier: "vivid" },
+  { hue: 220, label: "Deep Blue",      tier: "vivid" },
+  { hue: 155, label: "Deep Green",     tier: "vivid" },
+  { hue: 310, label: "Deep Violet",    tier: "vivid" },
+  { hue: 22,  label: "Burnt Orange",   tier: "vivid" },
+  { hue: 135, label: "Forest",         tier: "vivid" },
+  { hue: 192, label: "Ocean",          tier: "vivid" },
+  { hue: 280, label: "Plum",           tier: "vivid" },
+  { hue: 339, label: "Deep Rose",      tier: "vivid" },
+  { hue: 60,  label: "Mustard",        tier: "muted" },
+];
+
+function makeGeneratedAccent(id: string, label: string, hue: number, tier: "vivid" | "soft" | "muted"): ThemeAccent {
+  // Vary lightness and chroma by tier
+  const lightness = tier === "vivid" ? 0.68 : tier === "soft" ? 0.78 : 0.63;
+  const chroma    = tier === "vivid" ? 0.20 : tier === "soft" ? 0.12 : 0.09;
+  const fgLight   = tier === "vivid" ? "oklch(0.98 0.01" : "oklch(0.20 0.02";
+  const isVividDark = tier === "vivid" && lightness < 0.70;
+  const pfg = isVividDark
+    ? `oklch(0.97 0.01 ${hue})`
+    : `${fgLight} ${hue})`;
+  const swatchL = tier === "vivid" ? "60%" : tier === "soft" ? "78%" : "55%";
+  const swatchS = tier === "vivid" ? "72%" : tier === "soft" ? "80%" : "45%";
+  const swatch  = `hsl(${Math.round(hue)} ${swatchS} ${swatchL})`;
+  const r = `oklch(${lightness + 0.06} ${chroma - 0.02} ${hue})`;
+  const acc = `oklch(0.968 0.014 ${hue})`;
+  const bdr = `oklch(0.92 0.008 ${hue})`;
   return {
     id,
     label,
     swatch,
-    primary: `oklch(0.78 0.12 ${hue})`,
-    primaryForeground: `oklch(0.22 0.02 ${hue})`,
-    ring: `oklch(0.84 0.10 ${hue})`,
+    primary: `oklch(${lightness} ${chroma} ${hue})`,
+    primaryForeground: pfg,
+    ring: r,
     secondary: `oklch(0.975 0.010 ${hue})`,
     secondaryForeground: `oklch(0.30 0.018 ${hue})`,
-    accent: `oklch(0.968 0.014 ${hue})`,
+    accent: acc,
     accentForeground: `oklch(0.30 0.018 ${hue})`,
-    muted: `oklch(0.968 0.014 ${hue})`,
+    muted: acc,
     mutedForeground: `oklch(0.54 0.018 ${hue})`,
-    sidebarPrimary: `oklch(0.78 0.12 ${hue})`,
-    sidebarPrimaryForeground: `oklch(0.22 0.02 ${hue})`,
-    sidebarAccent: `oklch(0.968 0.014 ${hue})`,
+    sidebarPrimary: `oklch(${lightness} ${chroma} ${hue})`,
+    sidebarPrimaryForeground: pfg,
+    sidebarAccent: acc,
     sidebarAccentForeground: `oklch(0.30 0.018 ${hue})`,
     sidebar: `oklch(0.988 0.006 ${hue})`,
     sidebarForeground: `oklch(0.22 0.018 ${hue})`,
-    sidebarBorder: `oklch(0.92 0.008 ${hue})`,
-    sidebarRing: `oklch(0.84 0.10 ${hue})`,
+    sidebarBorder: bdr,
+    sidebarRing: r,
     foreground: `oklch(0.22 0.018 ${hue})`,
     card: `oklch(0.995 0.003 ${hue})`,
     cardForeground: `oklch(0.22 0.018 ${hue})`,
     popover: `oklch(0.995 0.003 ${hue})`,
     popoverForeground: `oklch(0.22 0.018 ${hue})`,
-    border: `oklch(0.92 0.008 ${hue})`,
-    input: `oklch(0.92 0.008 ${hue})`,
-    primaryGlow: `oklch(0.78 0.12 ${hue} / 0.52)`,
-    chart1: `oklch(0.80 0.11 ${hue})`,
-    chart2: `oklch(0.74 0.12 ${wrapHue(hue + 28)})`,
-    chart3: `oklch(0.72 0.12 ${wrapHue(hue + 65)})`,
-    chart4: `oklch(0.76 0.11 ${wrapHue(hue + 110)})`,
-    chart5: `oklch(0.74 0.12 ${wrapHue(hue + 150)})`,
+    border: bdr,
+    input: bdr,
+    primaryGlow: `oklch(${lightness} ${chroma} ${hue} / 0.52)`,
+    chart1: `oklch(${lightness + 0.04} ${chroma - 0.01} ${hue})`,
+    chart2: `oklch(${lightness} ${chroma} ${wrapHue(hue + 28)})`,
+    chart3: `oklch(${lightness - 0.04} ${chroma + 0.02} ${wrapHue(hue + 72)})`,
+    chart4: `oklch(${lightness + 0.02} ${chroma - 0.02} ${wrapHue(hue + 130)})`,
+    chart5: `oklch(${lightness - 0.02} ${chroma} ${wrapHue(hue + 190)})`,
   };
 }
 
-const PASTEL_ACCENTS: ThemeAccent[] = Array.from({ length: 50 }, (_, index) => {
-  const hue = wrapHue(6 + index * 7.2);
-  return makePastelAccent(
-    `pastel-${index + 1}`,
-    `Pastel ${String(index + 1).padStart(2, "0")}`,
-    hue,
-  );
-});
+const EXTRA_ACCENTS: ThemeAccent[] = EXTRA_ACCENT_SPECS.map((spec, i) =>
+  makeGeneratedAccent(`extra-${i + 1}`, spec.label, spec.hue, spec.tier)
+);
 
-export const THEME_ACCENTS: ThemeAccent[] = [...BASE_THEME_ACCENTS, ...PASTEL_ACCENTS];
+export const THEME_ACCENTS: ThemeAccent[] = [...BASE_THEME_ACCENTS, ...EXTRA_ACCENTS];
 
 function wrapHue(value: number): number {
   const mod = value % 360;

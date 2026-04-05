@@ -4,6 +4,8 @@
 
 **Version 3.0.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
 
+> **Latest changes (2026-04-05):** main-session model override UI/backend fix, running-timer fallback, live-activity status normalization, running glow animation fix, output-overflow fix, and a redesigned color picker with 60+ themed accents.
+
 > **No Redis. No BullMQ.** Execution is handled natively by the OpenClaw cron engine (v2+).
 
 ---
@@ -306,6 +308,8 @@ UI behavior:
 ### Live Activity Sidebar
 
 The **Live Activity** section in the sidebar shows recent agenda and ticket activity in real time.
+
+> **Status normalization:** all raw notification events (`agenda.started`, `agenda.created`, etc.) are mapped to canonical agenda status keys (`running`, `scheduled`, …) before applying colors and labels. This ensures the sidebar always reflects the same running-orange / queued-lavender / succeeded-green palette as the calendar pills.
 
 - **Initial load**: fetches from `/api/notifications/recent` (last N occurrences ordered by most-recent activity time — `COALESCE(last_run_at, scheduled_for) ASC`).
 - **Live updates**: subscribes to `/api/notifications/stream` (SSE), which listens on the `agenda_change` and `ticket_activity` PostgreSQL channels. Each update uses the **notification action** as the authoritative status — avoiding a race condition where the DB re-query could return stale data.
@@ -859,6 +863,21 @@ mc-services.sh
             │                            listens: pg_notify('agenda_change')
             └── bridge-logger ───────────► emits pg_notify on result
 ```
+
+---
+
+## 🎨 Appearance / Theme
+
+Mission Control has a fully dynamic theme system with **70+ accent colors** organized in two groups:
+
+| Group | Count | Description |
+|---|---|---|
+| **Core** | 10 | Carefully tuned named accents (Purple, Green, Teal, Blue, …) |
+| **Extended Palette** | 60 | Hand-picked named colors across the full spectrum — Crimson, Amber, Sage, Cobalt, Wisteria, Orchid, Terracotta, and more — in vivid, soft, and muted tiers |
+
+All accents use OKLCH color space for perceptual uniformity across light and dark mode. The active color is persisted in `localStorage` as `mc-theme-accent` and applied on every page load.
+
+Change your accent in **Settings → Appearance → Main color → Change**.
 
 ---
 
