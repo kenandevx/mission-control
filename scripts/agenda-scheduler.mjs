@@ -802,16 +802,17 @@ try {
     // may still contain the OLD AGENDA_MARKER from when it was first created or copied
     // from a template — using it would send the agent the wrong occurrence_id in its
     // instructions and artifact path.
-    let message: string;
+    let message;
     try {
       message = await renderPromptForEvent(
-        { id: occ.agenda_event_id, title: occ.title, free_prompt: null },
+        { id: occ.agenda_event_id, title: occ.title, free_prompt: occ.free_prompt },
         occurrenceId,
       );
       // Update the stored prompt so future fallback retries also use the correct ID.
       await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occurrenceId}`;
     } catch (renderErr) {
-      console.warn(`[agenda-scheduler] Fallback: re-rendering prompt failed, using stored: ${(renderErr as Error).message}`);
+      const errMsg = renderErr?.message || String(renderErr);
+      console.warn(`[agenda-scheduler] Fallback: re-rendering prompt failed, using stored: ${errMsg}`);
       message = occ.rendered_prompt || occ.title || "Run agenda task";
     }
     let cronJobId = null;

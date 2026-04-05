@@ -777,10 +777,34 @@ function looksLikePromptEcho(candidate, renderedPrompt, summaryText) {
   if (!candidateNorm) return true;
   const promptNorm = normalizeComparableText(renderedPrompt);
   const summaryNorm = normalizeComparableText(summaryText);
-  return Boolean(
-    (promptNorm && candidateNorm === promptNorm) ||
-    (summaryNorm && candidateNorm === summaryNorm)
-  );
+  // Exact match with either the rendered prompt or the cron summary
+  if (promptNorm && candidateNorm === promptNorm) return true;
+  if (summaryNorm && candidateNorm === summaryNorm) return true;
+  // Compacted echo: candidate starts with the request text that appears deep
+  // in the rendered prompt. Many agents compact system messages and echo back
+  // just the core request. Check if the candidate's first 200 chars appear
+  // verbatim inside the rendered prompt (case-sensitive, after normalizing).
+  if (promptNorm && candidateNorm.length > 50) {
+    const firstChunk = candidateNorm.slice(0, 200);
+    if (promptNorm.includes(firstChunk)) return true;
+    // Also check the reverse: the prompt appears inside the candidate (when
+    // the agent echoes the entire prompt with extra commentary appended).
+    if (firstChunk.length > 100 && candidateNorm.includes(promptNorm.slice(0, 200))) return true;
+  }
+  // Check if candidate is mostly just the request portion embedded in the prompt.
+  // Extract text between "Request:" and the next section marker in the rendered prompt.
+  if (promptNorm.includes('request:')) {
+    const reqStart = promptNorm.indexOf('request:');
+    const sectionMarkers = ['execution rules:', 'output rules:', 'additional context:'];
+    let reqEnd = promptNorm.length;
+    for (const marker of sectionMarkers) {
+      const idx = promptNorm.indexOf(marker, reqStart + 8);
+      if (idx !== -1 && idx < reqEnd) reqEnd = idx;
+    }
+    const requestText = promptNorm.slice(reqStart, Math.min(reqEnd, reqStart + 500)).trim();
+    if (requestText.length > 30 && candidateNorm.startsWith(requestText.slice(0, 100))) return true;
+  }
+  return false;
 }
 
 async function readBestArtifactText(eventId, occurrenceId, maxChars = 8000) {
@@ -838,6 +862,23 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       artifactSize: null,
     },
   };
+
+  // ── Prompt echo guard for isolated sessions ─────────────────────────────
+  // Isolated-session cron runs store the agent's LAST message as `summary`
+  // in the cron run JSONL. If the agent echoed the prompt back (or the first
+  // assistant turn *is* the prompt), the summary IS the rendered prompt.
+  // Sending it as output would leak system instructions into Telegram.
+  if (sessionTarget !== 'main' && renderedPrompt) {
+    if (looksLikePromptEcho(summaryText, renderedPrompt, summaryText)) {
+      result.outputMeta.promptEchoDetected = true;
+      result.output = '';
+      result.outputSource = 'prompt_echo_filtered';
+      // For isolated sessions this means: output is not yet available.
+      // Don't set no_output here — let the caller decide how to handle it.
+      // The prompt should NOT appear in Telegram notifications or DB output.
+      return result;
+    }
+  }
 
   if (sessionTarget === 'main') {
     // Pass fromLineOffset and occurrenceId. The occurrenceId enables marker-based
