@@ -262,11 +262,11 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
     recurrenceUntil: data.recurrenceUntil ?? "",
     taskType,
     frequency,
-    modelOverride: sessionTarget === "main" ? "" : (data.modelOverride ?? ""),
+    modelOverride: data.modelOverride ?? "",
     startDateMode,
     endDateMode,
     executionWindowMinutes: data.executionWindowMinutes ?? 30,
-    fallbackModel: sessionTarget === "main" ? "" : (data.fallbackModel ?? ""),
+    fallbackModel: data.fallbackModel ?? "",
     sessionTarget,
     dependsOnEventId: data.dependsOnEventId ?? "",
     dependencyTimeoutHours: data.dependencyTimeoutHours ?? 0,
@@ -439,12 +439,7 @@ setAgendaTimeStepMinutes(safe);
   const updateField = <K extends keyof AgendaEventFormData>(key: K, value: AgendaEventFormData[K]) => {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
-      // Main session does not support reliable model pinning/fallback per agenda run.
-      // Hide and clear these fields in the UI to match backend behavior.
-      if (key === "sessionTarget" && value === "main") {
-        next.modelOverride = "";
-        next.fallbackModel = "";
-      }
+      // No special clearing needed — model override works for all session targets.
       return next;
     });
     setError("");
@@ -745,7 +740,7 @@ setAgendaTimeStepMinutes(safe);
       </div>
 
       {/* Agent + Model Override + Fallback */}
-      <div className={form.sessionTarget === "main" ? "grid grid-cols-1 gap-3" : "grid grid-cols-3 gap-3"}>
+      <div className="grid grid-cols-3 gap-3">
         {/* Agent */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
@@ -768,9 +763,8 @@ setAgendaTimeStepMinutes(safe);
           </Select>
         </div>
 
-        {form.sessionTarget !== "main" && (
-          <>
-            {/* Model Override */}
+        <>
+            {/* Model Override */
             <div className="flex flex-col gap-1.5 min-w-0">
               <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
                 <IconCpu className="size-3.5 text-primary" />
@@ -833,8 +827,7 @@ setAgendaTimeStepMinutes(safe);
                 </SelectContent>
               </Select>
             </div>
-          </>
-        )}
+        </>
       </div>
 
       {/* Session Target */}
@@ -1232,7 +1225,6 @@ setAgendaTimeStepMinutes(safe);
                     <span className="size-2 rounded-full bg-yellow-400/70" />
                     <span className="size-2 rounded-full bg-green-400/70" />
                     <span className="ml-2 text-[10px] font-mono text-muted-foreground/60 tracking-wide">prompt-renderer.mjs — live preview</span>
-                    <span className="ml-auto text-[9px] text-muted-foreground/40 italic">actual prompt may differ</span>
                   </div>
                   {/* Prompt content */}
                   <div className="max-h-[340px] overflow-y-auto">

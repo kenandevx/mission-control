@@ -372,10 +372,9 @@ export async function POST(request: Request) {
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
       const rawFallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
       const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
-      // Main-session agenda runs do not reliably honor per-event model pinning/fallback.
-      // Sanitize on write so stored config matches actual runtime behavior.
-      const modelOverride = sessionTarget === "main" ? "" : rawModelOverride;
-      const fallbackModel = sessionTarget === "main" ? "" : rawFallbackModel;
+      // --model is supported for all session targets (main + isolated).
+      const modelOverride = rawModelOverride;
+      const fallbackModel = rawFallbackModel;
       const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;
       const dependencyTimeoutHours = body.dependencyTimeoutHours ? Number(body.dependencyTimeoutHours) || null : null;
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)

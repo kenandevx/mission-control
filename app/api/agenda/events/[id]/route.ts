@@ -355,8 +355,9 @@ export async function PATCH(
         : (existing.session_target ?? "isolated");
       const rawModelOverrideFuture = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
       const rawFallbackModelFuture = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
-      const modelOverrideFuture = sessionTargetFuture === "main" ? "" : rawModelOverrideFuture;
-      const fallbackModelFuture = sessionTargetFuture === "main" ? "" : rawFallbackModelFuture;
+      // --model is supported for all session targets (main + isolated).
+      const modelOverrideFuture = rawModelOverrideFuture;
+      const fallbackModelFuture = rawFallbackModelFuture;
       const executionWindowMinutesFuture = body.executionWindowMinutes !== undefined
         ? Math.max(1, Number(body.executionWindowMinutes) || 30)
         : Number(existing.execution_window_minutes ?? 30);
@@ -412,8 +413,9 @@ export async function PATCH(
       : (existing.session_target ?? "isolated");
     const rawModelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
     const rawFallbackModelStd = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
-    const modelOverrideStd = sessionTarget === "main" ? "" : rawModelOverrideStd;
-    const fallbackModelStd = sessionTarget === "main" ? "" : rawFallbackModelStd;
+    // --model is supported for all session targets (main + isolated).
+    const modelOverrideStd = rawModelOverrideStd;
+    const fallbackModelStd = rawFallbackModelStd;
     const executionWindowMinutesStd = body.executionWindowMinutes !== undefined
       ? Math.max(1, Number(body.executionWindowMinutes) || 30)
       : Number(existing.execution_window_minutes ?? 30);
