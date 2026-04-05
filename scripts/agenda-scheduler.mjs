@@ -213,7 +213,14 @@ async function getLiveCronJobIds() {
   try {
     const result = await cronCmd(["list", "--json"], 10000);
     const jobs = Array.isArray(result) ? result : (result?.jobs ?? result?.data ?? []);
-    return new Set(jobs.map((j) => j.id).filter(Boolean));
+    // Exclude MC-notify: jobs — those are bridge-logger completion notifications,
+    // not occurrence cron jobs. They have no DB occurrence backing them.
+    return new Set(
+      jobs
+        .filter((j) => !String(j.name || "").startsWith("MC-notify:"))
+        .map((j) => j.id)
+        .filter(Boolean)
+    );
   } catch (err) {
     console.warn("[agenda-scheduler] Could not fetch live cron job list:", err.message);
     return null; // null = don't sweep (gateway may be overloaded; skip this cycle)

@@ -1614,7 +1614,7 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
       const execFileAsync = promisify(execFile);
       await execFileAsync("openclaw", [
         "cron", "add",
-        "--name", `MC: ${title}`,
+        "--name", `MC-notify: ${title}`,
         "--at", "5s",
         "--session", "main",
         "--system-event", systemEvent,
