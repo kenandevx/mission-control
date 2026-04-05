@@ -736,7 +736,7 @@ setAgendaTimeStepMinutes(safe);
       </div>
 
       {/* Agent + model controls */}
-      <div className={`grid gap-3 ${form.sessionTarget === "main" ? "grid-cols-1" : "grid-cols-3"}`}>
+      <div className={`grid gap-3 ${form.sessionTarget === "main" ? "grid-cols-1" : "grid-cols-2"}`}>
         {/* Agent */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
