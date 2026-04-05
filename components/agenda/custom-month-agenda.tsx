@@ -118,7 +118,7 @@ const HOUR_HEIGHT = 72; // px per hour slot in week/day views
 // ── Occurrence status indicator ─────────────────────────────────────────────────
 
 const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
-  running:      { emoji: "", color: "bg-blue-600", pulse: true },
+  running:      { emoji: "", color: "bg-orange-500", pulse: true },
   scheduled:    { emoji: "", color: "bg-teal-500" },
   queued:       { emoji: "", color: "bg-violet-500" },
   succeeded:    { emoji: "", color: "bg-emerald-500" },
@@ -166,8 +166,8 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
   if (result === 'running') {
     return (
       <span className="relative flex shrink-0" style={{ width: size, height: size }} title="Running">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500 opacity-75" />
-        <span className="relative inline-flex rounded-full bg-blue-600" style={{ width: size, height: size }} />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+        <span className="relative inline-flex rounded-full bg-orange-500" style={{ width: size, height: size }} />
       </span>
     );
   }
@@ -196,10 +196,10 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
 
 function RunningBadge() {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-blue-700 dark:text-blue-300 shadow-sm ring-1 ring-blue-500/20">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-orange-700 dark:text-orange-300 shadow-sm ring-1 ring-orange-500/20">
       <span className="relative inline-flex size-3 shrink-0 items-center justify-center">
-        <span className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping" />
-        <span className="size-3 rounded-full border-[2.5px] border-blue-500 border-t-transparent animate-spin" />
+        <span className="absolute inset-0 rounded-full bg-orange-500/30 animate-ping" />
+        <span className="size-3 rounded-full border-[2.5px] border-orange-500 border-t-transparent animate-spin" />
       </span>
       <span>Running</span>
     </span>
@@ -219,7 +219,7 @@ function NeedsRetryBadge() {
 }
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
-  scheduled: "#0d9488",
+  scheduled: "#0891b2",
   queued: "#8b5cf6",
   running: "#2563eb",
   auto_retry: "#ec4899",
@@ -284,7 +284,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running ring-1 ring-blue-400/20" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-orange-400/20" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -328,7 +328,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[9px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[9px] font-bold tabular-nums text-orange-600 dark:text-orange-400" />
             </span>
           ) : event.latestResult === "needs_retry" ? (
             <NeedsRetryBadge />
@@ -380,7 +380,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running ring-1 ring-blue-400/25" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-orange-400/25" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -421,7 +421,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-orange-600 dark:text-orange-400" />
             </span>
           ) : event.latestResult === "needs_retry" ? (
             <NeedsRetryBadge />
@@ -612,9 +612,9 @@ function DayCell({
                           )}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
                             evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-blue-500/10">
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-orange-500/10">
                                 <RunningBadge />
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-orange-600 dark:text-orange-400" />
                               </span>
                             ) : evt.latestResult === "needs_retry" ? (
                               <NeedsRetryBadge />
@@ -801,9 +801,9 @@ function WeekHourCell({
                           {timeStr && <span className="text-[11px] text-muted-foreground font-medium">{timeStr}</span>}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
                             evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-blue-500/10">
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-orange-500/10">
                                 <RunningBadge />
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-orange-600 dark:text-orange-400" />
                               </span>
                             ) : evt.latestResult === "needs_retry" ? (
                               <NeedsRetryBadge />
