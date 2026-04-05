@@ -917,31 +917,27 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </Card>
 
                   {/* Model */}
-                  <Card data-slot="card" className={overviewCardClassName}>
-                    <CardHeader>
-                      <CardDescription>
-                        {event.sessionTarget === "main" ? "Saved model override" : "Model"}
-                      </CardDescription>
-                      <CardTitle className="text-sm font-semibold truncate">
-                        {event.modelOverride || "Agent default"}
-                      </CardTitle>
-                      <CardAction>
-                        <Badge variant="outline">
-                          <IconBrain className="size-3" />
-                          {event.sessionTarget === "main"
-                            ? (event.modelOverride ? "Inactive in main" : "Main session model")
-                            : (event.modelOverride ? "Override" : "Default")}
-                        </Badge>
-                      </CardAction>
-                    </CardHeader>
-                    <CardFooter className={overviewCardFooterClassName}>
-                      <div className="text-muted-foreground text-xs">
-                        {event.sessionTarget === "main"
-                          ? "Main-session runs use the active main session runtime model. Any saved per-event override is kept for the event but is not applied in main mode."
-                          : "Runs with this event's isolated-session model selection."}
-                      </div>
-                    </CardFooter>
-                  </Card>
+                  {event.sessionTarget !== "main" && (
+                    <Card data-slot="card" className={overviewCardClassName}>
+                      <CardHeader>
+                        <CardDescription>Model</CardDescription>
+                        <CardTitle className="text-sm font-semibold truncate">
+                          {event.modelOverride || "Agent default"}
+                        </CardTitle>
+                        <CardAction>
+                          <Badge variant="outline">
+                            <IconBrain className="size-3" />
+                            {event.modelOverride ? "Override" : "Default"}
+                          </Badge>
+                        </CardAction>
+                      </CardHeader>
+                      <CardFooter className={overviewCardFooterClassName}>
+                        <div className="text-muted-foreground text-xs">
+                          Runs with this event's isolated-session model selection.
+                        </div>
+                      </CardFooter>
+                    </Card>
+                  )}
 
                   {/* Status — merged: shows occurrence + attempt status, attempt no, time, and retry action */}
                   {displayedOccurrence && (
