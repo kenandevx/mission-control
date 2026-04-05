@@ -118,12 +118,16 @@ const HOUR_HEIGHT = 72; // px per hour slot in week/day views
 // ── Occurrence status indicator ─────────────────────────────────────────────────
 
 const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
-  running:      { emoji: "", color: "bg-indigo-500", pulse: true },
-  scheduled:    { emoji: "", color: "bg-gray-400" },
-  queued:       { emoji: "", color: "bg-gray-400" },
+  running:      { emoji: "", color: "bg-blue-600", pulse: true },
+  scheduled:    { emoji: "", color: "bg-indigo-400" },
+  queued:       { emoji: "", color: "bg-violet-500" },
   succeeded:    { emoji: "", color: "bg-emerald-500" },
   failed:       { emoji: "", color: "bg-rose-500" },
   needs_retry:  { emoji: "", color: "bg-amber-500" },
+  cancelled:    { emoji: "", color: "bg-zinc-400" },
+  skipped:      { emoji: "", color: "bg-yellow-500" },
+  auto_retry:   { emoji: "", color: "bg-pink-500", pulse: true },
+  stale_recovery: { emoji: "", color: "bg-orange-500" },
 };
 
 // ── Cron countdown (for queued/scheduled events) ─────────────────────────────
@@ -162,8 +166,8 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
   if (result === 'running') {
     return (
       <span className="relative flex shrink-0" style={{ width: size, height: size }} title="Running">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-500 opacity-75" />
-        <span className="relative inline-flex rounded-full bg-indigo-600" style={{ width: size, height: size }} />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500 opacity-75" />
+        <span className="relative inline-flex rounded-full bg-blue-600" style={{ width: size, height: size }} />
       </span>
     );
   }
@@ -192,10 +196,10 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
 
 function RunningBadge() {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-indigo-700 dark:text-indigo-300 shadow-sm ring-1 ring-indigo-500/20">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/12 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none text-blue-700 dark:text-blue-300 shadow-sm ring-1 ring-blue-500/20">
       <span className="relative inline-flex size-3 shrink-0 items-center justify-center">
-        <span className="absolute inset-0 rounded-full bg-indigo-500/30 animate-ping" />
-        <span className="size-3 rounded-full border-[2.5px] border-indigo-500 border-t-transparent animate-spin" />
+        <span className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping" />
+        <span className="size-3 rounded-full border-[2.5px] border-blue-500 border-t-transparent animate-spin" />
       </span>
       <span>Running</span>
     </span>
@@ -211,6 +215,27 @@ function NeedsRetryBadge() {
       </span>
       <span className="animate-pulse" style={{ animationDuration: '2.5s' }}>Retry</span>
     </span>
+  );
+}
+
+const STATUS_LABEL_COLORS: Record<string, string> = {
+  scheduled: "#6366f1",
+  queued: "#8b5cf6",
+  running: "#2563eb",
+  auto_retry: "#ec4899",
+  stale_recovery: "#ea580c",
+  succeeded: "#16a34a",
+  failed: "#e11d48",
+  needs_retry: "#d97706",
+  cancelled: "#52525b",
+  skipped: "#a16207",
+  draft: "#6b7280",
+};
+
+function StatusGuideLabel({ statusKey, label }: { statusKey: string; label: string }) {
+  const textColor = STATUS_LABEL_COLORS[statusKey] ?? undefined;
+  return (
+    <span className="text-xs font-semibold" style={{ color: textColor }}>{label}</span>
   );
 }
 
@@ -259,7 +284,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running ring-1 ring-indigo-400/20" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-blue-400/20" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -303,7 +328,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[9px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[9px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
             </span>
           ) : event.latestResult === "needs_retry" ? (
             <NeedsRetryBadge />
@@ -313,11 +338,17 @@ function EventPill({ event }: { event: CalendarEvent }) {
               style={{
                 color: event.latestResult === "succeeded" ? "#16a34a"
                   : event.latestResult === "failed" ? "#dc2626"
+                  : event.latestResult === "cancelled" ? "#71717a"
+                  : event.latestResult === "skipped" ? "#ca8a04"
                   : undefined,
                 opacity: 0.85,
               }}
             >
-              {event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+              {event.latestResult === "succeeded" ? "✓ Done"
+                : event.latestResult === "failed" ? "✗ Failed"
+                : event.latestResult === "cancelled" ? "Cancelled"
+                : event.latestResult === "skipped" ? "⏭ Skipped"
+                : event.latestResult}
               <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " className="text-[8px] font-bold tabular-nums" />
             </span>
           )
@@ -349,7 +380,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running ring-1 ring-indigo-400/25" : "",
+        event.latestResult === "running" ? "agenda-running ring-1 ring-blue-400/25" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -390,7 +421,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
               <RunningBadge />
-              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
+              <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
             </span>
           ) : event.latestResult === "needs_retry" ? (
             <NeedsRetryBadge />
@@ -400,11 +431,17 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
               style={{
                 color: event.latestResult === "succeeded" ? "#16a34a"
                   : event.latestResult === "failed" ? "#dc2626"
+                  : event.latestResult === "cancelled" ? "#71717a"
+                  : event.latestResult === "skipped" ? "#ca8a04"
                   : undefined,
                 opacity: 0.8,
               }}
             >
-              {event.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+              {event.latestResult === "succeeded" ? "✓ Done"
+                : event.latestResult === "failed" ? "✗ Failed"
+                : event.latestResult === "cancelled" ? "Cancelled"
+                : event.latestResult === "skipped" ? "⏭ Skipped"
+                : event.latestResult}
               <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} prefix=" · " className="text-[9px] font-bold tabular-nums" />
             </span>
           )
@@ -575,9 +612,9 @@ function DayCell({
                           )}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
                             evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-indigo-500/10">
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-blue-500/10">
                                 <RunningBadge />
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
                               </span>
                             ) : evt.latestResult === "needs_retry" ? (
                               <NeedsRetryBadge />
@@ -587,13 +624,21 @@ function DayCell({
                                 style={{
                                   color: evt.latestResult === "succeeded" ? "#16a34a"
                                     : evt.latestResult === "failed" ? "#dc2626"
+                                    : evt.latestResult === "cancelled" ? "#71717a"
+                                    : evt.latestResult === "skipped" ? "#ca8a04"
                                     : undefined,
                                   backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)"
                                     : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)"
+                                    : evt.latestResult === "cancelled" ? "rgba(113,113,122,0.1)"
+                                    : evt.latestResult === "skipped" ? "rgba(202,138,4,0.1)"
                                     : undefined,
                                 }}
                               >
-                                {evt.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+                                {evt.latestResult === "succeeded" ? "✓ Done"
+                                  : evt.latestResult === "failed" ? "✗ Failed"
+                                  : evt.latestResult === "cancelled" ? "Cancelled"
+                                  : evt.latestResult === "skipped" ? "⏭ Skipped"
+                                  : evt.latestResult}
                                 <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix=" · " className="text-[9px] font-bold tabular-nums" />
                               </span>
                             )
@@ -756,9 +801,9 @@ function WeekHourCell({
                           {timeStr && <span className="text-[11px] text-muted-foreground font-medium">{timeStr}</span>}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
                             evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-indigo-500/10">
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-blue-500/10">
                                 <RunningBadge />
-                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-indigo-600 dark:text-indigo-400" />
+                                <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums text-blue-600 dark:text-blue-400" />
                               </span>
                             ) : evt.latestResult === "needs_retry" ? (
                               <NeedsRetryBadge />
@@ -766,11 +811,11 @@ function WeekHourCell({
                               <span
                                 className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
                                 style={{
-                                  color: evt.latestResult === "succeeded" ? "#16a34a" : evt.latestResult === "failed" ? "#dc2626" : undefined,
-                                  backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)" : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)" : undefined,
+                                  color: evt.latestResult === "succeeded" ? "#16a34a" : evt.latestResult === "failed" ? "#dc2626" : evt.latestResult === "cancelled" ? "#71717a" : evt.latestResult === "skipped" ? "#ca8a04" : undefined,
+                                  backgroundColor: evt.latestResult === "succeeded" ? "rgba(22,163,74,0.1)" : evt.latestResult === "failed" ? "rgba(220,38,38,0.1)" : evt.latestResult === "cancelled" ? "rgba(113,113,122,0.1)" : evt.latestResult === "skipped" ? "rgba(202,138,4,0.1)" : undefined,
                                 }}
                               >
-                                {evt.latestResult === "succeeded" ? "✓ Done" : "✗ Failed"}
+                                {evt.latestResult === "succeeded" ? "✓ Done" : evt.latestResult === "failed" ? "✗ Failed" : evt.latestResult === "cancelled" ? "Cancelled" : evt.latestResult === "skipped" ? "⏭ Skipped" : evt.latestResult}
                               </span>
                             )
                           )}
@@ -1373,7 +1418,7 @@ export function CustomMonthAgenda({
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 mb-1.5">
                 Lifecycle
               </p>
-              {(["scheduled", "queued", "running", "auto_retry", "force_retry", "stale_recovery", "succeeded"] as const).map((key) => {
+              {(["scheduled", "queued", "running", "auto_retry", "stale_recovery", "succeeded"] as const).map((key) => {
                 const item = STATUS_GUIDE_ENTRIES.find((e) => e.key === key);
                 if (!item) return null;
                 const dotColor = DOT_COLORS[item.colorKey];
@@ -1389,7 +1434,7 @@ export function CustomMonthAgenda({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                        <StatusGuideLabel statusKey={item.key} label={item.label} />
                       </div>
                       <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
                     </div>
@@ -1418,7 +1463,7 @@ export function CustomMonthAgenda({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                        <StatusGuideLabel statusKey={item.key} label={item.label} />
                       </div>
                       <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
                     </div>
@@ -1447,7 +1492,7 @@ export function CustomMonthAgenda({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-semibold text-foreground">{item.label}</span>
+                        <StatusGuideLabel statusKey={item.key} label={item.label} />
                       </div>
                       <p className="text-[11px] leading-snug text-muted-foreground">{item.desc}</p>
                     </div>

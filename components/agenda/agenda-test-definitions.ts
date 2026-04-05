@@ -913,9 +913,9 @@ export const AGENDA_TESTS: TestDefinition[] = [
       );
       if (!occ) return fail(ID, NAME, DESC, t0, `Only occurrence(s) after 90s (expected ≥3)`);
       const count2 = (occ.occurrences as { id: string }[]).length;
-      log(`${count} occurrences created`);
+      log(`${count2} occurrences created`);
 
-      return pass(ID, NAME, DESC, t0, `${count} occurrences created for daily recurring event`);
+      return pass(ID, NAME, DESC, t0, `${count2} occurrences created for daily recurring event`);
     },
   },
 
