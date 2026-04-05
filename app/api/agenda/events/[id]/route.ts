@@ -48,7 +48,7 @@ async function removeQueuedJobs(sql: ReturnType<typeof getSql>, eventId: string)
     const occurrences = await sql`
       SELECT id, cron_job_id FROM agenda_occurrences
       WHERE agenda_event_id = ${eventId} AND cron_job_id IS NOT NULL
-        AND status IN ('queued', 'scheduled')
+        AND status = 'queued'
     `;
     const env = buildCleanEnv();
     for (const occ of occurrences) {
@@ -61,6 +61,39 @@ async function removeQueuedJobs(sql: ReturnType<typeof getSql>, eventId: string)
     }
   } catch (err) {
     console.warn("[event-delete] Failed to cancel cron jobs:", err);
+  }
+}
+
+async function removeCronJob(cronJobId: string | null | undefined) {
+  if (!cronJobId) return;
+  const env = buildCleanEnv();
+  try {
+    await execFileAsync("openclaw", ["cron", "rm", cronJobId], {
+      timeout: 10000,
+      env,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch {
+    // already deleted or not found — fine
+  }
+}
+
+async function removeQueuedJobsFromDate(
+  sql: ReturnType<typeof getSql>,
+  eventId: string,
+  fromInclusive: Date,
+) {
+  const occurrences = await sql`
+    SELECT id, cron_job_id
+    FROM agenda_occurrences
+    WHERE agenda_event_id = ${eventId}
+      AND scheduled_for >= ${fromInclusive}
+      AND status = 'queued'
+      AND cron_job_id IS NOT NULL
+  `;
+
+  for (const occ of occurrences) {
+    await removeCronJob(occ.cron_job_id as string | null | undefined);
   }
 }
 
@@ -100,12 +133,19 @@ export async function GET(
 
     const occurrences = await sql`
       select ao.*,
+        o.overridden_title,
+        o.overridden_free_prompt,
+        o.overridden_agent_id,
+        o.overridden_starts_at,
+        o.overridden_ends_at,
+        coalesce(o.overridden_starts_at, ao.scheduled_for) as effective_scheduled_for,
         (
           select json_agg(ara.* order by ara.attempt_no asc)
           from agenda_run_attempts ara
           where ara.occurrence_id = ao.id
         ) as attempts
       from agenda_occurrences ao
+      left join agenda_occurrence_overrides o on o.occurrence_id = ao.id
       where ao.agenda_event_id = ${id}
       order by ao.scheduled_for desc
       limit 50
@@ -180,6 +220,14 @@ export async function PATCH(
     // ── Recurring edit scope handling ──────────────────────────────────────────
 
     if (editScope === "single" && occurrenceId) {
+      const [targetOccurrence] = await sql`
+        select id, status, cron_job_id
+        from agenda_occurrences
+        where id = ${occurrenceId} and agenda_event_id = ${id}
+        limit 1
+      `;
+      if (!targetOccurrence) return fail("Occurrence not found.", 404);
+
       // Create/update an occurrence override for just this one instance
       const overriddenTitle = body.title !== undefined ? String(body.title).trim() : null;
       const overriddenFreePrompt = body.freePrompt !== undefined ? (body.freePrompt ? String(body.freePrompt) : null) : null;
@@ -213,8 +261,30 @@ export async function PATCH(
         `;
       }
 
+      const touchedExecutionFields =
+        body.title !== undefined ||
+        body.freePrompt !== undefined ||
+        body.agentId !== undefined ||
+        body.startsAt !== undefined;
+
+      if (touchedExecutionFields && ["scheduled", "queued", "needs_retry"].includes(String(targetOccurrence.status))) {
+        if (targetOccurrence.status === "queued") {
+          await removeCronJob(targetOccurrence.cron_job_id as string | null | undefined);
+        }
+
+        await sql`
+          update agenda_occurrences
+          set status = 'scheduled',
+              cron_job_id = null,
+              queued_at = null,
+              locked_at = null
+          where id = ${occurrenceId}
+            and status in ('scheduled', 'queued', 'needs_retry')
+        `;
+      }
+
       await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "update" })})`;
-      return ok({ eventId: id, scope: "single", occurrenceId });
+      return ok({ eventId: id, scope: "single", occurrenceId, rescheduled: touchedExecutionFields });
     }
 
     if (editScope === "this_and_future" && occurrenceId) {
@@ -226,11 +296,38 @@ export async function PATCH(
       if (!occurrence) return fail("Occurrence not found.", 404);
 
       const splitDate = new Date(occurrence.scheduled_for);
+      const oldSeriesUntil = new Date(splitDate.getTime() - 1000);
+
+      // Remove any already-queued jobs from the split point onward before the
+      // new series is created. Queued jobs represent live gateway cron entries;
+      // scheduled occurrences do not.
+      await removeQueuedJobsFromDate(sql, id, splitDate);
+
+      // Drop not-yet-run future occurrences from the original series so the new
+      // series can recreate them cleanly without duplicate rows / stale queue IDs.
+      await sql`
+        delete from agenda_occurrence_overrides
+        where occurrence_id in (
+          select ao.id
+          from agenda_occurrences ao
+          where ao.agenda_event_id = ${id}
+            and ao.scheduled_for >= ${splitDate}
+            and ao.latest_attempt_no = 0
+            and ao.status in ('scheduled', 'queued', 'needs_retry')
+        )
+      `;
+      await sql`
+        delete from agenda_occurrences
+        where agenda_event_id = ${id}
+          and scheduled_for >= ${splitDate}
+          and latest_attempt_no = 0
+          and status in ('scheduled', 'queued', 'needs_retry')
+      `;
 
       // Update existing series to end just before the split date
       await sql`
         update agenda_events set
-          recurrence_until = ${splitDate.toISOString()},
+          recurrence_until = ${oldSeriesUntil.toISOString()},
           updated_at = now()
         where id = ${id}
       `;
@@ -265,7 +362,12 @@ export async function PATCH(
         : Number(existing.execution_window_minutes ?? 30);
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
         ? body.processVersionIds.map(String)
-        : [];
+        : (await sql`
+            select process_version_id
+            from agenda_event_processes
+            where agenda_event_id = ${id}
+            order by sort_order asc
+          `).map((row) => String(row.process_version_id));
 
       const [newEvent] = await sql`
         insert into agenda_events (

@@ -32,6 +32,18 @@ export async function renderPromptForOccurrence(
   event: AgendaEvent,
   occurrenceId: string,
 ): Promise<string> {
+  const [override] = await sql`
+    SELECT overridden_title, overridden_free_prompt
+    FROM agenda_occurrence_overrides
+    WHERE occurrence_id = ${occurrenceId}
+    LIMIT 1
+  `;
+
+  const effectiveTitle = String(override?.overridden_title || event.title || "Agenda task").trim();
+  const effectiveRequest = override?.overridden_free_prompt !== undefined && override?.overridden_free_prompt !== null
+    ? String(override.overridden_free_prompt)
+    : (event.free_prompt ? String(event.free_prompt) : "");
+
   // Load linked process versions
   const processes = await sql`
     SELECT aep.process_version_id, aep.sort_order
@@ -77,10 +89,10 @@ export async function renderPromptForOccurrence(
   const isMainSession = event.session_target === "main";
 
   return renderUnifiedTaskMessage({
-    title: event.title,
+    title: effectiveTitle,
     context: "",
     instructions: composedSteps,
-    request: event.free_prompt ? String(event.free_prompt) : "",
+    request: effectiveRequest,
     artifactDir,
     isMainSession,
   });

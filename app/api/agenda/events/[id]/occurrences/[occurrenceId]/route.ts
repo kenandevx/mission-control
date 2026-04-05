@@ -125,9 +125,11 @@ export async function POST(
       select ao.id, ao.status, ao.cron_job_id, ao.rendered_prompt,
              ao.latest_attempt_no, ao.fallback_attempted,
              ae.workspace_id, ae.title, ae.free_prompt, ae.default_agent_id,
-             ae.fallback_model, ae.model_override, ae.session_target
+             ae.fallback_model, ae.model_override, ae.session_target,
+             o.overridden_title, o.overridden_agent_id
       from agenda_occurrences ao
       join agenda_events ae on ae.id = ao.agenda_event_id
+      left join agenda_occurrence_overrides o on o.occurrence_id = ao.id
       where ao.id = ${occurrenceId} and ae.workspace_id = ${wid}
       limit 1
     `;
@@ -202,9 +204,9 @@ export async function POST(
 
     try {
       cronJobId = await createRetryCronJob({
-        title: occurrence.title as string,
+        title: String(occurrence.overridden_title || occurrence.title || "Agenda task"),
         message: retryMessage,
-        agentId: (occurrence.default_agent_id as string) || "main",
+        agentId: String(occurrence.overridden_agent_id || occurrence.default_agent_id || "main"),
         model: overrideModel,
         sessionTarget,
       });

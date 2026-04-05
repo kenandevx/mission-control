@@ -296,6 +296,19 @@ async function expandOccurrences(event, from, to) {
 
 // ── Prompt rendering helper ───────────────────────────────────────────────────
 async function renderPromptForEvent(event, occurrenceId) {
+  const [override] = await sql`
+    SELECT overridden_title, overridden_free_prompt, overridden_agent_id
+    FROM agenda_occurrence_overrides
+    WHERE occurrence_id = ${occurrenceId}
+    LIMIT 1
+  `;
+
+  const effectiveTitle = String(override?.overridden_title || event.title || "Agenda task").trim();
+  const effectivePrompt = override?.overridden_free_prompt !== undefined && override?.overridden_free_prompt !== null
+    ? String(override.overridden_free_prompt)
+    : (event.free_prompt ? String(event.free_prompt) : "");
+  const effectiveAgentId = String(override?.overridden_agent_id || event.default_agent_id || "main").trim() || "main";
+
   // Load process steps if any
   const processes = await sql`
     select aep.process_version_id, aep.sort_order
@@ -342,14 +355,18 @@ async function renderPromptForEvent(event, occurrenceId) {
   const markerLine = `# AGENDA_MARKER:occurrence_id=${occurrenceId}`;
 
   const rendered = renderUnifiedTaskMessage({
-    title: event.title,
+    title: effectiveTitle,
     instructions: composedSteps,
-    request: event.free_prompt ? String(event.free_prompt) : "",
+    request: effectivePrompt,
     artifactDir,
     isMainSession,
   });
 
-  return `${markerLine}\n\n${rendered}`;
+  return {
+    title: effectiveTitle,
+    agentId: effectiveAgentId,
+    message: `${markerLine}\n\n${rendered}`,
+  };
 }
 
 
@@ -522,11 +539,16 @@ async function runCycle() {
         const wasNewOccurrence = occInsertResult.length > 0;
 
         const [occ] = await sql`
-          SELECT id, status, cron_job_id
-          FROM agenda_occurrences
-          WHERE agenda_event_id = ${event.id} AND scheduled_for = ${scheduledFor}
+          SELECT ao.id, ao.status, ao.cron_job_id, o.overridden_starts_at
+          FROM agenda_occurrences ao
+          LEFT JOIN agenda_occurrence_overrides o ON o.occurrence_id = ao.id
+          WHERE ao.agenda_event_id = ${event.id} AND ao.scheduled_for = ${scheduledFor}
         `;
         if (!occ) continue;
+
+        const effectiveScheduledFor = occ.overridden_starts_at
+          ? new Date(occ.overridden_starts_at)
+          : scheduledFor;
 
         if (wasNewOccurrence) {
           await emitSchedulerLog(sql, {
@@ -546,7 +568,7 @@ async function runCycle() {
         if (occ.cron_job_id) continue;
 
         // ── Dependency check ───────────────────────────────────────────────
-        const dep = await checkDependency(sql, event, scheduledFor);
+        const dep = await checkDependency(sql, event, effectiveScheduledFor);
         if (!dep.ok) {
           if (dep.skip) {
             // Dependency failed/timed-out — skip this occurrence permanently
@@ -574,7 +596,7 @@ async function runCycle() {
 
         // Schedule window: past occurrences (any age) get fired immediately as catch-up.
         // Future occurrences beyond 48h get their cron job created when they come closer.
-        const hoursUntil = (scheduledFor.getTime() - now.getTime()) / 3600000;
+        const hoursUntil = (effectiveScheduledFor.getTime() - now.getTime()) / 3600000;
         if (hoursUntil > 48) continue;
         // Note: no lower floor — hoursUntil may be negative (missed/past), these get --at 30s
 
@@ -584,10 +606,10 @@ async function runCycle() {
         let occScheduled = false;
         try {
           // Render the prompt with the stable, occurrence-scoped artifact path baked in.
-          const message = await renderPromptForEvent(event, occ.id);
+          const rendered = await renderPromptForEvent(event, occ.id);
 
           // Persist the rendered prompt so retries always use the exact same message.
-          await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occ.id}`;
+          await sql`UPDATE agenda_occurrences SET rendered_prompt = ${rendered.message} WHERE id = ${occ.id}`;
 
           // Log catch-up fires (past occurrences being scheduled now due to missed window)
           if (hoursUntil < -0.5) {
@@ -614,11 +636,11 @@ async function runCycle() {
 
           // Create the cron job — session target from event config (default: isolated)
           const cronJobId = await createCronJob({
-            title: event.title,
-            message,
-            agentId: event.default_agent_id || "main",
+            title: rendered.title,
+            message: rendered.message,
+            agentId: rendered.agentId,
             model: event.model_override || null,
-            scheduledFor,
+            scheduledFor: effectiveScheduledFor,
             sessionTarget,
             timeoutSeconds: null,
           });
@@ -631,7 +653,7 @@ async function runCycle() {
               occurrenceId: occ.id,
               eventType: "agenda.error",
               level: "error",
-              message: `Failed to create cron job for event "${event.title}" — occurrence marked needs_retry`,
+              message: `Failed to create cron job for event "${rendered.title}" — occurrence marked needs_retry`,
             });
             await transitionOccurrenceToNeedsRetry(sql, {
               occurrenceId: occ.id,
@@ -662,8 +684,8 @@ async function runCycle() {
             occurrenceId: occ.id,
             eventType: "agenda.queued",
             level: "info",
-            message: `Cron job created — event "${event.title}" picked up at ${new Date().toISOString()} (cron job ${cronJobId})`,
-            rawPayload: { cronJobId, scheduledFor: scheduledFor.toISOString() },
+            message: `Cron job created — event "${rendered.title}" picked up at ${new Date().toISOString()} (cron job ${cronJobId})`,
+            rawPayload: { cronJobId, scheduledFor: effectiveScheduledFor.toISOString() },
           });
 
           scheduled++;
@@ -806,7 +828,7 @@ try {
 
     const { occurrenceId, fallbackModel } = data;
     const [occ] = await sql`
-      SELECT ao.id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target,
+      SELECT ao.id, ao.agenda_event_id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target,
              ae.free_prompt, ao.scheduled_for
       FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
@@ -819,25 +841,29 @@ try {
     // may still contain the OLD AGENDA_MARKER from when it was first created or copied
     // from a template — using it would send the agent the wrong occurrence_id in its
     // instructions and artifact path.
-    let message;
+    let rendered;
     try {
-      message = await renderPromptForEvent(
+      rendered = await renderPromptForEvent(
         { id: occ.agenda_event_id, title: occ.title, free_prompt: occ.free_prompt, session_target: occ.session_target },
         occurrenceId,
       );
       // Update the stored prompt so future fallback retries also use the correct ID.
-      await sql`UPDATE agenda_occurrences SET rendered_prompt = ${message} WHERE id = ${occurrenceId}`;
+      await sql`UPDATE agenda_occurrences SET rendered_prompt = ${rendered.message} WHERE id = ${occurrenceId}`;
     } catch (renderErr) {
       const errMsg = renderErr?.message || String(renderErr);
       console.warn(`[agenda-scheduler] Fallback: re-rendering prompt failed, using stored: ${errMsg}`);
-      message = occ.rendered_prompt || occ.title || "Run agenda task";
+      rendered = {
+        title: occ.title || "Run agenda task",
+        agentId: occ.default_agent_id || "main",
+        message: occ.rendered_prompt || occ.title || "Run agenda task",
+      };
     }
     let cronJobId = null;
     try {
       cronJobId = await createCronJob({
-        title: `${occ.title} [fallback]`,
-        message,
-        agentId: occ.default_agent_id || "main",
+        title: `${rendered.title} [fallback]`,
+        message: rendered.message,
+        agentId: rendered.agentId,
         model: fallbackModel,
         scheduledFor: new Date(), // run immediately
         sessionTarget: occ.session_target || "isolated",
