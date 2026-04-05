@@ -64,6 +64,9 @@ export async function GET(): Promise<Response> {
       LIMIT ${limit}
     `;
 
+    // Show most recently *active* occurrences first.
+    // Prefer the latest run attempt timestamp; fall back to scheduled_for for
+    // occurrences that have never been picked up (e.g. scheduled/queued).
     const agendaRows = await sql`
       SELECT
         ao.id::text AS occurrence_id,
@@ -71,10 +74,19 @@ export async function GET(): Promise<Response> {
         ao.status,
         ao.scheduled_for,
         ae.title,
-        ae.default_agent_id AS agent_id
+        ae.default_agent_id AS agent_id,
+        latest.started_at AS last_run_at
       FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-      ORDER BY ao.scheduled_for DESC
+      LEFT JOIN LATERAL (
+        SELECT started_at
+        FROM agenda_run_attempts
+        WHERE occurrence_id = ao.id
+        ORDER BY started_at DESC
+        LIMIT 1
+      ) latest ON true
+      ORDER BY
+        COALESCE(latest.started_at, ao.scheduled_for) ASC NULLS LAST
       LIMIT ${limit}
     `;
 
@@ -102,7 +114,7 @@ export async function GET(): Promise<Response> {
         event: row.status || "change",
         agent: row.agent_id || "main",
         level: agendaLevelFromStatus(row.status || ""),
-        timestamp: row.scheduled_for || new Date().toISOString(),
+        timestamp: row.last_run_at || row.scheduled_for || new Date().toISOString(),
         targetUrl: row.agenda_event_id ? `/agenda?event=${encodeURIComponent(String(row.agenda_event_id))}` : "/agenda",
       });
     }
