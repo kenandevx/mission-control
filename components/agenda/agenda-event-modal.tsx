@@ -275,16 +275,22 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
 
 function buildPromptPreview(params: {
   title: string;
+  context?: string;
   request: string;
   instructions: Array<{ title: string; instruction: string; skillKey?: string | null }>;
 }) {
-  // Mirror renderUnifiedTaskMessage from prompt-renderer.mjs exactly
+  // Mirror renderUnifiedTaskMessage from prompt-renderer.mjs exactly.
+  // artifactDir is not known at preview time, so the output-file line is omitted
+  // (matching the real renderer's behaviour when artifactDir is empty).
   const clean = (value: string | null | undefined) => String(value ?? "").trim();
   const sections: string[] = [];
 
   const genericTitles = new Set(["new event", "event", "test", "untitled", "new task", "task"]);
   const t = clean(params.title);
   if (t && !genericTitles.has(t.toLowerCase())) sections.push(`Task:\n${t}`);
+
+  const c = clean(params.context);
+  if (c) sections.push(`Context:\n${c}`);
 
   const validInstructions = params.instructions
     .map((step, index) => {
@@ -315,14 +321,14 @@ function buildPromptPreview(params: {
     "- If the user asks for a deliverable, produce the deliverable directly.",
   ].join("\n"));
 
-  // Output rules — always included (mirrors prompt-renderer.mjs)
+  // Output rules — always included (mirrors prompt-renderer.mjs).
+  // The artifact-dir line is omitted here because it is only known at run time.
   sections.push([
     "Output rules:",
     "- Return only the requested deliverable.",
     "- Do not include internal labels, IDs, or system metadata.",
     "- Do not repeat section labels unless they help the final result.",
     "- Do not invent missing facts.",
-    "- If you create any output files, save them to: <artifact directory set at runtime>.",
   ].join("\n"));
 
   return sections.filter((s) => s.trim()).join("\n\n");
