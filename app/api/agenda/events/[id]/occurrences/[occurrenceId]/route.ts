@@ -53,7 +53,10 @@ async function createRetryCronJob(params: {
     ...(isMain ? [] : ["--no-deliver"]),
     "--json",
   ];
-  if (params.model?.trim()) args.push("--model", params.model.trim());
+  // OpenClaw only applies payload.model to agentTurn cron jobs.
+  // Main-session retries use systemEvent payloads, so per-event model overrides
+  // must not be passed here or the UI/backend will imply an override that never applies.
+  if (!isMain && params.model?.trim()) args.push("--model", params.model.trim());
 
   const env = buildCleanEnv();
   const result = await execFileAsync("openclaw", args, {
@@ -167,9 +170,12 @@ export async function POST(
     const existingCronJobId = occurrence.cron_job_id as string | null;
 
     const sessionTarget = (occurrence.session_target as string) || "isolated";
-    // Per docs: --model works for both isolated and main-session cron jobs.
-    // Apply model override for all session targets.
-    const overrideModel = (body.model as string | undefined) || (occurrence.model_override as string) || undefined;
+    // OpenClaw only honors payload.model for agentTurn cron jobs.
+    // Main-session retries are scheduled as systemEvent payloads, so they always
+    // run with the active main-session runtime model.
+    const overrideModel = sessionTarget === "main"
+      ? undefined
+      : ((body.model as string | undefined) || (occurrence.model_override as string) || undefined);
 
     // Step 1: always replace retry cron jobs with a freshly rendered one.
     // Re-using an existing cron job can preserve stale rendered_prompt text, old

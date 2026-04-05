@@ -176,7 +176,10 @@ ${message}
     ...(isMain ? [] : ["--no-deliver"]),
     "--json",
   ];
-  if (model?.trim()) {
+  // OpenClaw only applies payload.model to agentTurn cron jobs.
+  // Main-session agenda runs use systemEvent payloads, so per-event model
+  // overrides are intentionally ignored there.
+  if (!isMain && model?.trim()) {
     args.push("--model", model.trim());
   }
   if (timeoutSeconds && Number.isFinite(Number(timeoutSeconds))) {
@@ -646,7 +649,7 @@ async function runCycle() {
             title: rendered.title,
             message: rendered.message,
             agentId: rendered.agentId,
-            model: event.model_override || null,
+            model: sessionTarget === "main" ? null : (event.model_override || null),
             scheduledFor: effectiveScheduledFor,
             sessionTarget,
             timeoutSeconds: null,

@@ -372,7 +372,9 @@ export async function POST(request: Request) {
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
       const rawFallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
       const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
-      // --model is supported for all session targets (main + isolated).
+      // Persist the selected override even for main-session events so the value is
+      // available if the event is later switched back to isolated mode. It is only
+      // applied when the run executes as an isolated agentTurn.
       const modelOverride = rawModelOverride;
       const fallbackModel = rawFallbackModel;
       const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;

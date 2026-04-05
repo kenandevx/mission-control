@@ -355,7 +355,8 @@ export async function PATCH(
         : (existing.session_target ?? "isolated");
       const rawModelOverrideFuture = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
       const rawFallbackModelFuture = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
-      // --model is supported for all session targets (main + isolated).
+      // Persist the override for both session targets so it survives mode changes,
+      // but it is only applied when the event runs as an isolated agentTurn.
       const modelOverrideFuture = rawModelOverrideFuture;
       const fallbackModelFuture = rawFallbackModelFuture;
       const executionWindowMinutesFuture = body.executionWindowMinutes !== undefined
@@ -413,7 +414,8 @@ export async function PATCH(
       : (existing.session_target ?? "isolated");
     const rawModelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
     const rawFallbackModelStd = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
-    // --model is supported for all session targets (main + isolated).
+    // Persist the override for both session targets so it survives mode changes,
+    // but it is only applied when the event runs as an isolated agentTurn.
     const modelOverrideStd = rawModelOverrideStd;
     const fallbackModelStd = rawFallbackModelStd;
     const executionWindowMinutesStd = body.executionWindowMinutes !== undefined
