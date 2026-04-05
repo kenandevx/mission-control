@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cleanupRunArtifacts, getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
+import { cleanupRunArtifacts, getRunArtifactDir, getOccurrenceArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 import { FORCE_RETRYABLE_STATUSES, RETRYABLE_STATUSES, OCCURRENCE_STATUSES } from "@/lib/agenda/constants";
 import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
 import { renderPromptForOccurrence } from "@/lib/agenda/render-prompt";
@@ -283,12 +283,46 @@ export async function DELETE(
       }
     }
 
+    // Gather artifact dirs before cancelling (need eventId for occurrence-scoped path)
+    const [occWithEvent] = await sql`
+      select ae.id as event_id from agenda_occurrences ao
+      join agenda_events ae on ae.id = ao.agenda_event_id
+      where ao.id = ${occurrenceId}
+    `;
+
+    // Cancel the occurrence
     await sql`
       update agenda_occurrences
       set status = 'cancelled'
       where id = ${occurrenceId}
         and status not in ('running')
     `;
+
+    // Delete the latest run artifacts if any
+    const [latestAttempt] = await sql`
+      select id from agenda_run_attempts
+      where occurrence_id = ${occurrenceId}
+      order by attempt_no desc limit 1
+    `;
+    if (latestAttempt?.id) {
+      const runDir = getRunArtifactDir({
+        kind: "agenda",
+        entityId: occWithEvent?.event_id as string,
+        occurrenceId,
+        runId: latestAttempt.id as string,
+      });
+      await cleanupRunArtifacts(runDir);
+    }
+
+    // Delete the occurrence-level artifact dir
+    if (occWithEvent) {
+      const occArtifactsDir = getOccurrenceArtifactDir({
+        eventId: occWithEvent.event_id as string,
+        occurrenceId,
+      });
+      await cleanupRunArtifacts(occArtifactsDir);
+    }
+
     await sql`select pg_notify('agenda_change', ${JSON.stringify({ action: "dismiss", occurrenceId })})`;
     return ok({ occurrenceId, status: "cancelled" });
   } catch (err) {
