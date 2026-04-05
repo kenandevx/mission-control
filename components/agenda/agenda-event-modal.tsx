@@ -1198,14 +1198,16 @@ setAgendaTimeStepMinutes(safe);
           )}
 
           {(form.title.trim() || form.request.trim() || form.processVersionIds.length > 0) && (
-            <div className="p-3 pt-0">
-              <details className="group rounded-xl border border-dashed border-muted-foreground/25 bg-muted/15 px-4 py-3">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
-                  <span>Preview prompt sent to agent</span>
-                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+            <div className="px-4 pb-4 pt-0">
+              <details className="group rounded-xl border bg-card shadow-xs">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-foreground">
+                  <span>Preview input sent to agent</span>
+                  <span className="text-[10px] text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
                 </summary>
-                <div className="mt-3 rounded-lg bg-background/70 p-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap font-mono max-h-[320px] overflow-y-auto">
-                  {promptPreview}
+                <div className="px-4 pb-4">
+                  <div className="rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono max-h-[320px] overflow-y-auto border">
+                    {promptPreview}
+                  </div>
                 </div>
               </details>
             </div>

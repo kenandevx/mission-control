@@ -171,12 +171,11 @@ function beautifyOutputSource(source: string | null | undefined) {
   const raw = String(source ?? "").trim();
   if (!raw) return "";
   const cleaned = raw
-    .replace(/assisan?ts?/gi, "assistant")
     .replace(/_session_/gi, " Session ")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  // Title-case each word nicely, preserving already-titlecased or all-caps words
+  // Title-case each word nicely
   return cleaned.replace(/\b([a-z])([a-z]*)\b/gi, (_m, first, rest) =>
     first.toUpperCase() + rest.toLowerCase()
   );
@@ -770,13 +769,13 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Schedule</CardDescription>
-                      <CardTitle className="text-lg font-semibold tabular-nums">
-                        {event.startTime ? `${event.startTime} ${getTimezoneAbbr(event.timezone)}` : "—"}
+                      <CardTitle className="text-sm font-semibold tabular-nums truncate">
+                        {event.startDate ? `${event.startDate} ${event.startTime ? event.startTime : ""} ${event.startTime ? getTimezoneAbbr(event.timezone) : ""}`.trim() || "—"} {event.endDate ? `→ ${event.endDate}` : ""}
                       </CardTitle>
                       <CardAction>
                         <Badge variant="outline">
                           <IconCalendar className="size-3" />
-                          {event.startDate || "Not set"}
+                          {event.startDate ? event.startDate : "Not set"}
                         </Badge>
                       </CardAction>
                     </CardHeader>
@@ -863,7 +862,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Created At</CardDescription>
-                      <CardTitle className="text-sm font-semibold tabular-nums">
+                      <CardTitle className="text-sm font-semibold tabular-nums whitespace-nowrap">
                         {event.createdAt ? formatTime(event.createdAt, event.timezone) : "—"}
                       </CardTitle>
                       <CardAction>
@@ -1061,15 +1060,10 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                 ) : attemptSteps.length === 0 ? (
                   <div className="flex flex-col gap-4">
                     {selectedOccurrence?.rendered_prompt && (
-                      <details className="group rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-foreground/80">
-                          <span>Request sent to agent</span>
-                          <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
-                        </summary>
-                        <div className="px-4 pb-3 text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                          {selectedOccurrence.rendered_prompt}
-                        </div>
-                      </details>
+                      <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Input sent to agent</p>
+                        <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 rounded-md p-3 max-h-[400px] overflow-y-auto">{selectedOccurrence.rendered_prompt}</p>
+                      </div>
                     )}
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <IconFileText className="size-10 text-muted-foreground/50 mb-3" />

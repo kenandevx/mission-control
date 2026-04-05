@@ -120,9 +120,9 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
     key: "auto_retry",
     label: "Auto-retrying",
     desc: "Automatically retrying with the configured fallback model after primary model failure.",
-    colorKey: "indigo" as EventColor,
-    bg: "bg-indigo-500/8 dark:bg-indigo-500/10",
-    ring: "ring-indigo-500/20",
+    colorKey: "teal" as EventColor,
+    bg: "bg-teal-500/8 dark:bg-teal-500/10",
+    ring: "ring-teal-500/20",
     animated: true,
   },
   {
