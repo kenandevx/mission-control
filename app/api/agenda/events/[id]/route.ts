@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { DateTime } from "luxon";
 import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
-import { getRootArtifactDir } from "@/scripts/runtime-artifacts.mjs";
+import { deleteEventArtifacts } from "@/scripts/runtime-artifacts.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -69,28 +69,6 @@ async function workspaceId(sql: ReturnType<typeof getSql>) {
   return rows[0]?.id ?? null;
 }
 
-/**
- * Recursively delete a directory if it exists.
- * Used to clean up runtime artifacts on event deletion.
- */
-async function rmSafe(dir: string) {
-  try {
-    const { rm } = await import("node:fs/promises");
-    await rm(dir, { recursive: true, force: true });
-  } catch {
-    // Best effort — if the dir doesn't exist or is locked, skip silently.
-  }
-}
-
-/**
- * Delete all runtime artifacts for a given event.
- * Agenda artifact tree: runtime-artifacts/agenda/{eventId}/
- */
-async function deleteEventArtifacts(eventId: string) {
-  const root = getRootArtifactDir();
-  const eventDir = `${root}/agenda/${eventId}`;
-  await rmSafe(eventDir);
-}
 
 export async function GET(
   _request: Request,

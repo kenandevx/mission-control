@@ -49,6 +49,20 @@ export function getOccurrenceArtifactDir({ eventId, occurrenceId }) {
 }
 
 /**
+ * Delete ALL runtime artifacts for a given event (occurrence dirs, runs, etc.).
+ * Path: runtime-artifacts/agenda/{safeEventId}/
+ * This is called when an event is permanently deleted.
+ */
+export async function deleteEventArtifacts(eventId) {
+  const eventDir = resolve(ROOT, "agenda", safe(eventId));
+  try {
+    await rm(eventDir, { recursive: true, force: true });
+  } catch {
+    // Best effort — dir may not exist or already deleted
+  }
+}
+
+/**
  * Scan all files recursively under a directory (up to 2 levels deep).
  * Used to find files the agent created anywhere under the occurrence dir.
  */

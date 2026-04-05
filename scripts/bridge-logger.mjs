@@ -702,7 +702,25 @@ async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOf
         } catch { continue; }
       }
       if (injectionLineIdx === null) {
-        console.warn(`[bridge-logger] readLastAssistantFromSession: marker not found for occurrence ${occurrenceId} — falling back to fromLineOffset=${fromLineOffset}`);
+        console.warn(`[bridge-logger] readLastAssistantFromSession: marker not found for occurrence ${occurrenceId} — widening scan to last 200 lines`);
+        // ── Safety net: if marker not found, scan the last 200 lines of the session file.
+        // The marker can be lost if the session file was truncated or rotated between
+        // scheduling and firing. The assistant still wrote output somewhere.
+        const tailStart = Math.max(0, lines.length - 200);
+        for (let i = tailStart; i < lines.length; i++) {
+          try {
+            const parsed = JSON.parse(lines[i]);
+            const role = parsed?.role ?? parsed?.message?.role ?? '';
+            if (role !== 'assistant') continue;
+            const content = parsed?.content ?? parsed?.message?.content ?? '';
+            const text = extractContentText(content);
+            if (text.trim()) {
+              console.log(`[bridge-logger] readLastAssistantFromSession: found assistant in tail scan (${text.trim().length} chars) for occurrence ${occurrenceId}`);
+              return text.trim().slice(0, 8000);
+            }
+          } catch { continue; }
+        }
+        console.warn(`[bridge-logger] readLastAssistantFromSession: no output in tail scan either for occurrence ${occurrenceId} — falling back to fromLineOffset=${fromLineOffset}`);
       }
     }
 
@@ -826,7 +844,25 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
     // scanning: bridge-logger finds the [AGENDA_MARKER:occurrence_id=...] line in the
     // session to precisely locate where this task was injected, regardless of session
     // growth between scheduling and firing times.
-    const sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
+    let sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
+
+    // ── Fix #1: Retry with backoff for main-session no_output race condition ─
+    // The agent writes its response asynchronously to the session file.
+    // If bridge-logger scans before the response is flushed, it falsely
+    // reports no_output. Retry up to 3 times with 3→5→7 second backoff
+    // (max ~15s total delay before declaring failure).
+    let retries = 0;
+    while (!sessionOutput && retries < 3) {
+      retries++;
+      const delayMs = [3000, 5000, 7000][retries - 1];
+      console.log(`[bridge-logger] resolveAgendaOutput: no output on first scan — retry ${retries}/3 after ${delayMs}ms for occurrence ${occurrenceId}`);
+      await new Promise(r => setTimeout(r, delayMs));
+      sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
+      if (sessionOutput) {
+        console.log(`[bridge-logger] resolveAgendaOutput: found output on retry ${retries} for occurrence ${occurrenceId} (${sessionOutput.trim().length} chars)`);
+      }
+    }
+
     if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
       result.output = sessionOutput;
       result.outputSource = 'main_session_assistant';
@@ -842,13 +878,25 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       console.warn(`[bridge-logger] resolveAgendaOutput: no session output and no fromLineOffset for occurrence ${occurrenceId} — falling back (backward-compat; this may indicate a pre-fix occurrence)`);
     } else {
       // fromLineOffset IS set (post-fix) — the task had proper injection boundaries.
-      // readLastAssistantFromSession scanned the bounded range and found nothing.
-      // This means the task produced no output (e.g. rate-limit / early failure).
+      // readLastAssistantFromSession scanned the bounded range and found nothing,
+      // even after retries. This means the task truly produced no output.
       // Do NOT fall back to artifacts or session-global scan — that would contaminate
       // this task's result with output from a completely unrelated earlier task.
-      // Return NULL so the occurrence is marked failed and the user can retry.
-      console.warn(`[bridge-logger] resolveAgendaOutput: no session output in bounded range (fromLineOffset=${fromLineOffset}) for occurrence ${occurrenceId} — marking no_output (task failed/rate-limited)`);
+      console.warn(`[bridge-logger] resolveAgendaOutput: no session output even after retries (fromLineOffset=${fromLineOffset}) for occurrence ${occurrenceId} — marking no_output (task failed/rate-limited)`);
+      const sf = await resolveSessionFile(sessionTarget, sessionId);
+      let fileSize = -1;
+      try { if (sf) fileSize = fs.statSync(sf).size; } catch {}
+      let totalLines = -1;
+      try { if (sf) totalLines = fs.readFileSync(sf, 'utf8').split('\n').filter(Boolean).length; } catch {}
       result.output = null;
+      result.outputSource = 'no_output';
+      result.outputMeta._diagnostics = {
+        retryAttempts: retries,
+        sessionFileSize: fileSize,
+        sessionTotalLines: totalLines,
+        scanStartLine: fromLineOffset,
+        linesScanned: Math.max(-1, totalLines - fromLineOffset),
+      };
       result.outputSource = 'no_output';
       return result;
     }
