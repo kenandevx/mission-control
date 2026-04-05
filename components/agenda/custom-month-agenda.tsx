@@ -119,7 +119,7 @@ const HOUR_HEIGHT = 72; // px per hour slot in week/day views
 
 const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
   running:      { emoji: "", color: "bg-blue-600", pulse: true },
-  scheduled:    { emoji: "", color: "bg-indigo-400" },
+  scheduled:    { emoji: "", color: "bg-teal-500" },
   queued:       { emoji: "", color: "bg-violet-500" },
   succeeded:    { emoji: "", color: "bg-emerald-500" },
   failed:       { emoji: "", color: "bg-rose-500" },
@@ -219,7 +219,7 @@ function NeedsRetryBadge() {
 }
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
-  scheduled: "#6366f1",
+  scheduled: "#0d9488",
   queued: "#8b5cf6",
   running: "#2563eb",
   auto_retry: "#ec4899",

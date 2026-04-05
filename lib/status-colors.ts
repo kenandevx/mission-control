@@ -71,7 +71,7 @@ export const DOT_COLORS: Record<EventColor, string> = {
 //   gray     = draft
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:    "indigo",
+  scheduled:    "teal",
   queued:       "violet",
   running:      "blue",
   succeeded:    "green",
@@ -105,7 +105,7 @@ export const STATUS_BADGE_MAP: Record<string, { label: string; className: string
   running:        { label: "● Running",      className: "border-blue-600/40 bg-blue-600/10 text-blue-600 dark:text-blue-400", tooltip: "Currently executing" },
   pending:        { label: "Pending",        className: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400", tooltip: "Waiting to be picked up" },
   queued:         { label: "Queued",         className: "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400", tooltip: "Cron job assigned, waiting to fire" },
-  scheduled:      { label: "Scheduled",      className: "border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", tooltip: "Scheduled for future execution" },
+  scheduled:      { label: "Scheduled",      className: "border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-400", tooltip: "Scheduled for future execution" },
   needs_retry:    { label: "⚠ Needs Retry",  className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "All retries exhausted — needs manual retry" },
   auto_retry:     { label: "↺ Auto-retry",   className: "border-pink-500/40 bg-pink-500/10 text-pink-600 dark:text-pink-400", tooltip: "Automatically retrying with fallback model" },
   stale_recovery: { label: "⟳ Stale",        className: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400", tooltip: "Recovered from a stuck running state" },
@@ -130,9 +130,9 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
     key: "scheduled",
     label: "Scheduled",
     desc: "Waiting for its time slot — no cron job assigned yet.",
-    colorKey: "indigo" as EventColor,
-    bg: "bg-indigo-500/8 dark:bg-indigo-500/10",
-    ring: "ring-indigo-500/15",
+    colorKey: "teal" as EventColor,
+    bg: "bg-teal-500/8 dark:bg-teal-500/10",
+    ring: "ring-teal-500/15",
   },
   {
     key: "queued",
