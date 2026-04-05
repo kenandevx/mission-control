@@ -1106,9 +1106,9 @@ async function handleCronRunLine(getSql, jobId, line) {
   // Find the occurrence that owns this cron job.
   const occurrences = await sql`
     SELECT ao.id as occurrence_id, ao.agenda_event_id, ao.latest_attempt_no,
-           ao.fallback_attempted, ao.rendered_prompt, ao.status, ao.scheduled_for,
+           ao.rendered_prompt, ao.status, ao.scheduled_for,
            ao.session_line_offset,
-           ae.title, ae.fallback_model, ae.default_agent_id, ae.execution_window_minutes, ae.session_target
+           ae.title, ae.default_agent_id, ae.execution_window_minutes, ae.session_target
     FROM agenda_occurrences ao
     JOIN agenda_events ae ON ae.id = ao.agenda_event_id
     WHERE ao.cron_job_id = ${jobId}
@@ -1361,11 +1361,9 @@ async function handleCronRunLine(getSql, jobId, line) {
   } else {
     // ── Failure path ──────────────────────────────────────────────────────────
     // Load settings first (needed to determine targetStatus before unconditional update)
-    const [settings] = await sql`SELECT max_retries, default_fallback_model FROM worker_settings WHERE id = 1 LIMIT 1`;
+    const [settings] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
     const maxRetries = Math.max(1, Number(settings?.max_retries ?? 1));
-    const globalFallback = String(settings?.default_fallback_model || "").trim();
-    const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
-    const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
+    const shouldTryFallback = false; // fallback model removed
     const isNoOutput = outputResolution.outputSource === 'no_output';
     const sessionErrorMsg = outputResolution.outputMeta?.sessionError ?? null;
     const failureReason = isNoOutput
@@ -1373,7 +1371,7 @@ async function handleCronRunLine(getSql, jobId, line) {
         ? `session_error: ${sessionErrorMsg}`
         : `no_output: task produced no output (possible rate-limit / session failure, model=${run.model || 'unknown'})`
       : String(run.error || '').slice(0, 2000);
-    const targetStatus = shouldTryFallback ? 'needs_retry' : (occ.fallback_attempted ? 'failed' : 'needs_retry');
+    const targetStatus = 'needs_retry';
 
     // CRITICAL: always update status before SSE — same race-guard fix as success path.
     // transitionOccurrenceToNeedsRetry/Failed require status='running'; if promotePastDueToRunning
@@ -1427,41 +1425,8 @@ async function handleCronRunLine(getSql, jobId, line) {
       );
     }
 
-    if (shouldTryFallback) {
-      // Mark fallback_attempted before transitioning — prevents a second fallback attempt
-      // if the scheduler sees this before the status updates.
-      await sql`
-        UPDATE agenda_occurrences
-        SET fallback_attempted = true, cron_synced_at = now()
-        WHERE id = ${occ.occurrence_id}
-      `;
-      // Status already set to 'needs_retry' by the unconditional update above.
-      // Just emit the fallback-specific log.
-      await emitAgendaLog(sql, {
-        workspaceId: wid, agentDbId,
-        agentId: occ.default_agent_id || 'main',
-        occurrenceId: occ.occurrence_id, sessionKey,
-        eventType: 'agenda.fallback', level: 'warn',
-        message: `Agenda run exhausted primary retries, queuing fallback model for "${occ.title}" (attempt ${attemptNo})`,
-        rawPayload: {
-          cronJobId: jobId,
-          attemptNo,
-          fallbackModel,
-          error: failureReason.slice(0, 400),
-          scheduledFor: occ.scheduled_for || null,
-          startedAt,
-          finishedAt,
-          runDelayMs,
-          runDelaySeconds: Math.round(runDelayMs / 1000),
-          outputSource: outputResolution.outputSource,
-        },
-      });
-      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} exhausted — queuing fallback model ${fallbackModel}`);
-      deleteCronJobSilently(jobId).catch(() => {});
-    } else if (occ.fallback_attempted) {
-      // Fallback also failed — terminal failure. Status already set to 'failed' by the
-      // unconditional update above. Notify the user via notifyMainSession (handles both
-      // isolated and main — Telegram + system event).
+    {
+      // Terminal failure path — notify user.
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
@@ -1489,35 +1454,6 @@ async function handleCronRunLine(getSql, jobId, line) {
         sessionId: run.sessionId || null,
       }).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
-    } else {
-      // Retries exhausted, no fallback configured. Status already set to 'needs_retry' above.
-      // User can manually retry or the fallback signal will kick in on next scan.
-      await emitAgendaLog(sql, {
-        workspaceId: wid, agentDbId,
-        agentId: occ.default_agent_id || 'main',
-        occurrenceId: occ.occurrence_id, sessionKey,
-        eventType: 'agenda.failed', level: 'error',
-        message: `Agenda run failed: "${occ.title}" (attempt ${attemptNo}) — ${failureReason.slice(0, 300)}`,
-        rawPayload: {
-          cronJobId: jobId,
-          attemptNo,
-          error: failureReason.slice(0, 1000),
-          durationMs: run.durationMs,
-          scheduledFor: occ.scheduled_for || null,
-          startedAt,
-          finishedAt,
-          runDelayMs,
-          runDelaySeconds: Math.round(runDelayMs / 1000),
-          outputSource: outputResolution.outputSource,
-        },
-      });
-      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${failureReason.slice(0, 120)}`);
-      deleteCronJobSilently(jobId).catch(() => {});
-      notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 400),
-        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-        sessionId: run.sessionId || null,
-      }).catch(() => {});
     }
   }
 }

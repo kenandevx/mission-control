@@ -74,7 +74,6 @@ export type AgendaEventFormData = {
   weekdays: string[];
   recurrenceUntil: string;
   executionWindowMinutes?: number;
-  fallbackModel?: string;
 };
 
 async function apiFetch(path: string, body: Record<string, unknown>) {
@@ -203,7 +202,6 @@ export function useAgenda() {
       status: form.status,
       processVersionIds: form.processVersionIds,
       executionWindowMinutes: form.executionWindowMinutes ?? 30,
-      fallbackModel: form.fallbackModel ?? "",
     });
 
     if (json.ok) {
@@ -239,7 +237,6 @@ export function useAgenda() {
     if (form.status !== undefined) patch.status = form.status;
     if (form.processVersionIds !== undefined) patch.processVersionIds = form.processVersionIds;
     if (form.executionWindowMinutes !== undefined) patch.executionWindowMinutes = form.executionWindowMinutes;
-    if (form.fallbackModel !== undefined) patch.fallbackModel = form.fallbackModel;
 
     const res = await fetch(`/api/agenda/events/${id}`, {
       method: "PATCH",

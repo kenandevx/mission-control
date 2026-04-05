@@ -24,7 +24,6 @@ export async function GET(): Promise<NextResponse> {
         auto_retry_after_minutes,
         max_retries,
         agenda_concurrency,
-        default_fallback_model,
         scheduling_interval_minutes
       from worker_settings
       where id = 1
@@ -36,7 +35,6 @@ export async function GET(): Promise<NextResponse> {
       autoRetryAfterMinutes: Number(row?.auto_retry_after_minutes ?? 0),
       maxRetries: Number(row?.max_retries ?? 1),
       agendaConcurrency: Number(row?.agenda_concurrency ?? 5),
-      defaultFallbackModel: String(row?.default_fallback_model ?? ""),
       schedulingIntervalMinutes: Number(row?.scheduling_interval_minutes ?? 15),
     });
   } catch {

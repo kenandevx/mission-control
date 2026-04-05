@@ -354,11 +354,9 @@ export async function PATCH(
         ? (body.sessionTarget === "main" ? "main" : "isolated")
         : (existing.session_target ?? "isolated");
       const rawModelOverrideFuture = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
-      const rawFallbackModelFuture = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
       // Persist the override for both session targets so it survives mode changes,
       // but it is only applied when the event runs as an isolated agentTurn.
       const modelOverrideFuture = rawModelOverrideFuture;
-      const fallbackModelFuture = rawFallbackModelFuture;
       const executionWindowMinutesFuture = body.executionWindowMinutes !== undefined
         ? Math.max(1, Number(body.executionWindowMinutes) || 30)
         : Number(existing.execution_window_minutes ?? 30);
@@ -375,11 +373,11 @@ export async function PATCH(
         insert into agenda_events (
           workspace_id, title, free_prompt, default_agent_id,
           timezone, starts_at, ends_at, recurrence_rule, recurrence_until, status,
-          model_override, execution_window_minutes, fallback_model, session_target, created_by
+          model_override, execution_window_minutes, session_target, created_by
         ) values (
           ${wid}, ${title}, ${freePrompt}, ${agentId},
           ${timezone}, ${startsAt}, ${endsAt}, ${recurrenceRule}, ${recurrenceUntil}, ${status},
-          ${modelOverrideFuture}, ${executionWindowMinutesFuture}, ${fallbackModelFuture}, ${sessionTargetFuture}, ${existing.created_by}
+          ${modelOverrideFuture}, ${executionWindowMinutesFuture}, ${sessionTargetFuture}, ${existing.created_by}
         )
         returning *
       `;
@@ -413,11 +411,9 @@ export async function PATCH(
       ? (body.sessionTarget === "main" ? "main" : "isolated")
       : (existing.session_target ?? "isolated");
     const rawModelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
-    const rawFallbackModelStd = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
     // Persist the override for both session targets so it survives mode changes,
     // but it is only applied when the event runs as an isolated agentTurn.
     const modelOverrideStd = rawModelOverrideStd;
-    const fallbackModelStd = rawFallbackModelStd;
     const executionWindowMinutesStd = body.executionWindowMinutes !== undefined
       ? Math.max(1, Number(body.executionWindowMinutes) || 30)
       : Number(existing.execution_window_minutes ?? 30);
@@ -493,7 +489,6 @@ export async function PATCH(
         status = ${status},
         model_override = ${modelOverrideStd},
         execution_window_minutes = ${executionWindowMinutesStd},
-        fallback_model = ${fallbackModelStd},
         session_target = ${sessionTarget},
         updated_at = now()
       where id = ${id}

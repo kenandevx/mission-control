@@ -551,34 +551,6 @@ export const AGENDA_TESTS: TestDefinition[] = [
     },
   },
 
-  // ── 13. Event with fallback model field is stored correctly ───────────────
-  {
-    id: "fallback-model-stored",
-    name: "Fallback model stored on event",
-    description: "Creates an event with a fallback model set and verifies it is persisted correctly.",
-    run: async (ctx) => {
-      const ID = "fallback-model-stored";
-      const NAME = "Fallback model stored on event";
-      const DESC = "Creates an event with a fallback model set and verifies it is persisted correctly.";
-      const t0 = Date.now();
-      const log = (m: string) => ctx.log(ID, m);
-
-      const fallback = "openrouter/openai/gpt-5.4-mini";
-      const res = await createEvent(ctx, { fallbackModel: fallback }) as { ok: boolean; event?: { id: string; fallback_model: string }; error?: string };
-      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
-      log(`Created event: ${res.event.id}`);
-
-      const detail = await ctx.apiGet(`/api/agenda/events/${res.event.id}`) as { event?: { fallback_model: string } };
-      if (detail.event?.fallback_model !== fallback) {
-        return fail(ID, NAME, DESC, t0, `Expected fallback_model=${fallback}, got ${detail.event?.fallback_model}`);
-      }
-      log(`fallback_model = ${detail.event.fallback_model}`);
-
-      return pass(ID, NAME, DESC, t0, "Fallback model stored correctly");
-    },
-  },
-
-  // ── 14. Cannot create event in the past ───────────────────────────────────
   {
     id: "no-past-event",
     name: "Cannot create event in the past",

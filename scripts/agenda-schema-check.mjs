@@ -48,7 +48,6 @@ export async function assertAgendaSchema(sql) {
   const requiredEventCols = [
     'execution_window_minutes',
     'session_target',
-    'fallback_model',
     'model_override',
     'depends_on_event_id',
     'dependency_timeout_hours',

@@ -89,7 +89,6 @@ export type AgendaEventSummary = {
   occurrenceId?: string;
   modelOverride?: string;
   executionWindowMinutes?: number;
-  fallbackModel?: string;
   sessionTarget?: "isolated" | "main";
   createdAt?: string | null;
   dependsOnEventId?: string | null;
@@ -854,30 +853,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       )}
                     </CardFooter>
                   </Card>
-
-                  {/* Fallback Model (if set) */}
-                  {event.fallbackModel && (
-                    <Card data-slot="card" className={overviewCardClassName}>
-                      <CardHeader>
-                        <CardDescription>Fallback Model</CardDescription>
-                        <CardTitle className="text-lg font-semibold truncate">
-                          {event.fallbackModel}
-                        </CardTitle>
-                        <CardAction>
-                          <Badge variant="outline">
-                            <IconBrain className="size-3" />
-                            Fallback
-                          </Badge>
-                        </CardAction>
-                      </CardHeader>
-                      <CardFooter className={overviewCardFooterClassName}>
-                        <div className="text-muted-foreground text-xs">
-                          Used when primary model hits rate limits
-                        </div>
-
-                      </CardFooter>
-                    </Card>
-                  )}
 
                   {/* Session Mode */}
                   <Card data-slot="card" className={overviewCardClassName}>

@@ -126,9 +126,9 @@ export async function POST(
     // ── Standard / force retry ────────────────────────────────────────────────
     const [occurrence] = await sql`
       select ao.id, ao.status, ao.cron_job_id, ao.rendered_prompt,
-             ao.latest_attempt_no, ao.fallback_attempted,
+             ao.latest_attempt_no,
              ae.workspace_id, ae.title, ae.free_prompt, ae.default_agent_id,
-             ae.fallback_model, ae.model_override, ae.session_target,
+             ae.model_override, ae.session_target,
              o.overridden_title, o.overridden_agent_id
       from agenda_occurrences ao
       join agenda_events ae on ae.id = ao.agenda_event_id

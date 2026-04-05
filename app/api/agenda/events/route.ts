@@ -375,13 +375,11 @@ export async function POST(request: Request) {
       const status = String(body.status || "draft");
       const rawModelOverride = body.modelOverride ? String(body.modelOverride) : "";
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
-      const rawFallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
       const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
       // Persist the selected override even for main-session events so the value is
       // available if the event is later switched back to isolated mode. It is only
       // applied when the run executes as an isolated agentTurn.
       const modelOverride = rawModelOverride;
-      const fallbackModel = rawFallbackModel;
       const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;
       const dependencyTimeoutHours = body.dependencyTimeoutHours ? Number(body.dependencyTimeoutHours) || null : null;
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
@@ -439,11 +437,11 @@ export async function POST(request: Request) {
         insert into agenda_events (
           workspace_id, title, free_prompt, default_agent_id,
           timezone, starts_at, ends_at, recurrence_rule, recurrence_until, status,
-          model_override, execution_window_minutes, fallback_model, session_target, created_by
+          model_override, execution_window_minutes, session_target, created_by
         ) values (
           ${wid}, ${title}, ${freePrompt}, ${agentId},
           ${timezone}, ${startsAt}, ${endsAt}, ${recurrenceRule}, ${recurrenceUntil}, ${status},
-          ${modelOverride}, ${executionWindowMinutes}, ${fallbackModel}, ${sessionTarget},
+          ${modelOverride}, ${executionWindowMinutes}, ${sessionTarget},
           ${body.createdBy ? String(body.createdBy) : null}
         )
         returning *

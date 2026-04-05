@@ -35,7 +35,6 @@ import {
   IconCheck,
   IconStack2,
   IconCpu,
-  IconShieldCheck,
   IconServer,
   IconLink,
   IconTerminal2,
@@ -75,7 +74,6 @@ export type AgendaEventFormData = {
   endDateMode: EndDateMode;
   frequency: Frequency;
   executionWindowMinutes: number;
-  fallbackModel: string;
   sessionTarget: "isolated" | "main";
   dependsOnEventId: string;        // "" = no dependency
   dependencyTimeoutHours: number;  // 0 = wait indefinitely
@@ -209,7 +207,6 @@ const defaultForm: AgendaEventFormData = {
   endDateMode: "forever",
   frequency: "daily",
   executionWindowMinutes: 30,
-  fallbackModel: "",
   sessionTarget: "isolated",
   dependsOnEventId: "",
   dependencyTimeoutHours: 0,
@@ -266,7 +263,6 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
     startDateMode,
     endDateMode,
     executionWindowMinutes: data.executionWindowMinutes ?? 30,
-    fallbackModel: data.fallbackModel ?? "",
     sessionTarget,
     dependsOnEventId: data.dependsOnEventId ?? "",
     dependencyTimeoutHours: data.dependencyTimeoutHours ?? 0,
@@ -765,38 +761,6 @@ setAgendaTimeStepMinutes(safe);
 
         {form.sessionTarget !== "main" && (
           <>
-            {/* Fallback Model */}
-            <div className="flex flex-col gap-1.5 min-w-0">
-              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-                <IconShieldCheck className="size-3.5 text-primary" />
-                Fallback model
-              </Label>
-              <Select
-                value={form.fallbackModel || "__none__"}
-                onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
-              >
-                <SelectTrigger className="h-10 w-full cursor-pointer">
-                  <SelectValue placeholder="None">
-                    {form.fallbackModel
-                      ? <span className="flex gap-1.5 items-center truncate">
-                          <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
-                          <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.fallbackModel)})</span>
-                        </span>
-                      : "None"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  {models.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      <span className="font-medium">{m.alias}</span>
-                      <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
             {/* Model Override */}
             <div className="flex flex-col gap-1.5 min-w-0">
               <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
@@ -1187,7 +1151,6 @@ setAgendaTimeStepMinutes(safe);
 
           <ReviewRow label="Timezone" value={form.timezone} />
           {/* executionWindowMinutes uses global default from settings */}
-          {form.fallbackModel && <ReviewRow label="Fallback" value={models.find((m) => m.id === form.fallbackModel)?.alias || form.fallbackModel} />}
           <ReviewRow label="Execution" value={form.sessionTarget === "main" ? "Main session" : "Isolated session"} />
           {form.dependsOnEventId && (
             <ReviewRow

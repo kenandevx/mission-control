@@ -834,65 +834,6 @@ try {
       scheduleWake(action);
     }
 
-    if (data?.action !== "needs_retry" || !data?.scheduleFallback || !data?.fallbackModel) return;
-
-    const { occurrenceId, fallbackModel } = data;
-    const [occ] = await sql`
-      SELECT ao.id, ao.agenda_event_id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target,
-             ae.free_prompt, ao.scheduled_for
-      FROM agenda_occurrences ao
-      JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-      WHERE ao.id = ${occurrenceId} AND ao.status = 'needs_retry'
-      LIMIT 1
-    `;
-    if (!occ) return;
-
-    // Re-render the prompt with the correct occurrence ID. The stored rendered_prompt
-    // may still contain the OLD AGENDA_MARKER from when it was first created or copied
-    // from a template — using it would send the agent the wrong occurrence_id in its
-    // instructions and artifact path.
-    let rendered;
-    try {
-      rendered = await renderPromptForEvent(
-        { id: occ.agenda_event_id, title: occ.title, free_prompt: occ.free_prompt, session_target: occ.session_target },
-        occurrenceId,
-      );
-      // Update the stored prompt so future fallback retries also use the correct ID.
-      await sql`UPDATE agenda_occurrences SET rendered_prompt = ${rendered.message} WHERE id = ${occurrenceId}`;
-    } catch (renderErr) {
-      const errMsg = renderErr?.message || String(renderErr);
-      console.warn(`[agenda-scheduler] Fallback: re-rendering prompt failed, using stored: ${errMsg}`);
-      rendered = {
-        title: occ.title || "Run agenda task",
-        agentId: occ.default_agent_id || "main",
-        message: occ.rendered_prompt || occ.title || "Run agenda task",
-      };
-    }
-    let cronJobId = null;
-    try {
-      cronJobId = await createCronJob({
-        title: `${rendered.title} [fallback]`,
-        message: rendered.message,
-        agentId: rendered.agentId,
-        model: fallbackModel,
-        scheduledFor: new Date(), // run immediately
-        sessionTarget: occ.session_target || "isolated",
-        timeoutSeconds: null,
-      });
-    } catch (err) {
-      console.error(`[agenda-scheduler] Failed to create fallback cron job for occurrence ${occurrenceId}:`, err.message);
-      return;
-    }
-
-    if (cronJobId) {
-      await transitionOccurrenceToQueued(sql, {
-        occurrenceId,
-        cronJobId,
-        reasonText: `FALLBACK_RETRY: retrying with fallback model ${fallbackModel}`,
-      });
-      await sql`SELECT pg_notify('agenda_change', ${JSON.stringify({ action: 'queued', occurrenceId })})`;
-      console.log(`[agenda-scheduler] Fallback cron job created for occurrence ${occurrenceId} with model ${fallbackModel}`);
-    }
   });
   console.log(`[agenda-scheduler] Listening for agenda_change signals (tick=${SCHEDULER_TICK_MS}ms, wakeDebounce=${SCHEDULER_WAKE_DEBOUNCE_MS}ms)`);
 } catch (err) {

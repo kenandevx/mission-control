@@ -166,7 +166,6 @@ export function SettingsPageClient(): React.ReactNode {
   // agendaConcurrency and defaultExecWindow removed in v2 — cron handles these natively
   const [autoRetryAfterMinutes, setAutoRetryAfterMinutes] = useState(0);
   const [agendaSettingsLoading, setAgendaSettingsLoading] = useState(false);
-  const [defaultFallbackModel, setDefaultFallbackModel] = useState("");
   const [maxRetries, setMaxRetries] = useState(1);
   const [sidebarActivityCount, setSidebarActivityCount] = useState(8);
   const [instanceName, setInstanceName] = useState("");
@@ -205,7 +204,6 @@ export function SettingsPageClient(): React.ReactNode {
         const json = await res.json();
         if (json.ok && json.workerSettings) {
           setAutoRetryAfterMinutes(json.workerSettings.autoRetryAfterMinutes ?? 0);
-          setDefaultFallbackModel(json.workerSettings.defaultFallbackModel ?? "");
           setMaxRetries(json.workerSettings.maxRetries ?? 1);
           setSidebarActivityCount(json.workerSettings.sidebarActivityCount ?? 8);
           setInstanceName(json.workerSettings.instanceName ?? "Mission Control");
@@ -543,8 +541,8 @@ export function SettingsPageClient(): React.ReactNode {
 
       <div className="rounded-xl border bg-card divide-y">
         <SettingRow
-          label="Max attempts before fallback"
-          description="After this many failed attempts, Mission Control switches to the per-event fallback model (if set). Cron handles the actual retries internally. (1–5)"
+          label="Max retry attempts"
+          description="Number of times to retry a failed agenda run before marking it as needs_retry. Cron handles the actual retries internally. (1–5)"
         >
           <Input
             type="number"
@@ -577,15 +575,11 @@ export function SettingsPageClient(): React.ReactNode {
         <div className="space-y-2.5">
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold shrink-0 mt-0.5">1</div>
-            <p className="text-sm text-muted-foreground">Cron retries automatically on transient failures (rate limits, overload). After <span className="font-medium text-foreground">{maxRetries} attempt{maxRetries === 1 ? "" : "s"}</span> it escalates to step 2.</p>
+            <p className="text-sm text-muted-foreground">Cron retries automatically on transient failures (rate limits, overload). Runs up to <span className="font-medium text-foreground">{maxRetries} attempt{maxRetries === 1 ? "" : "s"}</span>.</p>
           </div>
           <div className="flex items-start gap-3">
-            <div className="flex items-center justify-center size-6 rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">2</div>
-            <p className="text-sm text-muted-foreground">All retries exhausted → tries <span className="font-medium text-foreground">fallback model</span> (if set per event)</p>
-          </div>
-          <div className="flex items-start gap-3">
-            <div className="flex items-center justify-center size-6 rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">3</div>
-            <p className="text-sm text-muted-foreground">Still failing → marked <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">needs_retry</code> + Telegram alert</p>
+            <div className="flex items-center justify-center size-6 rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">2</div>
+            <p className="text-sm text-muted-foreground">All retries exhausted → marked <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">needs_retry</code> + Telegram alert.</p>
           </div>
         </div>
       </div>

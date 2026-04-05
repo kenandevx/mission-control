@@ -343,7 +343,6 @@ function toTicketRecord(row: any): TicketRecord {
     executionState: row.execution_state ?? "open",
     processVersionIds: row.process_version_ids ?? [],
     executionWindowMinutes: row.execution_window_minutes ?? 60,
-    fallbackModel: row.fallback_model ?? "",
     checklistDone: row.checklist_done ?? 0,
     checklistTotal: row.checklist_total ?? 0,
     attachmentsCount: row.attachments_count ?? 0,

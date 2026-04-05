@@ -78,7 +78,7 @@ export const STATUS_META: ReadonlyArray<{
   { key: "scheduled",      label: "Scheduled",      desc: "Waiting for its time slot — no cron job assigned yet.",                                    tooltip: "Scheduled for future execution" },
   { key: "queued",         label: "Queued",         desc: "Cron job assigned in the gateway — waiting to fire.",                                       tooltip: "Cron job assigned, waiting to fire" },
   { key: "running",        label: "Running",        desc: "Agent is actively executing this task right now.",                                          tooltip: "Currently executing", animated: true },
-  { key: "auto_retry",     label: "Auto-retrying",  desc: "Automatically retrying with a fallback model.",                                             tooltip: "Automatically retrying with fallback model", animated: true },
+  { key: "auto_retry",     label: "Auto-retrying",  desc: "Automatically retrying this task.",                                                          tooltip: "Automatically retrying", animated: true },
   { key: "stale_recovery", label: "Stale Recovery", desc: "Recovered from a stuck running state.",                                                     tooltip: "Recovered from a stuck running state" },
   // — Terminal —
   { key: "succeeded",      label: "Succeeded",      desc: "Task completed successfully. Output and artifacts available.",                               tooltip: "The run completed successfully" },

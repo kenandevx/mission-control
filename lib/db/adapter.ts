@@ -68,7 +68,6 @@ export type TicketRecord = {
   executionState: TicketExecutionState;
   processVersionIds: string[];
   executionWindowMinutes: number;
-  fallbackModel: string;
   checklistDone: number;
   checklistTotal: number;
   attachmentsCount: number;
@@ -139,7 +138,6 @@ export type UpdateTicketPatch = {
   executionState?: TicketExecutionState;
   processVersionIds?: string[];
   executionWindowMinutes?: number;
-  fallbackModel?: string;
   checklistDone?: number;
   checklistTotal?: number;
   attachmentsCount?: number;
