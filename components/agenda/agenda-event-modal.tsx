@@ -1200,12 +1200,15 @@ setAgendaTimeStepMinutes(safe);
           {(form.title.trim() || form.request.trim() || form.processVersionIds.length > 0) && (
             <div className="px-4 pb-4 pt-0">
               <details className="group rounded-xl border bg-card shadow-xs">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-foreground">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-foreground">
                   <span>Preview input sent to agent</span>
-                  <span className="text-[10px] text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
                 </summary>
                 <div className="px-4 pb-4">
-                  <div className="rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono max-h-[320px] overflow-y-auto border">
+                  <p className="text-[10px] text-muted-foreground mb-2 italic">
+                    This is a live preview based on the current template. The actual prompt sent to the agent may differ.
+                  </p>
+                  <div className="rounded-lg bg-muted/50 p-4 text-sm leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono max-h-[360px] overflow-y-auto">
                     {promptPreview}
                   </div>
                 </div>
