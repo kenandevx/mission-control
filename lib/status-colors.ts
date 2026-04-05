@@ -172,10 +172,36 @@ export const STATUS_GUIDE_ENTRIES = STATUS_META.map(m => {
 
 // ── Backward-compat aliases (still exported but DEPRECATED — use STATUS_HEX) ─
 
+/** Map legacy EventColor names → the correct STATUS_HEX value. */
+const _EVENT_COLOR_TO_HEX: Record<string, string> = {
+  cyan:    STATUS_HEX.scheduled,       // scheduled → cyan
+  violet:  STATUS_HEX.queued,          // queued → violet
+  orange:  STATUS_HEX.running,         // running → orange
+  pink:    STATUS_HEX.auto_retry,      // auto_retry → pink
+  fuchsia: STATUS_HEX.stale_recovery,  // stale_recovery → fuchsia
+  green:   STATUS_HEX.succeeded,       // succeeded → green
+  amber:   STATUS_HEX.needs_retry,     // needs_retry → amber
+  rose:    STATUS_HEX.failed,          // failed → rose
+  zinc:    STATUS_HEX.cancelled,       // cancelled → zinc
+  yellow:  STATUS_HEX.skipped,         // skipped → yellow
+  gray:    STATUS_HEX.draft,           // draft → gray
+  default: "#9CA3AF",
+  // Legacy aliases → same hex as their primary:
+  blue:    "#2563eb",
+  indigo:  "#4f46e5",
+  red:     STATUS_HEX.failed,
+  sky:     "#0284c7",
+  teal:    "#0f766e",
+  purple:  "#7c3aed",
+  lime:    "#4d7c0f",
+};
+
 /** @deprecated Use STATUS_HEX + statusHex() instead */
 export const DOT_COLORS: Record<string, string> = Object.fromEntries(
   STATUS_KEYS.map(k => [k, STATUS_HEX[k]])
 );
+// Also include EventColor keys so legacy resolveEventColorKey lookups work:
+Object.assign(DOT_COLORS, _EVENT_COLOR_TO_HEX);
 
 /** @deprecated Use STATUS_HEX instead */
 export type EventColor =

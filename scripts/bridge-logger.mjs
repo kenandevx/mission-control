@@ -1057,6 +1057,15 @@ async function handleCronRunLine(getSql, jobId, line) {
   if (alreadyTerminal) {
     // Log was missed (e.g. bridge-logger was down) — emit a catch-up log entry only.
     const occ2 = occurrences[0];
+    // Even for catch-up isolated runs, send Telegram if we missed the notification.
+    if (occ2.session_target === 'isolated' && run.status === 'ok') {
+      notifyMainSession('isolated', {
+        title: occ2.title, status: 'succeeded',
+        summary: run.summary || '[output unavailable]',
+        occurrenceId: occ2.occurrence_id, eventId: occ2.agenda_event_id,
+        sessionId: null,
+      }).catch((err) => console.error(`[bridge-logger] catch-up notifyMainSession failed: ${err?.message || err}`));
+    }
     const wid2 = (() => { try { return sql`SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1`.then(r => r[0]?.id); } catch { return null; } })();
     void wid2.then(async (w) => {
       if (!w) return;
@@ -1248,11 +1257,14 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
 
     // Notify main session (isolated runs: system event in main session; main runs: Telegram)
+    // Fire-and-forget but log failures so we can debug missing notifications.
     notifyMainSession(occ.session_target || 'isolated', {
       title: occ.title, status: 'succeeded', summary: agentOutput,
       occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
       sessionId: run.sessionId || null,
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error(`[bridge-logger] notifyMainSession failed for occurrence ${occ.occurrence_id}: ${err?.message || err}`);
+    });
     await emitAgendaLog(sql, {
       workspaceId: wid, agentDbId,
       agentId: occ.default_agent_id || 'main',
@@ -1494,7 +1506,10 @@ async function sendTelegramNotification(title, status, summary, occurrenceId, ev
         }
       }
     } catch { return; }
-    if (!chatId) return;
+    if (!chatId) {
+      console.warn('[bridge-logger] Telegram notification skipped — no telegram chatId found in sessions.json');
+      return;
+    }
 
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
