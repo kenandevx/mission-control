@@ -2,6 +2,36 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.0.0] - 2026-04-05
+
+### Fixed
+- **Agenda event card shows wrong status** (`needs_retry` even after a newer occurrence succeeded): `DISTINCT ON` query used status-priority as the primary sort key, so `needs_retry` (rank 2) always beat `succeeded` (rank 4) regardless of which occurrence was newer. Fixed by sorting `scheduled_for DESC` first and using status priority only as a tiebreaker within the same time slot.
+- **Isolated run output always empty**: `resolveAgendaOutput` was calling `looksLikePromptEcho(sessionOutput, null, summaryText)` where `summaryText` for isolated runs **is** the agent's actual output — comparing the output against itself always returned a false-positive match and wiped the result to an empty string. Fixed by using `summaryText` directly as the canonical output for isolated sessions, skipping the misleading echo detection.
+- **Isolated run with no output incorrectly marked succeeded**: when `run.summary` was empty, `outputSource` stayed as `cron_summary` instead of `no_output`, causing the run to count as a success with no content. Fixed by explicitly setting `outputSource = 'no_output'` when isolated summary is blank.
+- **SSE stream sends stale status**: the stream handler re-queried `ao.status` from the DB after receiving a `pg_notify`, but the DB update may not have committed yet, causing the sidebar to briefly show the previous status (e.g. `running` after `succeeded`). Fixed by using the `action` field from the notification payload as the authoritative status; DB query now only fetches title and agent.
+- **Live Activity shows `needs_retry` after succeeded**: same race — SSE sent a stale `needs_retry` for an occurrence that had just been marked `succeeded`. Resolved by the SSE action-based fix above.
+- **Recent activity API returned future scheduled occurrences instead of past runs**: `ORDER BY scheduled_for DESC` sorted future-dated recurring occurrences (e.g. April 19) to the top, burying today's runs. Fixed with `COALESCE(last_run_at, scheduled_for) ASC` using a `LATERAL` subquery for the most recent attempt timestamp.
+- **Recent activity API pulled from `agenda_run_attempts`** (only `running`/`succeeded`/`failed`) instead of `agenda_occurrences` (full canonical status set including `needs_retry`, `queued`, `auto_retry`, etc.). Sidebar now always shows canonical occurrence statuses.
+- **SSE stream used `action` from pg_notify as event name but DB status for display**: now uses occurrence status for both since SSE action is the canonical source of truth.
+
+### Changed
+- **Live Activity sidebar — full overhaul**:
+  - Status dot colors use exact hex values from `lib/status-colors.ts` for all agenda entries (no more generic Tailwind classes).
+  - `running` and `auto_retry` dots pulse with `animate-pulse`.
+  - Event labels for all canonical agenda statuses route through `statusLabel()` — single source of truth.
+  - Agent field shows human-readable name (`Main agent`, `Worker`, etc.) instead of raw ID strings.
+  - Title attribute on each row shows `title — status` for accessibility.
+  - "just now" threshold widened from 10 s to 30 s (avoids flickering on initial page load).
+  - Empty state uses italic muted text instead of a bold placeholder.
+  - Connecting indicator shows "Connecting…" instead of "…".
+  - Removed unused `LEVEL_CONFIG` icon imports and `Icon` references from render.
+  - `dotStyle` and `labelColor` helper functions centralize all color derivation.
+- **Agenda event sort order** (`/api/agenda/events`): both calendar-range and list queries now sort `scheduled_for DESC` before status priority, ensuring newest occurrence always wins.
+- **Bridge-logger isolated output**: simplified to use `run.summary` directly — no session file read, no false-positive echo detection for isolated sessions.
+- **`levelFromAction` in stream route**: added `queued`, `scheduled`, `cancelled`, `skipped` → `info` mappings.
+- **`agendaLevelFromStatus` in recent route**: added `stale_recovery`, `force_retry`, `queued`, `scheduled`, `cancelled`, `skipped`, `draft` mappings.
+- **README**: version bumped to 3.0.0, Next.js noted as v16, Live Activity Sidebar section added under Artifact Files.
+
 ## [2.8.3] - 2026-04-05
 
 ### Changed

@@ -2,7 +2,7 @@
 
 **The OpenClaw native dashboard** — manage scheduled agenda tasks, multi-step processes, Kanban boards, agent logs, file browsing, and system settings from a single UI.
 
-**Version 2.9.0** · Next.js 14 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
+**Version 3.0.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
 
 > **No Redis. No BullMQ.** Execution is handled natively by the OpenClaw cron engine (v2+).
 
@@ -302,6 +302,18 @@ UI behavior:
 - Image artifact preview cards use consistent inner padding for the filename and preview area.
 - The "Input sent to agent" view strips internal agenda marker lines plus internal execution/output rule sections so the detail sheet shows the user-facing request instead of framework scaffolding.
 - Telegram completion notifications list saved file paths, not just filenames.
+
+### Live Activity Sidebar
+
+The **Live Activity** section in the sidebar shows recent agenda and ticket activity in real time.
+
+- **Initial load**: fetches from `/api/notifications/recent` (last N occurrences ordered by most-recent activity time — `COALESCE(last_run_at, scheduled_for) ASC`).
+- **Live updates**: subscribes to `/api/notifications/stream` (SSE), which listens on the `agenda_change` and `ticket_activity` PostgreSQL channels. Each update uses the **notification action** as the authoritative status — avoiding a race condition where the DB re-query could return stale data.
+- **Deduplication**: entries are keyed by stable `agenda-<occurrenceId>` IDs. Newer updates for the same occurrence replace the previous entry in the list.
+- **Colors**: agenda entries use the exact hex values from `lib/status-colors.ts`. Ticket/fallback entries use level-derived colors (success/error/warning/info).
+- **Labels**: canonical agenda statuses (scheduled, queued, running, auto_retry, stale_recovery, succeeded, needs_retry, failed, cancelled, skipped, draft) resolve via `statusLabel()` from `lib/status-colors.ts`.
+- **Running dot**: `running` and `auto_retry` statuses pulse to indicate live execution.
+- **Count**: configurable via `sidebar_activity_count` in worker settings (default 8, max 30).
 
 ### Scheduler Details (`agenda-scheduler.mjs`)
 

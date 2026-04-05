@@ -5,12 +5,6 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { statusHex, statusLabel, statusMeta, statusText } from "@/lib/status-colors";
 import {
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Info,
-} from "lucide-react";
-import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
@@ -37,7 +31,7 @@ function relativeTime(dateStr: string): string {
   if (isNaN(then)) return "";
   const diff = Math.max(0, now - then);
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 10) return "just now";
+  if (seconds < 30) return "just now";
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -47,45 +41,80 @@ function relativeTime(dateStr: string): string {
   return `${days}d ago`;
 }
 
+/** Human-readable label for the event status/action. */
 function formatActivityEvent(entry: ActivityEntry): string {
   const raw = (entry.event || "").toLowerCase();
 
-  // Agenda entries: use canonical status labels from status-colors.ts
+  // Agenda: use canonical labels from status-colors.ts
   if (entry.type === "agenda" && statusMeta(raw)) return statusLabel(raw);
 
-  // Ticket / non-canonical: human-readable fallback
-  if (raw === "force_retry" || raw.includes("force retry")) return "Force retried";
-  if (raw === "created") return "Created";
-  if (raw === "updated") return "Updated";
+  // Ticket / non-canonical fallback
+  if (raw === "force_retry") return "Force retried";
+  if (raw === "created")     return "Created";
+  if (raw === "updated")     return "Updated";
+  if (raw === "deleted")     return "Deleted";
   if (raw === "activity" || raw === "change") return "Activity";
-  if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Running";
+  if (raw.includes("comment"))   return "Comment";
+  if (raw.includes("assigned"))  return "Assigned";
+  if (raw.includes("running"))   return "Running";
   if (raw.includes("succeeded") || raw.includes("completed")) return "Succeeded";
-  if (raw.includes("failed") || raw.includes("expired")) return "Failed";
+  if (raw.includes("failed")    || raw.includes("expired"))   return "Failed";
   if (raw.includes("cancelled")) return "Cancelled";
-  return entry.event || "Activity";
+  // Title-case the raw value as last resort
+  return entry.event
+    ? entry.event.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Activity";
 }
 
-function agendaVisuals(status: string) {
-  const hex = statusHex(status);
-  return {
-    dot: { backgroundColor: hex, boxShadow: `0 0 4px ${hex}60` },
-    text: { color: statusText(status) },
-  };
+/** Friendly agent name. */
+function agentLabel(agent: string): string {
+  if (!agent || agent === "main") return "Main agent";
+  if (agent === "worker")         return "Worker";
+  // Strip common prefixes (e.g. "agent:main:xxx" → "xxx")
+  const parts = agent.split(":");
+  const last = parts[parts.length - 1];
+  return last.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const LEVEL_CONFIG: Record<
-  string,
-  {
-    dot: string;
-    text: string;
-    Icon: typeof CheckCircle2;
+// ── Dot visuals ──────────────────────────────────────────────────────────────
+
+/** Returns inline style for the colored status dot. */
+function dotStyle(entry: ActivityEntry): React.CSSProperties {
+  // Agenda entries: use exact hex from status-colors
+  if (entry.type === "agenda" && statusMeta(entry.event)) {
+    const hex = statusHex(entry.event);
+    return { backgroundColor: hex, boxShadow: `0 0 5px ${hex}70` };
   }
-> = {
-  success: { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", Icon: CheckCircle2 },
-  error: { dot: "bg-red-500", text: "text-red-600 dark:text-red-400", Icon: XCircle },
-  warning: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400", Icon: AlertTriangle },
-  info: { dot: "bg-blue-500", text: "text-blue-600 dark:text-blue-400", Icon: Info },
-};
+  // Ticket / fallback: derive from level
+  const LEVEL_HEX: Record<string, string> = {
+    success: "#22c55e",
+    error:   "#ef4444",
+    warning: "#f59e0b",
+    info:    "#3b82f6",
+  };
+  const hex = LEVEL_HEX[entry.level] ?? "#9CA3AF";
+  return { backgroundColor: hex };
+}
+
+/** Returns the CSS color for the event label text. */
+function labelColor(entry: ActivityEntry): string {
+  if (entry.type === "agenda" && statusMeta(entry.event)) {
+    return statusText(entry.event);
+  }
+  const LEVEL_TEXT: Record<string, string> = {
+    success: "#22c55e",
+    error:   "#ef4444",
+    warning: "#f59e0b",
+    info:    "#3b82f6",
+  };
+  return LEVEL_TEXT[entry.level] ?? "#9CA3AF";
+}
+
+// ── Running dot animation class ───────────────────────────────────────────────
+
+function isAnimated(entry: ActivityEntry): boolean {
+  return entry.type === "agenda" && ["running", "auto_retry"].includes(entry.event);
+}
 
 const MAX_ENTRIES = 8;
 
@@ -133,7 +162,11 @@ function ensureConnection() {
   _globalEs.addEventListener("activity", (e) => {
     try {
       const entry: ActivityEntry = JSON.parse(e.data);
-      _globalEntries = [entry, ..._globalEntries.filter(x => x.id !== entry.id)].slice(0, _maxEntries);
+      // Prepend and deduplicate — most recent update for a given id wins
+      _globalEntries = [
+        entry,
+        ..._globalEntries.filter((x) => x.id !== entry.id),
+      ].slice(0, _maxEntries);
       _globalConnected = true;
       notifyListeners();
     } catch {
@@ -154,7 +187,6 @@ export function NavActivity(): React.ReactElement {
   const [connected, setConnected] = useState(_globalConnected);
 
   useEffect(() => {
-    // Fetch from DB on first mount, then SSE for live updates
     void loadInitialEntries();
     ensureConnection();
 
@@ -170,12 +202,15 @@ export function NavActivity(): React.ReactElement {
     };
   }, []);
 
-  // Refresh relative times every 30s
+  // Refresh relative timestamps every 30 s
   const [, setTick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
+
+  // Deduplicate before render — same id can arrive from both initial load + SSE
+  const dedupedEntries = [...new Map(entries.map((e) => [e.id, e])).values()];
 
   return (
     <SidebarGroup>
@@ -189,44 +224,66 @@ export function NavActivity(): React.ReactElement {
             )}
           />
           <span className="text-[9px] text-muted-foreground">
-            {connected ? "Live" : "…"}
+            {connected ? "Live" : "Connecting…"}
           </span>
         </span>
       </SidebarGroupLabel>
+
       <SidebarGroupContent>
         <div className="flex flex-col gap-0.5 px-2 pb-1">
-          {entries.length === 0 ? (
-            <p className="text-[10px] text-muted-foreground/50 py-2 text-center">
-              No activity yet
+          {dedupedEntries.length === 0 ? (
+            <p className="text-[10px] text-muted-foreground/40 py-3 text-center italic">
+              No recent activity
             </p>
           ) : (
-            // Deduplicate by id — same occurrence can appear twice from SSE + polling
-            [...new Map(entries.map((e) => [e.id, e])).values()].map((entry) => {
-              const config = LEVEL_CONFIG[entry.level] || LEVEL_CONFIG.info;
-              const agendaStyle = entry.type === "agenda" && statusMeta(entry.event)
-                ? agendaVisuals(entry.event)
-                : null;
+            dedupedEntries.map((entry) => {
               const href = entry.targetUrl || (entry.type === "agenda" ? "/agenda" : "/boards");
+              const dot = dotStyle(entry);
+              const color = labelColor(entry);
+              const animated = isAnimated(entry);
+
               return (
                 <Link
                   key={entry.id}
                   href={href}
-                  className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40"
-                  title={`Open ${entry.type} details`}
+                  className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40 group"
+                  title={`${entry.title} — ${formatActivityEvent(entry)}`}
                 >
-                  <span className={cn("mt-1 size-1.5 shrink-0 rounded-full", agendaStyle ? "" : config.dot)} style={agendaStyle?.dot} />
+                  {/* Status dot */}
+                  <span
+                    className={cn(
+                      "mt-[3px] size-1.5 shrink-0 rounded-full",
+                      animated && "animate-pulse"
+                    )}
+                    style={dot}
+                  />
+
+                  {/* Content */}
                   <div className="flex-1 min-w-0">
+                    {/* Top row: event label + timestamp */}
                     <div className="flex items-center justify-between gap-1">
-                      <span className={cn("text-[10px] font-medium truncate", agendaStyle ? "" : config.text)} style={agendaStyle?.text}>
+                      <span
+                        className="text-[10px] font-semibold truncate"
+                        style={{ color }}
+                      >
                         {formatActivityEvent(entry)}
                       </span>
                       <span className="text-[8px] text-muted-foreground/50 shrink-0 tabular-nums">
                         {relativeTime(entry.timestamp)}
                       </span>
                     </div>
-                    <p className="text-[9px] text-muted-foreground/80 truncate leading-tight">
-                      {entry.title}{entry.agent ? ` · ${entry.agent}` : ""}
-                    </p>
+
+                    {/* Bottom row: title + agent badge */}
+                    <div className="flex items-center gap-1 min-w-0">
+                      <p className="text-[9px] text-muted-foreground/70 truncate leading-tight flex-1">
+                        {entry.title}
+                      </p>
+                      {entry.agent && (
+                        <span className="text-[8px] text-muted-foreground/40 shrink-0 tabular-nums">
+                          {agentLabel(entry.agent)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </Link>
               );
