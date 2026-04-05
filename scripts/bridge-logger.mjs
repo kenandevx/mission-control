@@ -863,23 +863,6 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
     },
   };
 
-  // ── Prompt echo guard for isolated sessions ─────────────────────────────
-  // Isolated-session cron runs store the agent's LAST message as `summary`
-  // in the cron run JSONL. If the agent echoed the prompt back (or the first
-  // assistant turn *is* the prompt), the summary IS the rendered prompt.
-  // Sending it as output would leak system instructions into Telegram.
-  if (sessionTarget !== 'main' && renderedPrompt) {
-    if (looksLikePromptEcho(summaryText, renderedPrompt, summaryText)) {
-      result.outputMeta.promptEchoDetected = true;
-      result.output = '';
-      result.outputSource = 'prompt_echo_filtered';
-      // For isolated sessions this means: output is not yet available.
-      // Don't set no_output here — let the caller decide how to handle it.
-      // The prompt should NOT appear in Telegram notifications or DB output.
-      return result;
-    }
-  }
-
   if (sessionTarget === 'main') {
     // Pass fromLineOffset and occurrenceId. The occurrenceId enables marker-based
     // scanning: bridge-logger finds the [AGENDA_MARKER:occurrence_id=...] line in the
@@ -940,6 +923,40 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       };
       result.outputSource = 'no_output';
       return result;
+    }
+  }
+
+  if (sessionTarget !== 'main') {
+    let sessionOutput = null;
+
+    // For isolated runs, the cron summary often contains only a prompt echo or an
+    // empty value. Read the actual isolated session file before falling back.
+    if (sessionId) {
+      let retries = 0;
+      sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, null, null);
+      while (!sessionOutput && retries < 3) {
+        retries++;
+        const delayMs = [2000, 4000, 6000][retries - 1];
+        console.log(`[bridge-logger] resolveAgendaOutput: isolated session had no output on first scan — retry ${retries}/3 after ${delayMs}ms for occurrence ${occurrenceId}`);
+        await new Promise(r => setTimeout(r, delayMs));
+        sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, null, null);
+      }
+
+      if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
+        result.output = sessionOutput;
+        result.outputSource = 'isolated_session_assistant';
+        result.outputMeta.sessionOutputUsed = true;
+        return result;
+      }
+      if (sessionOutput) {
+        result.outputMeta.promptEchoDetected = true;
+      }
+    }
+
+    if (renderedPrompt && looksLikePromptEcho(summaryText, renderedPrompt, summaryText)) {
+      result.outputMeta.promptEchoDetected = true;
+      result.output = '';
+      result.outputSource = 'prompt_echo_filtered';
     }
   }
 
@@ -1568,7 +1585,7 @@ async function sendTelegramNotification(title, status, summary, occurrenceId, ev
         const artifactPayload = await scanRunArtifacts(occurrenceId, eventId);
         const files = artifactPayload?.files ?? [];
         if (files.length > 0) {
-          const listed = files.slice(0, 5).map((f) => `• ${f.name}`).join('\n');
+          const listed = files.slice(0, 5).map((f) => `• ${f.name}\n  ${f.path}`).join('\n');
           const more = files.length > 5 ? `\n• ...and ${files.length - 5} more` : '';
           artifactSection = `\n\n💾 Saved files\n${listed}${more}`;
         }

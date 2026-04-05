@@ -427,6 +427,15 @@ function parseAgentOutput(outputPayload: string | Record<string, unknown> | null
   return { cleaned, outputSource };
 }
 
+function sanitizePromptForDisplay(promptText: string | null): string | null {
+  if (!promptText) return null;
+  let text = String(promptText).replace(/^# AGENDA_MARKER:occurrence_id=[^\n]+\n\n?/m, "").trim();
+  text = text.replace(/\n\nExecution rules:\n[\s\S]*?(?=\n\n(?:Output rules:|Additional context:|$))/i, "").trim();
+  text = text.replace(/\n\nOutput rules:\n[\s\S]*$/i, "").trim();
+  text = text.replace(/\n\nIf you create any output files, save them to:[\s\S]*$/i, "").trim();
+  return text || null;
+}
+
 function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
   const parsed = parseAgentOutput(outputPayload);
   if (!parsed) return null;
@@ -1050,11 +1059,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       </CardFooter>
                     </Card>
                   )}
-                </div>
 
-                {/* Processes (full width below cards) */}
-                {event.processNames.length > 0 && (
-                  <div className="mt-3 dark:*:data-[slot=card]:bg-card">
+                  {event.processNames.length > 0 && (
                     <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Attached Processes</CardDescription>
@@ -1078,8 +1084,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </div>
                       </CardFooter>
                     </Card>
-                  </div>
-                )}
+                  )}
+                </div>
               </TabsContent>
 
               {/* ── Output ── */}
@@ -1100,7 +1106,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Input sent to agent</p>
                         <div className="rounded-lg border bg-muted/40 p-4">
                           <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-[400px] overflow-y-auto">
-                            {selectedOccurrence.rendered_prompt}
+                            {sanitizePromptForDisplay(selectedOccurrence.rendered_prompt) ?? selectedOccurrence.rendered_prompt}
                           </p>
                         </div>
                       </>
@@ -1146,6 +1152,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     if (!promptText && step.step_instruction) {
                       promptText = step.step_instruction;
                     }
+                    promptText = sanitizePromptForDisplay(promptText);
 
                     const stepLabel = step.process_name
                       ? `Step ${step.step_order + 1}: ${step.step_title || step.process_name}`

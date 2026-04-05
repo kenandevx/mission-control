@@ -19,9 +19,10 @@ function agendaLevelFromStatus(status: string): string {
     case "succeeded":
       return "success";
     case "failed":
-    case "needs_retry":
       return "error";
     case "running":
+    case "auto_retry":
+    case "needs_retry":
       return "warning";
     default:
       return "info";

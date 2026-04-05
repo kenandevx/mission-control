@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { statusHex, statusLabel, statusMeta, statusText } from "@/lib/status-colors";
 import {
   CheckCircle2,
   XCircle,
@@ -48,17 +49,28 @@ function relativeTime(dateStr: string): string {
 
 function formatActivityEvent(entry: ActivityEntry): string {
   const raw = (entry.event || "").toLowerCase();
+  if (entry.type === "agenda" && statusMeta(raw)) return statusLabel(raw);
   if (raw === "force_retry" || raw.includes("force_retry") || raw.includes("force retry")) return "Force Retried";
   if (raw === "auto_retry" || raw.includes("auto_retry")) return "Auto-retrying";
   if (raw === "needs_retry" || raw.includes("needs_retry")) return "Needs Retry";
   if (raw === "stale_recovery" || raw.includes("stale")) return "Stale Recovery";
-  if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Executing";
-  if (raw.includes("queued") || raw.includes("scheduled")) return "Queued";
-  if (raw === "succeeded" || raw.includes("succeeded") || raw.includes("completed")) return "Completed";
+  if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Running";
+  if (raw === "queued" || raw.includes("queued")) return "Queued";
+  if (raw === "scheduled" || raw.includes("scheduled")) return "Scheduled";
+  if (raw === "succeeded" || raw.includes("succeeded") || raw.includes("completed")) return "Succeeded";
   if (raw === "failed" || raw.includes("failed") || raw.includes("expired")) return "Failed";
   if (raw === "cancelled" || raw.includes("cancelled")) return "Cancelled";
   if (raw === "created" || raw.includes("created")) return "Created";
+  if (raw === "updated" || raw.includes("updated")) return "Updated";
   return entry.event || "Activity";
+}
+
+function agendaVisuals(status: string) {
+  const hex = statusHex(status);
+  return {
+    dot: { backgroundColor: hex, boxShadow: `0 0 4px ${hex}60` },
+    text: { color: statusText(status) },
+  };
 }
 
 const LEVEL_CONFIG: Record<
@@ -191,6 +203,9 @@ export function NavActivity(): React.ReactElement {
             // Deduplicate by id — same occurrence can appear twice from SSE + polling
             [...new Map(entries.map((e) => [e.id, e])).values()].map((entry) => {
               const config = LEVEL_CONFIG[entry.level] || LEVEL_CONFIG.info;
+              const agendaStyle = entry.type === "agenda" && statusMeta(entry.event)
+                ? agendaVisuals(entry.event)
+                : null;
               const href = entry.targetUrl || (entry.type === "agenda" ? "/agenda" : "/boards");
               return (
                 <Link
@@ -199,10 +214,10 @@ export function NavActivity(): React.ReactElement {
                   className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40"
                   title={`Open ${entry.type} details`}
                 >
-                  <span className={cn("mt-1 size-1.5 shrink-0 rounded-full", config.dot)} />
+                  <span className={cn("mt-1 size-1.5 shrink-0 rounded-full", agendaStyle ? "" : config.dot)} style={agendaStyle?.dot} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <span className={cn("text-[10px] font-medium truncate", config.text)}>
+                      <span className={cn("text-[10px] font-medium truncate", agendaStyle ? "" : config.text)} style={agendaStyle?.text}>
                         {formatActivityEvent(entry)}
                       </span>
                       <span className="text-[8px] text-muted-foreground/50 shrink-0 tabular-nums">

@@ -19,12 +19,12 @@ function levelFromAction(action: string): string {
     case "succeeded":
       return "success";
     case "failed":
-    case "needs_retry":
     case "stale_recovery":
       return "error";
     case "running":
     case "auto_retry":
     case "force_retry":
+    case "needs_retry":
       return "warning";
     default:
       return "info";

@@ -352,8 +352,6 @@ async function renderPromptForEvent(event, occurrenceId) {
   // solving the session_line_offset capture-time mismatch problem.
   // Prefixed with # so it reads as a comment/directive to the model rather than
   // user content. The system-prompt framing hides it from the model's main context.
-  const markerLine = `# AGENDA_MARKER:occurrence_id=${occurrenceId}`;
-
   const rendered = renderUnifiedTaskMessage({
     title: effectiveTitle,
     instructions: composedSteps,
@@ -365,7 +363,9 @@ async function renderPromptForEvent(event, occurrenceId) {
   return {
     title: effectiveTitle,
     agentId: effectiveAgentId,
-    message: `${markerLine}\n\n${rendered}`,
+    message: isMainSession
+      ? `# AGENDA_MARKER:occurrence_id=${occurrenceId}\n\n${rendered}`
+      : rendered,
   };
 }
 

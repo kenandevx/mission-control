@@ -300,6 +300,8 @@ When an agent writes files to the path embedded in the prompt (e.g. `<OPENCLAW_H
 UI behavior:
 - If a run only produced artifacts and the captured text output was filtered down to empty content (for example `prompt_echo_filtered` with no remaining body), the Output tab hides the empty output block instead of rendering a blank "Output source" panel.
 - Image artifact preview cards use consistent inner padding for the filename and preview area.
+- The "Input sent to agent" view strips internal agenda marker lines plus internal execution/output rule sections so the detail sheet shows the user-facing request instead of framework scaffolding.
+- Telegram completion notifications list saved file paths, not just filenames.
 
 ### Scheduler Details (`agenda-scheduler.mjs`)
 

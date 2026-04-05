@@ -8,7 +8,7 @@
 
 import { getSql } from "@/lib/local-db";
 import { renderUnifiedTaskMessage } from "@/scripts/prompt-renderer.mjs";
-import { getRunArtifactDir } from "@/scripts/runtime-artifacts.mjs";
+import { getOccurrenceArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 
 type Sql = ReturnType<typeof getSql>;
 
@@ -76,12 +76,7 @@ export async function renderPromptForOccurrence(
     }
   }
 
-  const artifactDir = getRunArtifactDir({
-    kind: "agenda",
-    entityId: event.id,
-    occurrenceId,
-    runId: "artifacts",
-  });
+  const artifactDir = getOccurrenceArtifactDir({ eventId: event.id, occurrenceId });
 
   // Main session events get a clean prompt — no internal framework rules.
   // The user WILL see this prompt in their Telegram chat if the session
