@@ -262,11 +262,26 @@ export async function DELETE(
     if (!wid) return fail("Workspace not found", 500);
 
     const [occurrence] = await sql`
-      select ao.id from agenda_occurrences ao
+      select ao.id, ao.cron_job_id from agenda_occurrences ao
       join agenda_events ae on ae.id = ao.agenda_event_id
       where ao.id = ${occurrenceId} and ae.workspace_id = ${wid} limit 1
     `;
     if (!occurrence) return fail("Occurrence not found.", 404);
+
+    // Remove the existing cron job so it doesn't fire after dismissal
+    if (occurrence.cron_job_id) {
+      try {
+        const env = buildCleanEnv();
+        await execFileAsync("openclaw", ["cron", "remove", occurrence.cron_job_id], {
+          timeout: 10000,
+          env,
+          maxBuffer: 1024 * 1024,
+        });
+      } catch {
+        // Non-fatal: the cron job may already be deleted or the gateway may be down
+        // The occurrence is still marked cancelled which prevents scheduler from picking it up
+      }
+    }
 
     await sql`
       update agenda_occurrences
