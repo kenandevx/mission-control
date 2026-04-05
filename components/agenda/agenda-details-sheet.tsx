@@ -429,10 +429,8 @@ function parseAgentOutput(outputPayload: string | Record<string, unknown> | null
 
 function sanitizePromptForDisplay(promptText: string | null): string | null {
   if (!promptText) return null;
-  let text = String(promptText).replace(/^# AGENDA_MARKER:occurrence_id=[^\n]+\n\n?/m, "").trim();
-  text = text.replace(/\n\nExecution rules:\n[\s\S]*?(?=\n\n(?:Output rules:|Additional context:|$))/i, "").trim();
-  text = text.replace(/\n\nOutput rules:\n[\s\S]*$/i, "").trim();
-  text = text.replace(/\n\nIf you create any output files, save them to:[\s\S]*$/i, "").trim();
+  // Only strip the internal AGENDA_MARKER line — keep execution/output rules visible.
+  const text = String(promptText).replace(/^# AGENDA_MARKER:occurrence_id=[^\n]+\n\n?/m, "").trim();
   return text || null;
 }
 
