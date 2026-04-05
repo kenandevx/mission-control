@@ -645,7 +645,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   return (
     <TooltipProvider delayDuration={200}>
       <Sheet open={open && !deleteDialogOpen} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
-        <SheetContent className="w-full sm:max-w-[640px] overflow-y-auto p-0 flex flex-col">
+        <SheetContent className="w-full sm:max-w-[640px] overflow-y-auto p-0 flex flex-col" showCloseButton={false}>
           {/* ── Header ── */}
           <div className="p-6 pb-4">
             <SheetHeader className="p-0 pb-0">
@@ -697,15 +697,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Close button — same style as the 3-dots menu trigger */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                    onClick={() => onClose()}
-                  >
-                    <IconX className="size-4" />
-                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button size="sm" variant="outline" className="h-8 w-8 p-0 cursor-pointer">
@@ -762,6 +753,15 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  {/* Close button — same style as the 3-dots menu trigger, placed to its right */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                    onClick={() => onClose()}
+                  >
+                    <IconX className="size-4" />
+                  </Button>
                 </div>
               </div>
             </SheetHeader>
@@ -1083,10 +1083,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                 ) : attemptSteps.length === 0 ? (
                   <div className="flex flex-col gap-4">
                     {selectedOccurrence?.rendered_prompt && (
-                      <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Input sent to agent</p>
-                        <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-background/80 border rounded-md p-3 max-h-[400px] overflow-y-auto">{selectedOccurrence.rendered_prompt}</p>
-                      </div>
+                      <>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Input sent to agent</p>
+                        <div className="rounded-lg border bg-muted/40 p-4">
+                          <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-[400px] overflow-y-auto">
+                            {selectedOccurrence.rendered_prompt}
+                          </p>
+                        </div>
+                      </>
                     )}
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <IconFileText className="size-10 text-muted-foreground/50 mb-3" />
@@ -1199,14 +1203,18 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             )}
                           </div>
 
-                          {/* Step Request — always visible, styled like the input card */}
+                          {/* Step Request — same label + content pattern as Output */}
                           {promptText && (
-                            <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Step request</p>
-                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-background/80 border rounded-md p-3 max-h-[400px] overflow-y-auto">
-                                {promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}
+                            <>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                Step request
                               </p>
-                            </div>
+                              <div className="rounded-lg border bg-muted/40 p-4">
+                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-[400px] overflow-y-auto">
+                                  {promptText.length > 1000 ? promptText.slice(0, 1000) + "\u2026" : promptText}
+                                </p>
+                              </div>
+                            </>
                           )}
 
                           {/* Output */}

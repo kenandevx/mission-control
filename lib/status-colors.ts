@@ -10,7 +10,8 @@
 
 export type EventColor =
   | "blue" | "green" | "orange" | "pink" | "purple" | "teal"
-  | "amber" | "indigo" | "rose" | "cyan" | "lime" | "gray" | "default";
+  | "amber" | "indigo" | "rose" | "cyan" | "lime" | "gray" | "yellow"
+  | "zinc" | "sky" | "violet" | "default";
 
 export const EVENT_COLORS: Record<EventColor, { bg: string; text: string; border: string }> = {
   blue:    { bg: "#e8f1ff", text: "#3b82f6", border: "#bfdbfe" },
@@ -25,6 +26,10 @@ export const EVENT_COLORS: Record<EventColor, { bg: string; text: string; border
   cyan:    { bg: "#ecfeff", text: "#0891b2", border: "#a5f3fc" },
   lime:    { bg: "#f7fee7", text: "#65a30d", border: "#d9f99d" },
   gray:    { bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db" },
+  yellow:  { bg: "#fefce8", text: "#ca8a04", border: "#fde047" },
+  zinc:    { bg: "#f4f4f5", text: "#71717a", border: "#d4d4d8" },
+  sky:     { bg: "#f0f9ff", text: "#0284c7", border: "#bae6fd" },
+  violet:  { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe" },
   default: { bg: "hsl(var(--secondary))", text: "hsl(var(--secondary-foreground))", border: "hsl(var(--border))" },
 };
 
@@ -41,20 +46,24 @@ export const DOT_COLORS: Record<EventColor, string> = {
   cyan:    "#0891b2",
   lime:    "#65a30d",
   gray:    "#9ca3af",
+  yellow:  "#ca8a04",
+  zinc:    "#71717a",
+  sky:     "#0284c7",
+  violet:  "#7c3aed",
   default: "hsl(var(--muted-foreground))",
 };
 
 // ── Status → color key mapping ──────────────────────────────────────────────
 
 export const STATUS_COLOR_MAP: Record<string, EventColor> = {
-  scheduled:    "gray",
-  queued:       "gray",
+  scheduled:    "cyan",
+  queued:       "violet",
   running:      "blue",
   succeeded:    "green",
   failed:       "rose",
   needs_retry:  "amber",
   cancelled:    "gray",
-  skipped:      "gray",
+  skipped:      "yellow",
 };
 
 export function resolveEventColorKey(event: { status?: string; latestResult?: string | null; color?: EventColor }): EventColor {
@@ -76,12 +85,15 @@ export const STATUS_BADGE_MAP: Record<string, { label: string; className: string
   succeeded:    { label: "✓ Succeeded",    className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", tooltip: "The run completed successfully" },
   failed:       { label: "✗ Failed",       className: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400", tooltip: "The run failed — check output for errors" },
   running:      { label: "● Running",      className: "border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400", tooltip: "Currently executing" },
-  pending:      { label: "Pending",        className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Waiting to be picked up" },
-  queued:       { label: "Queued",         className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled in cron engine, waiting to run" },
-  scheduled:    { label: "Scheduled",      className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "Scheduled for future execution" },
+  pending:      { label: "Pending",        className: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400", tooltip: "Waiting to be picked up" },
+  queued:       { label: "Queued",         className: "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400", tooltip: "Cron job assigned, waiting to fire" },
+  scheduled:    { label: "Scheduled",      className: "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400", tooltip: "Scheduled for future execution" },
   needs_retry:  { label: "⚠ Needs Retry",  className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "All retries exhausted — needs manual retry" },
-  cancelled:    { label: "Cancelled",       className: "border-muted-foreground/30 bg-muted/40 text-muted-foreground", tooltip: "This occurrence was cancelled" },
-  skipped:      { label: "⏭ Skipped",       className: "border-slate-400/40 bg-slate-400/10 text-slate-500 dark:text-slate-400", tooltip: "Skipped due to unmet dependency" },
+  auto_retry:   { label: "↺ Auto-retry",   className: "border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-400", tooltip: "Automatically retrying with fallback model" },
+  stale_recovery: { label: "⟳ Stale",     className: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400", tooltip: "Recovered from a stuck running state" },
+  cancelled:    { label: "Cancelled",      className: "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", tooltip: "Manually dismissed" },
+  skipped:      { label: "⏭ Skipped",      className: "border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400", tooltip: "Skipped due to unmet dependency" },
+  draft:        { label: "Draft",          className: "border-slate-400/40 bg-slate-400/10 text-slate-500 dark:text-slate-400", tooltip: "Inactive event" },
 };
 
 export const STATUS_BADGE_FALLBACK = { label: "—", className: "border-muted-foreground/30 text-muted-foreground", tooltip: "" };
@@ -100,17 +112,17 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
     key: "scheduled",
     label: "Scheduled",
     desc: "Created and waiting for its time to run. No cron job assigned yet.",
-    colorKey: "gray" as EventColor,
-    bg: "bg-slate-500/8 dark:bg-slate-500/10",
-    ring: "ring-slate-500/15",
+    colorKey: "cyan" as EventColor,
+    bg: "bg-cyan-500/8 dark:bg-cyan-500/10",
+    ring: "ring-cyan-500/15",
   },
   {
     key: "queued",
     label: "Queued",
     desc: "Cron job assigned in the gateway — waiting for its time slot to fire.",
-    colorKey: "cyan" as EventColor,
-    bg: "bg-cyan-500/8 dark:bg-cyan-500/10",
-    ring: "ring-cyan-500/20",
+    colorKey: "violet" as EventColor,
+    bg: "bg-violet-500/8 dark:bg-violet-500/10",
+    ring: "ring-violet-500/20",
   },
   {
     key: "running",
@@ -167,21 +179,21 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
   },
   // ── Disabled / inactive ──
   {
-    key: "skipped",
-    label: "Skipped",
-    desc: "Skipped because a dependency event failed or timed out.",
-    colorKey: "lime" as EventColor,
-    bg: "bg-lime-500/8 dark:bg-lime-500/10",
-    ring: "ring-lime-500/15",
-    muted: true,
-  },
-  {
     key: "cancelled",
     label: "Cancelled",
     desc: "Manually dismissed — will not run or retry.",
-    colorKey: "gray" as EventColor,
-    bg: "bg-gray-500/8 dark:bg-gray-500/10",
-    ring: "ring-gray-500/15",
+    colorKey: "zinc" as EventColor,
+    bg: "bg-zinc-500/8 dark:bg-zinc-500/10",
+    ring: "ring-zinc-500/15",
+    muted: true,
+  },
+  {
+    key: "skipped",
+    label: "Skipped",
+    desc: "Skipped because a dependency event failed or timed out.",
+    colorKey: "yellow" as EventColor,
+    bg: "bg-yellow-500/8 dark:bg-yellow-500/10",
+    ring: "ring-yellow-500/15",
     muted: true,
   },
   {
@@ -189,8 +201,8 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
     label: "Draft",
     desc: "Inactive event — won't schedule or run until set to Active.",
     colorKey: "gray" as EventColor,
-    bg: "bg-muted/60",
-    ring: "ring-border",
+    bg: "bg-slate-400/8 dark:bg-slate-400/10",
+    ring: "ring-slate-400/15",
     muted: true,
   },
 ] as const;
