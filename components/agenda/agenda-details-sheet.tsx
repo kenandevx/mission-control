@@ -882,16 +882,16 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   {/* Created At */}
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
-                      <CardDescription>Created At</CardDescription>
-                      <CardTitle className="text-sm font-semibold tabular-nums whitespace-nowrap">
+                      <div className="flex items-start justify-between gap-2">
+                        <CardDescription className="m-0">Created At</CardDescription>
+                        <Badge variant="outline" className="shrink-0 text-[10px]">
+                          <IconCalendarClock className="size-3" />
+                          Created
+                        </Badge>
+                      </div>
+                      <CardTitle className="text-sm font-semibold tabular-nums">
                         {event.createdAt ? formatTime(event.createdAt, event.timezone) : "—"}
                       </CardTitle>
-                      <CardAction>
-                        <Badge variant="outline">
-                          <IconCalendarClock className="size-3" />
-                          Event created
-                        </Badge>
-                      </CardAction>
                     </CardHeader>
                     <CardFooter className={overviewCardFooterClassName} />
                   </Card>
