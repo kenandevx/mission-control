@@ -463,13 +463,18 @@ export function AgendaClientWrapper() {
   };
 
   const handleDeleteEvent = async (eventId: string) => {
-    const res = await fetch(`/api/agenda/events/${eventId}`, { method: "DELETE" });
-    const json = await res.json();
-    if (json.ok) {
-      toast.success("Event deleted");
-      void document.dispatchEvent(new CustomEvent("agenda-refresh"));
-    } else {
-      toast.error(json.error ?? "Failed to delete event");
+    try {
+      const res = await fetch(`/api/agenda/events/${eventId}`, { method: "DELETE" });
+      const json = await res.json();
+      if (json.ok) {
+        toast.success("Event deleted");
+        // Close any open detail sheet for the deleted event
+        document.dispatchEvent(new CustomEvent("agenda-refresh"));
+      } else {
+        toast.error(json.error ?? "Failed to delete event");
+      }
+    } catch {
+      toast.error("Failed to delete event");
     }
   };
 

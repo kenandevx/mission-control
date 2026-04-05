@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { EventInput } from "@fullcalendar/core";
 
@@ -145,11 +145,20 @@ export function useAgenda() {
   const [events, setEvents] = useState<AgendaEvent[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<EventInput[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefetching, setIsRefetching] = useState(false);
   const [error, setError] = useState("");
+  const hasLoadedOnce = useRef(false);
 
   const loadEvents = useCallback(async (start?: string, end?: string) => {
-    setLoading(true);
-    setError("");
+    // Only block the initial load with the loading spinner.
+    // Subsequent refetches update data in-place — no skeleton.
+    if (!hasLoadedOnce.current) {
+      setLoading(true);
+      setError("");
+    } else {
+      setIsRefetching(true);
+      setError("");
+    }
     try {
       let url = "/api/agenda/events";
       if (start && end) url += `?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
@@ -158,6 +167,7 @@ export function useAgenda() {
         const evts: AgendaEvent[] = json.events ?? [];
         setEvents(evts);
         setCalendarEvents(toCalendarEvents(evts));
+        hasLoadedOnce.current = true;
       } else {
         setError(json.error ?? "Failed to load events");
       }
@@ -165,6 +175,7 @@ export function useAgenda() {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setLoading(false);
+      setIsRefetching(false);
     }
   }, []);
 
@@ -244,14 +255,21 @@ export function useAgenda() {
   };
 
   const deleteEvent = async (id: string) => {
-    const res = await fetch(`/api/agenda/events/${id}`, { method: "DELETE" });
-    const json = await res.json();
-    if (json.ok) {
-      setEvents((prev) => prev.filter((e) => e.id !== id));
-      setCalendarEvents((prev) => prev.filter((e) => (e as EventInput & { id: string }).id !== id));
-      toast.success("Event deleted");
-    } else {
-      toast.error(json.error ?? "Failed to delete event");
+    try {
+      const res = await fetch(`/api/agenda/events/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (json.ok) {
+        // Optimistic update — remove from local state so no flash
+        setEvents((prev) => prev.filter((e) => e.id !== id));
+        setCalendarEvents((prev) => prev.filter((e) => (e as EventInput & { id: string }).id !== id));
+        toast.success("Event deleted");
+        // Full refetch to sync with server (won't show skeleton)
+        void loadEvents();
+      } else {
+        toast.error(json.error ?? "Failed to delete event");
+      }
+    } catch {
+      toast.error("Failed to delete event");
     }
   };
 
