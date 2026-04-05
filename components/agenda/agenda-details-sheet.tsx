@@ -887,22 +887,24 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     <CardFooter className={overviewCardFooterClassName} />
                   </Card>
 
-                  {/* Model */}
-                  <Card data-slot="card" className={overviewCardClassName}>
-                    <CardHeader>
-                      <CardDescription>Model</CardDescription>
-                      <CardTitle className="text-sm font-semibold truncate">
-                        {event.modelOverride || "Agent default"}
-                      </CardTitle>
-                      <CardAction>
-                        <Badge variant="outline">
-                          <IconBrain className="size-3" />
-                          {event.modelOverride ? "Override" : "Default"}
-                        </Badge>
-                      </CardAction>
-                    </CardHeader>
-                    <CardFooter className={overviewCardFooterClassName} />
-                  </Card>
+                  {/* Model — only relevant for isolated sessions (main session can't pin models) */}
+                  {event.sessionTarget !== "main" && (
+                    <Card data-slot="card" className={overviewCardClassName}>
+                      <CardHeader>
+                        <CardDescription>Model</CardDescription>
+                        <CardTitle className="text-sm font-semibold truncate">
+                          {event.modelOverride || "Agent default"}
+                        </CardTitle>
+                        <CardAction>
+                          <Badge variant="outline">
+                            <IconBrain className="size-3" />
+                            {event.modelOverride ? "Override" : "Default"}
+                          </Badge>
+                        </CardAction>
+                      </CardHeader>
+                      <CardFooter className={overviewCardFooterClassName} />
+                    </Card>
+                  )}
 
                   {/* Status — merged: shows occurrence + attempt status, attempt no, time, and retry action */}
                   {displayedOccurrence && (
@@ -1074,7 +1076,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     {selectedOccurrence?.rendered_prompt && (
                       <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Input sent to agent</p>
-                        <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 rounded-md p-3 max-h-[400px] overflow-y-auto">{selectedOccurrence.rendered_prompt}</p>
+                        <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-background/80 border rounded-md p-3 max-h-[400px] overflow-y-auto">{selectedOccurrence.rendered_prompt}</p>
                       </div>
                     )}
                     <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -1192,7 +1194,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           {promptText && (
                             <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
                               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Step request</p>
-                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 rounded-md p-3 max-h-[400px] overflow-y-auto">
+                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-background/80 border rounded-md p-3 max-h-[400px] overflow-y-auto">
                                 {promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}
                               </p>
                             </div>

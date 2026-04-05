@@ -1198,11 +1198,11 @@ setAgendaTimeStepMinutes(safe);
           )}
 
           {(form.title.trim() || form.request.trim() || form.processVersionIds.length > 0) && (
-            <div className="px-4 pb-4 pt-0">
+            <div className="px-4 pb-4 pt-4">
               <details className="group rounded-xl border bg-card shadow-xs">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-foreground">
                   <span>Preview input sent to agent</span>
-                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">▾</span>
                 </summary>
                 <div className="px-4 pb-4">
                   <p className="text-[10px] text-muted-foreground mb-2 italic">
