@@ -5,33 +5,33 @@
  * Every component imports from here — never hardcode status colors elsewhere.
  *
  * Design hex values (authoritative):
- *   Scheduled:    #A8DADC (soft powder-blue)
- *   Queued:       #CDB4DB (soft lavender)
- *   Running:      #F4A261 (warm sand-orange)
- *   Auto-retry:   #FFAFCC (soft pink)
- *   Stale Recov:  #FFB4A2 (soft peach)
- *   Succeeded:    #2E7D32 (forest green)
- *   Needs Retry:  #FFD166 (warm yellow)
- *   Failed:       #E63946 (imperial red)
- *   Cancelled:    #D3D3D3 (light silver)
- *   Skipped:      #EAD7A1 (soft gold)
- *   Draft:        #C9D6DF (steel blue-grey)
+ *   Scheduled:    #7BB8CC (teal-blue)
+ *   Queued:       #9B82AD (deep lavender)
+ *   Running:      #D68A4A (burnt-orange)
+ *   Auto-retry:   #E07BA5 (deep rose)
+ *   Stale Recov:  #D98E7A (terracotta)
+ *   Succeeded:    #1B5E20 (dark forest green)
+ *   Needs Retry:  #E6B94D (golden amber)
+ *   Failed:       #C62828 (deep crimson)
+ *   Cancelled:    #9E9E9E (medium grey)
+ *   Skipped:      #C9B47C (muted gold)
+ *   Draft:        #8B9DAF (slate-grey)
  */
 
 // ── Canonical hex palette (authoritative, used directly in style props) ─────
 
 export const STATUS_HEX: Record<string, string> = {
-  scheduled:      "#A8DADC",
-  queued:         "#CDB4DB",
-  running:        "#F4A261",
-  auto_retry:     "#FFAFCC",
-  stale_recovery: "#FFB4A2",
-  succeeded:      "#2E7D32",
-  needs_retry:    "#FFD166",
-  failed:         "#E63946",
-  cancelled:      "#D3D3D3",
-  skipped:        "#EAD7A1",
-  draft:          "#C9D6DF",
+  scheduled:      "#7BB8CC",
+  queued:         "#9B82AD",
+  running:        "#D68A4A",
+  auto_retry:     "#E07BA5",
+  stale_recovery: "#D98E7A",
+  succeeded:      "#1B5E20",
+  needs_retry:    "#E6B94D",
+  failed:         "#C62828",
+  cancelled:      "#9E9E9E",
+  skipped:        "#C9B47C",
+  draft:          "#8B9DAF",
 };
 
 /** Return the hex color for a status key. Falls back to muted-grey. */
@@ -116,20 +116,18 @@ export const STATUS_KEYS = STATUS_META.map(m => m.key);
 // ── Tailwind badge classes (derived from STATUS_HEX) ─────────────────────────
 
 function _nearestTailwindStatus(status: string): { border: string; bg: string; text: string; darkText: string } {
-  // Map our exact hex → the closest Tailwind palette class for convenience.
-  // Consumers that need exact hex should use statusHex()/statusBg()/statusText().
   switch (status) {
-    case 'scheduled':      return { border: 'border-[#A8DADC]/40', bg: 'bg-[#A8DADC]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'queued':         return { border: 'border-[#CDB4DB]/40', bg: 'bg-[#CDB4DB]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'running':        return { border: 'border-[#F4A261]/40', bg: 'bg-[#F4A261]/10', text: 'text-[#B4570B]', darkText: 'text-[#B4570B]' };
-    case 'auto_retry':     return { border: 'border-[#FFAFCC]/40', bg: 'bg-[#FFAFCC]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'stale_recovery': return { border: 'border-[#FFB4A2]/40', bg: 'bg-[#FFB4A2]/10', text: 'text-[#8B3A2F]', darkText: 'text-[#8B3A2F]' };
-    case 'succeeded':      return { border: 'border-[#2E7D32]/40', bg: 'bg-[#2E7D32]/10', text: 'text-[#2E7D32]', darkText: 'text-[#2E7D32]' };
-    case 'needs_retry':    return { border: 'border-[#FFD166]/40', bg: 'bg-[#FFD166]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'failed':         return { border: 'border-[#E63946]/40', bg: 'bg-[#E63946]/10', text: 'text-[#E63946]', darkText: 'text-[#E63946]' };
-    case 'cancelled':      return { border: 'border-[#D3D3D3]/40', bg: 'bg-[#D3D3D3]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'skipped':        return { border: 'border-[#EAD7A1]/40', bg: 'bg-[#EAD7A1]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
-    case 'draft':          return { border: 'border-[#C9D6DF]/40', bg: 'bg-[#C9D6DF]/10', text: 'text-gray-800', darkText: 'text-gray-800' };
+    case 'scheduled':      return { border: 'border-[#7BB8CC]/40', bg: 'bg-[#7BB8CC]/10', text: 'text-[#7BB8CC]', darkText: 'text-[#7BB8CC]' };
+    case 'queued':         return { border: 'border-[#9B82AD]/40', bg: 'bg-[#9B82AD]/10', text: 'text-[#9B82AD]', darkText: 'text-[#9B82AD]' };
+    case 'running':        return { border: 'border-[#D68A4A]/40', bg: 'bg-[#D68A4A]/10', text: 'text-[#D68A4A]', darkText: 'text-[#D68A4A]' };
+    case 'auto_retry':     return { border: 'border-[#E07BA5]/40', bg: 'bg-[#E07BA5]/10', text: 'text-[#E07BA5]', darkText: 'text-[#E07BA5]' };
+    case 'stale_recovery': return { border: 'border-[#D98E7A]/40', bg: 'bg-[#D98E7A]/10', text: 'text-[#D98E7A]', darkText: 'text-[#D98E7A]' };
+    case 'succeeded':      return { border: 'border-[#1B5E20]/40', bg: 'bg-[#1B5E20]/10', text: 'text-[#1B5E20]', darkText: 'text-[#1B5E20]' };
+    case 'needs_retry':    return { border: 'border-[#E6B94D]/40', bg: 'bg-[#E6B94D]/10', text: 'text-[#E6B94D]', darkText: 'text-[#E6B94D]' };
+    case 'failed':         return { border: 'border-[#C62828]/40', bg: 'bg-[#C62828]/10', text: 'text-[#C62828]', darkText: 'text-[#C62828]' };
+    case 'cancelled':      return { border: 'border-[#9E9E9E]/40', bg: 'bg-[#9E9E9E]/10', text: 'text-[#9E9E9E]', darkText: 'text-[#9E9E9E]' };
+    case 'skipped':        return { border: 'border-[#C9B47C]/40', bg: 'bg-[#C9B47C]/10', text: 'text-[#C9B47C]', darkText: 'text-[#C9B47C]' };
+    case 'draft':          return { border: 'border-[#8B9DAF]/40', bg: 'bg-[#8B9DAF]/10', text: 'text-[#8B9DAF]', darkText: 'text-[#8B9DAF]' };
     default:               return { border: 'border-muted-foreground/30', bg: 'bg-muted/10', text: 'text-muted-foreground', darkText: 'text-muted-foreground' };
   }
 }
@@ -188,22 +186,22 @@ export type EventColor =
 /** @deprecated Use STATUS_HEX */
 export const EVENT_COLORS: Record<EventColor, { bg: string; text: string; border: string }> = {
   blue:    { bg: "#e0edff", text: "#2563eb", border: "#bfdbfe" },
-  green:   { bg: "#def7e4", text: "#2E7D32", border: "#bbf7d0" },
-  orange:  { bg: "#fff3e0", text: "#F4A261", border: "#fed7aa" },
-  pink:    { bg: "#fce7f3", text: "#FFAFCC", border: "#fbcfe8" },
+  green:   { bg: "#def7e4", text: "#1B5E20", border: "#bbf7d0" },
+  orange:  { bg: "#fff3e0", text: "#D68A4A", border: "#fed7aa" },
+  pink:    { bg: "#fce7f3", text: "#E07BA5", border: "#fbcfe8" },
   purple:  { bg: "#f3e8ff", text: "#7c3aed", border: "#ddd6fe" },
   teal:    { bg: "#e0f7f4", text: "#0f766e", border: "#99f6e4" },
-  amber:   { bg: "#fef3c7", text: "#FFD166", border: "#fde68a" },
+  amber:   { bg: "#fef3c7", text: "#E6B94D", border: "#fde68a" },
   indigo:  { bg: "#e0e7ff", text: "#4f46e5", border: "#c7d2fe" },
-  rose:    { bg: "#ffe4e6", text: "#E63946", border: "#fecdd3" },
-  cyan:    { bg: "#e0f9fe", text: "#A8DADC", border: "#a5f3fc" },
+  rose:    { bg: "#ffe4e6", text: "#C62828", border: "#fecdd3" },
+  cyan:    { bg: "#e0f9fe", text: "#7BB8CC", border: "#a5f3fc" },
   lime:    { bg: "#f0fdf4", text: "#4d7c0f", border: "#d9f99d" },
   gray:    { bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db" },
-  yellow:  { bg: "#fefce8", text: "#EAD7A1", border: "#fde047" },
-  zinc:    { bg: "#f4f4f5", text: "#D3D3D3", border: "#d4d4d8" },
+  yellow:  { bg: "#fefce8", text: "#C9B47C", border: "#fde047" },
+  zinc:    { bg: "#f4f4f5", text: "#9E9E9E", border: "#d4d4d8" },
   sky:     { bg: "#f0f9ff", text: "#0284c7", border: "#bae6fd" },
-  violet:  { bg: "#f5f3ff", text: "#CDB4DB", border: "#ddd6fe" },
-  fuchsia: { bg: "#fdf4ff", text: "#FFAFCC", border: "#f5d0fe" },
+  violet:  { bg: "#f5f3ff", text: "#9B82AD", border: "#ddd6fe" },
+  fuchsia: { bg: "#fdf4ff", text: "#E07BA5", border: "#f5d0fe" },
   default: { bg: "hsl(var(--secondary))", text: "hsl(var(--secondary-foreground))", border: "hsl(var(--border))" },
 };
 

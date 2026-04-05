@@ -270,17 +270,17 @@ Use `statusHex(status)`, `statusBg(status)`, `statusText(status)` helpers, or re
 
 | Status | Hex | Preview | Meaning |
 |---|---|---|---|
-| `scheduled` | `#A8DADC` | <span style="color:#A8DADC">███</span> Soft powder-blue | Created, waiting for scheduler to assign cron job |
-| `queued` | `#CDB4DB` | <span style="color:#CDB4DB">███</span> Soft lavender | Cron job assigned in gateway, waiting to fire |
-| `running` | `#F4A261` | <span style="color:#F4A261">███</span> Warm sand-orange | Agent **actively executing** right now |
-| `auto_retry` | `#FFAFCC` | <span style="color:#FFAFCC">███</span> Soft pink | Automatically retrying with fallback model |
-| `stale_recovery` | `#FFB4A2` | <span style="color:#FFB4A2">███</span> Soft peach | Recovered from stuck/stale running state |
-| `succeeded` | `#2E7D32` | <span style="color:#2E7D32">███</span> Forest green | Completed successfully |
-| `needs_retry` | `#FFD166` | <span style="color:#FFD166">███</span> Warm yellow | Run failed, manual retry required |
-| `failed` | `#E63946` | <span style="color:#E63946">███</span> Imperial red | Terminal failure — all retries exhausted |
-| `cancelled` | `#D3D3D3` | <span style="color:#D3D3D3">███</span> Light silver | Manually dismissed — will not run |
-| `skipped` | `#EAD7A1` | <span style="color:#EAD7A1">███</span> Soft gold | Skipped due to unmet dependency |
-| `draft` | `#C9D6DF` | <span style="color:#C9D6DF">███</span> Steel blue-grey | Inactive — won't schedule until set to Active |
+| `scheduled` | `#7BB8CC` | <span style="color:#7BB8CC">███</span> Muted teal-blue | Created, waiting for scheduler to assign cron job |
+| `queued` | `#9B82AD` | <span style="color:#9B82AD">███</span> Deep lavender | Cron job assigned in gateway, waiting to fire |
+| `running` | `#D68A4A` | <span style="color:#D68A4A">███</span> Burnt-orange | Agent **actively executing** right now |
+| `auto_retry` | `#E07BA5` | <span style="color:#E07BA5">███</span> Deep rose | Automatically retrying with fallback model |
+| `stale_recovery` | `#D98E7A` | <span style="color:#D98E7A">███</span> Terracotta | Recovered from stuck/stale running state |
+| `succeeded` | `#1B5E20` | <span style="color:#1B5E20">███</span> Dark forest green | Completed successfully |
+| `needs_retry` | `#E6B94D` | <span style="color:#E6B94D">███</span> Golden amber | Run failed, manual retry required |
+| `failed` | `#C62828` | <span style="color:#C62828">███</span> Deep crimson | Terminal failure — all retries exhausted |
+| `cancelled` | `#9E9E9E` | <span style="color:#9E9E9E">███</span> Medium grey | Manually dismissed — will not run |
+| `skipped` | `#C9B47C` | <span style="color:#C9B47C">███</span> Muted gold | Skipped due to unmet dependency |
+| `draft` | `#8B9DAF` | <span style="color:#8B9DAF">███</span> Slate-grey | Inactive — won't schedule until set to Active |
 
 ### Retry Flow
 

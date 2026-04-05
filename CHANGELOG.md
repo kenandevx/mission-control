@@ -2,6 +2,11 @@
 
 All notable changes to Mission Control are documented here.
 
+## [2.8.3] - 2026-04-05
+
+### Changed
+- **Status colors darkened**: Tweaked all status hex values to be more vibrant and less pastel, still maintaining the same color identity. New values are darker for better contrast on dark backgrounds.
+
 ## [2.8.2] - 2026-04-05
 
 ### Refactor
