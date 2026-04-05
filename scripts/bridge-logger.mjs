@@ -1350,12 +1350,18 @@ async function handleCronRunLine(getSql, jobId, line) {
         },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${failureReason.slice(0, 120)}`);
-      notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'failed', summary: agentOutput || failureReason.slice(0, 200),
-        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-        sessionId: run.sessionId || null,
-      }).catch(() => {});
-      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      if ((occ.session_target || 'isolated') === 'main') {
+        // Main-session failures already notify the user directly via Telegram alert.
+        // Do not also route through notifyMainSession — that causes duplicate messages.
+        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      } else {
+        notifyMainSession(occ.session_target || 'isolated', {
+          title: occ.title, status: 'failed', summary: agentOutput || failureReason.slice(0, 200),
+          occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+          sessionId: run.sessionId || null,
+        }).catch(() => {});
+        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      }
       deleteCronJobSilently(jobId).catch(() => {});
     } else {
       // Retries exhausted, no fallback configured. Status already set to 'needs_retry' above.
@@ -1381,12 +1387,17 @@ async function handleCronRunLine(getSql, jobId, line) {
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${failureReason.slice(0, 120)}`);
       deleteCronJobSilently(jobId).catch(() => {});
-      notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 200),
-        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-        sessionId: run.sessionId || null,
-      }).catch(() => {});
-      sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      if ((occ.session_target || 'isolated') === 'main') {
+        // Main-session retry notifications should send exactly one user-facing message.
+        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      } else {
+        notifyMainSession(occ.session_target || 'isolated', {
+          title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 200),
+          occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+          sessionId: run.sessionId || null,
+        }).catch(() => {});
+        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
+      }
     }
   }
 }
@@ -1469,7 +1480,9 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
         // same way as the run-sync path and prefer the assistant text when it does
         // not look like a prompt echo.
         let actualOutput = snippet; // fallback to summary snippet
-        const sessionText = await readLastAssistantFromSession('main', sessionId || null);
+        // Use occurrence marker when available so main-session direct Telegram delivery
+        // does not accidentally pick up another task's output from the shared session.
+        const sessionText = await readLastAssistantFromSession('main', sessionId || null, null, occurrenceId || null);
         if (sessionText && !looksLikePromptEcho(sessionText, '', summary)) {
           actualOutput = `\n\n${sessionText.trim().slice(0, 600)}${sessionText.length > 600 ? '\u2026' : ''}`;
         }

@@ -251,7 +251,16 @@ export async function PATCH(
         ? (body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null)
         : existing.recurrence_until;
       const status = body.status !== undefined ? String(body.status) : existing.status;
-      const modelOverrideFuture = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
+      const sessionTargetFuture = body.sessionTarget !== undefined
+        ? (body.sessionTarget === "main" ? "main" : "isolated")
+        : (existing.session_target ?? "isolated");
+      const rawModelOverrideFuture = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
+      const rawFallbackModelFuture = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
+      const modelOverrideFuture = sessionTargetFuture === "main" ? "" : rawModelOverrideFuture;
+      const fallbackModelFuture = sessionTargetFuture === "main" ? "" : rawFallbackModelFuture;
+      const executionWindowMinutesFuture = body.executionWindowMinutes !== undefined
+        ? Math.max(1, Number(body.executionWindowMinutes) || 30)
+        : Number(existing.execution_window_minutes ?? 30);
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
         ? body.processVersionIds.map(String)
         : [];
@@ -259,10 +268,12 @@ export async function PATCH(
       const [newEvent] = await sql`
         insert into agenda_events (
           workspace_id, title, free_prompt, default_agent_id,
-          timezone, starts_at, ends_at, recurrence_rule, recurrence_until, status, model_override, created_by
+          timezone, starts_at, ends_at, recurrence_rule, recurrence_until, status,
+          model_override, execution_window_minutes, fallback_model, session_target, created_by
         ) values (
           ${wid}, ${title}, ${freePrompt}, ${agentId},
-          ${timezone}, ${startsAt}, ${endsAt}, ${recurrenceRule}, ${recurrenceUntil}, ${status}, ${modelOverrideFuture}, ${existing.created_by}
+          ${timezone}, ${startsAt}, ${endsAt}, ${recurrenceRule}, ${recurrenceUntil}, ${status},
+          ${modelOverrideFuture}, ${executionWindowMinutesFuture}, ${fallbackModelFuture}, ${sessionTargetFuture}, ${existing.created_by}
         )
         returning *
       `;
@@ -292,10 +303,16 @@ export async function PATCH(
       ? (body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null)
       : existing.recurrence_until;
     const status = body.status !== undefined ? String(body.status) : existing.status;
-    const modelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
     const sessionTarget = body.sessionTarget !== undefined
       ? (body.sessionTarget === "main" ? "main" : "isolated")
       : (existing.session_target ?? "isolated");
+    const rawModelOverrideStd = body.modelOverride !== undefined ? String(body.modelOverride ?? "") : (existing.model_override ?? "");
+    const rawFallbackModelStd = body.fallbackModel !== undefined ? String(body.fallbackModel ?? "") : (existing.fallback_model ?? "");
+    const modelOverrideStd = sessionTarget === "main" ? "" : rawModelOverrideStd;
+    const fallbackModelStd = sessionTarget === "main" ? "" : rawFallbackModelStd;
+    const executionWindowMinutesStd = body.executionWindowMinutes !== undefined
+      ? Math.max(1, Number(body.executionWindowMinutes) || 30)
+      : Number(existing.execution_window_minutes ?? 30);
 
     // Guard: cannot revert to draft if event has any non-idle occurrences
     if (status === "draft" && existing.status !== "draft") {
@@ -365,6 +382,8 @@ export async function PATCH(
         recurrence_until = ${recurrenceUntil},
         status = ${status},
         model_override = ${modelOverrideStd},
+        execution_window_minutes = ${executionWindowMinutesStd},
+        fallback_model = ${fallbackModelStd},
         session_target = ${sessionTarget},
         updated_at = now()
       where id = ${id}

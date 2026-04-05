@@ -347,10 +347,14 @@ export async function POST(request: Request) {
       const recurrenceRule = body.recurrenceRule && body.recurrenceRule !== "null" && body.recurrenceRule !== "none" ? String(body.recurrenceRule) : null;
       const recurrenceUntil = body.recurrenceUntil ? new Date(String(body.recurrenceUntil)) : null;
       const status = String(body.status || "draft");
-      const modelOverride = body.modelOverride ? String(body.modelOverride) : "";
+      const rawModelOverride = body.modelOverride ? String(body.modelOverride) : "";
       const executionWindowMinutes = Number(body.executionWindowMinutes) || 30;
-      const fallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
+      const rawFallbackModel = body.fallbackModel ? String(body.fallbackModel) : "";
       const sessionTarget = body.sessionTarget === "main" ? "main" : "isolated";
+      // Main-session agenda runs do not reliably honor per-event model pinning/fallback.
+      // Sanitize on write so stored config matches actual runtime behavior.
+      const modelOverride = sessionTarget === "main" ? "" : rawModelOverride;
+      const fallbackModel = sessionTarget === "main" ? "" : rawFallbackModel;
       const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;
       const dependencyTimeoutHours = body.dependencyTimeoutHours ? Number(body.dependencyTimeoutHours) || null : null;
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)

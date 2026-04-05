@@ -251,6 +251,7 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
   const startDateMode: StartDateMode = data.startDateMode ?? (data.startDate ? "specific" : "now");
   const endDateMode: EndDateMode = data.endDateMode ?? (data.endDate ? "specific" : "forever");
 
+  const sessionTarget = (data.sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main";
   return {
     ...defaultForm,
     ...data,
@@ -259,12 +260,12 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
     recurrenceUntil: data.recurrenceUntil ?? "",
     taskType,
     frequency,
-    modelOverride: data.modelOverride ?? "",
+    modelOverride: sessionTarget === "main" ? "" : (data.modelOverride ?? ""),
     startDateMode,
     endDateMode,
     executionWindowMinutes: data.executionWindowMinutes ?? 30,
-    fallbackModel: data.fallbackModel ?? "",
-    sessionTarget: (data.sessionTarget === "main" ? "main" : "isolated") as "isolated" | "main",
+    fallbackModel: sessionTarget === "main" ? "" : (data.fallbackModel ?? ""),
+    sessionTarget,
     dependsOnEventId: data.dependsOnEventId ?? "",
     dependencyTimeoutHours: data.dependencyTimeoutHours ?? 0,
   };
@@ -372,7 +373,16 @@ setAgendaTimeStepMinutes(safe);
   }, [open, isEditing, agendaTimeStepMinutes]);
 
   const updateField = <K extends keyof AgendaEventFormData>(key: K, value: AgendaEventFormData[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      // Main session does not support reliable model pinning/fallback per agenda run.
+      // Hide and clear these fields in the UI to match backend behavior.
+      if (key === "sessionTarget" && value === "main") {
+        next.modelOverride = "";
+        next.fallbackModel = "";
+      }
+      return next;
+    });
     setError("");
   };
 
@@ -634,8 +644,8 @@ setAgendaTimeStepMinutes(safe);
         </Select>
       </div>
 
-      {/* Agent + Model Override + Fallback — 33/33/33 */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Agent + Model Override + Fallback */}
+      <div className={form.sessionTarget === "main" ? "grid grid-cols-1 gap-3" : "grid grid-cols-3 gap-3"}>
         {/* Agent */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
@@ -658,69 +668,73 @@ setAgendaTimeStepMinutes(safe);
           </Select>
         </div>
 
-        {/* Model Override */}
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-            <IconCpu className="size-3.5 text-primary" />
-            Model override
-          </Label>
-          <Select
-            value={form.modelOverride || "__default__"}
-            onValueChange={(v) => updateField("modelOverride", v === "__default__" ? "" : v)}
-          >
-            <SelectTrigger className="h-10 w-full cursor-pointer">
-              <SelectValue placeholder="Agent default">
-                {form.modelOverride
-                  ? <span className="flex gap-1.5 items-center truncate">
-                      <span className="font-medium truncate">{models.find((m) => m.id === form.modelOverride)?.alias ?? form.modelOverride}</span>
-                      <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.modelOverride)})</span>
-                    </span>
-                  : "Agent default"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__default__">Agent default</SelectItem>
-              {models.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  <span className="font-medium">{m.alias}</span>
-                  <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {form.sessionTarget !== "main" && (
+          <>
+            {/* Model Override */}
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <IconCpu className="size-3.5 text-primary" />
+                Model override
+              </Label>
+              <Select
+                value={form.modelOverride || "__default__"}
+                onValueChange={(v) => updateField("modelOverride", v === "__default__" ? "" : v)}
+              >
+                <SelectTrigger className="h-10 w-full cursor-pointer">
+                  <SelectValue placeholder="Agent default">
+                    {form.modelOverride
+                      ? <span className="flex gap-1.5 items-center truncate">
+                          <span className="font-medium truncate">{models.find((m) => m.id === form.modelOverride)?.alias ?? form.modelOverride}</span>
+                          <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.modelOverride)})</span>
+                        </span>
+                      : "Agent default"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">Agent default</SelectItem>
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      <span className="font-medium">{m.alias}</span>
+                      <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-        {/* Fallback Model */}
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-            <IconShieldCheck className="size-3.5 text-primary" />
-            Fallback model
-          </Label>
-          <Select
-            value={form.fallbackModel || "__none__"}
-            onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
-          >
-            <SelectTrigger className="h-10 w-full cursor-pointer">
-              <SelectValue placeholder="None">
-                {form.fallbackModel
-                  ? <span className="flex gap-1.5 items-center truncate">
-                      <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
-                      <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.fallbackModel)})</span>
-                    </span>
-                  : "None"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">None</SelectItem>
-              {models.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  <span className="font-medium">{m.alias}</span>
-                  <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+            {/* Fallback Model */}
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+                <IconShieldCheck className="size-3.5 text-primary" />
+                Fallback model
+              </Label>
+              <Select
+                value={form.fallbackModel || "__none__"}
+                onValueChange={(v) => updateField("fallbackModel", v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger className="h-10 w-full cursor-pointer">
+                  <SelectValue placeholder="None">
+                    {form.fallbackModel
+                      ? <span className="flex gap-1.5 items-center truncate">
+                          <span className="font-medium truncate">{models.find((m) => m.id === form.fallbackModel)?.alias ?? form.fallbackModel}</span>
+                          <span className="text-muted-foreground text-[10px] shrink-0">({getProviderLabel(form.fallbackModel)})</span>
+                        </span>
+                      : "None"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      <span className="font-medium">{m.alias}</span>
+                      <span className="text-muted-foreground text-xs ml-2">({getProviderLabel(m.id)})</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Session Target */}

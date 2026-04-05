@@ -20,10 +20,10 @@ async function workspaceId(sql: ReturnType<typeof getSql>): Promise<string | nul
   return rows[0]?.id ?? null;
 }
 
-/** Force-run a cron job immediately */
-async function runCronJobNow(cronJobId: string): Promise<void> {
+/** Best-effort delete of an existing cron job before replacing it with a fresh retry job. */
+async function removeCronJob(cronJobId: string): Promise<void> {
   const env = buildCleanEnv();
-  await execFileAsync("openclaw", ["cron", "run", cronJobId], {
+  await execFileAsync("openclaw", ["cron", "remove", cronJobId], {
     timeout: 15000,
     env,
     maxBuffer: 1024 * 1024,
@@ -164,64 +164,57 @@ export async function POST(
 
     const existingCronJobId = occurrence.cron_job_id as string | null;
 
-    // Model: explicit body override > event model_override > nothing
-    const overrideModel = (body.model as string | undefined) || (occurrence.model_override as string) || undefined;
     const sessionTarget = (occurrence.session_target as string) || "isolated";
+    // Main-session agenda runs do not reliably honor per-event model pinning.
+    // Ignore override model there so runtime behavior matches stored config/UI.
+    const overrideModel = sessionTarget === "main"
+      ? undefined
+      : ((body.model as string | undefined) || (occurrence.model_override as string) || undefined);
 
-    // Step 1: get or create a cron job for this retry
-    let cronJobId: string | null = existingCronJobId;
-
+    // Step 1: always replace retry cron jobs with a freshly rendered one.
+    // Re-using an existing cron job can preserve stale rendered_prompt text, old
+    // marker formats, and outdated model/session behavior.
     if (existingCronJobId) {
-      // Cron job exists — fire it immediately
       try {
-        await runCronJobNow(existingCronJobId);
+        await removeCronJob(existingCronJobId);
       } catch (err) {
-        // Job no longer exists in gateway — create a fresh one
-        console.warn(`[occurrence-retry] runCronJobNow failed for ${existingCronJobId}, creating new job:`, (err as Error).message);
-        cronJobId = null;
+        console.warn(`[occurrence-retry] removeCronJob failed for ${existingCronJobId}; continuing with fresh job:`, (err as Error).message);
       }
     }
 
+    let cronJobId: string | null = null;
+    // Always re-render on manual retry so old occurrences pick up current
+    // marker format and prompt logic instead of reusing stale rendered_prompt text.
+    let retryMessage: string;
+    try {
+      retryMessage = await renderPromptForOccurrence(
+        sql,
+        { id: eventId, title: occurrence.title as string, free_prompt: occurrence.free_prompt as string | null },
+        occurrenceId,
+      );
+      // Persist the freshly-rendered prompt so subsequent retries also use the latest version.
+      await sql`UPDATE agenda_occurrences SET rendered_prompt = ${retryMessage} WHERE id = ${occurrenceId}`;
+    } catch (renderErr) {
+      console.warn(`[occurrence-retry] Re-render failed, falling back to stored prompt:`, (renderErr as Error).message);
+      retryMessage = (occurrence.rendered_prompt as string | null)
+        || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
+    }
+
+    try {
+      cronJobId = await createRetryCronJob({
+        title: occurrence.title as string,
+        message: retryMessage,
+        agentId: (occurrence.default_agent_id as string) || "main",
+        model: overrideModel,
+        sessionTarget,
+      });
+    } catch (err) {
+      console.error(`[occurrence-retry] Failed to create retry cron job for ${occurrenceId}:`, err);
+      return fail(`Failed to create retry cron job: ${(err as Error).message}`, 500);
+    }
+
     if (!cronJobId) {
-      // No existing job (or it disappeared) — create a new one-shot job
-      // On force-retry: always re-render the prompt from the current event definition
-      // so edits made since the last run are picked up.
-      let retryMessage: string;
-      if (forceRetry) {
-        try {
-          retryMessage = await renderPromptForOccurrence(
-            sql,
-            { id: eventId, title: occurrence.title as string, free_prompt: occurrence.free_prompt as string | null },
-            occurrenceId,
-          );
-          // Persist the freshly-rendered prompt so subsequent retries also use the latest version
-          await sql`UPDATE agenda_occurrences SET rendered_prompt = ${retryMessage} WHERE id = ${occurrenceId}`;
-        } catch (renderErr) {
-          console.warn(`[occurrence-retry] Re-render failed, falling back to stored prompt:`, (renderErr as Error).message);
-          retryMessage = (occurrence.rendered_prompt as string | null)
-            || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
-        }
-      } else {
-        retryMessage = (occurrence.rendered_prompt as string | null)
-          || `${occurrence.title}. ${occurrence.free_prompt || ""}`.trim();
-      }
-
-      try {
-        cronJobId = await createRetryCronJob({
-          title: occurrence.title as string,
-          message: retryMessage,
-          agentId: (occurrence.default_agent_id as string) || "main",
-          model: overrideModel,
-          sessionTarget,
-        });
-      } catch (err) {
-        console.error(`[occurrence-retry] Failed to create retry cron job for ${occurrenceId}:`, err);
-        return fail(`Failed to create retry cron job: ${(err as Error).message}`, 500);
-      }
-
-      if (!cronJobId) {
-        return fail("Cron job creation returned no ID — check gateway logs.", 500);
-      }
+      return fail("Cron job creation returned no ID — check gateway logs.", 500);
     }
 
     // Step 2: atomically update the occurrence to queued with the cron job ID.
