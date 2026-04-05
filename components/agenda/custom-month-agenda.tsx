@@ -307,7 +307,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
         ...(event.latestResult === "running" ? statusRingStyle(event.latestResult, "33") : {}),
       }}
     >
-      {/* Title row */}
+      {/* Single row: left-dot · title · [TIMER · STATUS label · 8x8dot] */}
       <div className="flex items-center gap-1.5">
         <span
           className="size-1.5 rounded-full shrink-0"
@@ -319,49 +319,78 @@ function EventPill({ event }: { event: CalendarEvent }) {
         >
           {event.title}
         </span>
-        {event.isRecurring && (
-          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.9 }}>
-            <RecurringIcon size={11} />
+        {/* Right cluster: timer · status · dot, with recurring icon below dot */}
+        {event.latestResult && (
+          <span className="inline-flex flex-col items-end gap-[2px] shrink-0">
+            {/* Top: timer (if any) · middot · status label · dot */}
+            <span className="inline-flex items-center gap-[3px]">
+              {/* Timer — shown for running, queued, scheduled */}
+              {event.latestResult === "running" && (
+                <LiveDuration
+                  startedAt={event.runStartedAt}
+                  finishedAt={event.runFinishedAt}
+                  className="text-[8px] font-bold tabular-nums"
+                  style={{ color: statusHex("running") }}
+                />
+              )}
+              {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
+                <CronCountdown scheduledFor={event.scheduledFor} />
+              )}
+              {/* Middot separator when timer is present */}
+              {(event.latestResult === "running" ||
+                event.latestResult === "queued" ||
+                event.latestResult === "scheduled") && (
+                <span
+                  className="text-[8px] leading-none"
+                  style={{ color: statusHex(event.latestResult), opacity: 0.5 }}
+                >
+                  &middot;
+                </span>
+              )}
+              {/* Status label */}
+              <span
+                className="text-[8px] font-bold uppercase tracking-wider leading-none"
+                style={{ color: statusHex(event.latestResult), opacity: 0.9 }}
+              >
+                {event.latestResult === "running" ? "running"
+                  : event.latestResult === "succeeded" ? "done"
+                  : event.latestResult === "failed" ? "failed"
+                  : event.latestResult === "needs_retry" ? "retry"
+                  : event.latestResult === "queued" ? "queued"
+                  : event.latestResult === "scheduled" ? "sched"
+                  : event.latestResult === "cancelled" ? "cancelled"
+                  : event.latestResult === "skipped" ? "skipped"
+                  : event.latestResult === "auto_retry" ? "retrying"
+                  : event.latestResult}
+              </span>
+              {/* 8x8 status dot */}
+              <OccurrenceStatusDot result={event.latestResult} size={6} />
+            </span>
+            {/* Recurring icon — below the dot, right-aligned */}
+            {event.isRecurring && (
+              <span className="inline-flex items-center justify-end" style={{ color, opacity: 0.7 }}>
+                <RecurringIcon size={8} />
+              </span>
+            )}
           </span>
         )}
-        {/* Status label left of the 8x8 dot */}
-        {event.latestResult && (
-          <span className="inline-flex items-center gap-1 shrink-0">
-            <span
-              className="text-[8px] font-bold uppercase tracking-wider leading-none"
-              style={{ color: statusHex(event.latestResult), opacity: 0.9 }}
-            >
-              {event.latestResult === "running"
-                ? <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} className="text-[8px] font-bold tabular-nums" />
-                : event.latestResult === "succeeded" ? "done"
-                : event.latestResult === "failed" ? "failed"
-                : event.latestResult === "needs_retry" ? "retry"
-                : event.latestResult === "queued" ? "queued"
-                : event.latestResult === "scheduled" ? "sched"
-                : event.latestResult === "cancelled" ? "cancelled"
-                : event.latestResult === "skipped" ? "skipped"
-                : event.latestResult === "auto_retry" ? "retrying"
-                : event.latestResult}
-            </span>
-            <OccurrenceStatusDot result={event.latestResult} size={6} />
+        {/* Recurring icon when no status result yet */}
+        {!event.latestResult && event.isRecurring && (
+          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.7 }}>
+            <RecurringIcon size={8} />
           </span>
         )}
       </div>
 
-      {/* Time row — only time + cron countdown, no status chips */}
-      {(timeStr || event.latestResult === "queued" || event.latestResult === "scheduled") && (
-        <div className="flex items-center gap-1.5 pl-[14px]">
-          {timeStr && (
-            <span
-              className="text-[10px] font-medium leading-none"
-              style={{ color, opacity: 0.7 }}
-            >
-              {timeStr}
-            </span>
-          )}
-          {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
-            <CronCountdown scheduledFor={event.scheduledFor} />
-          )}
+      {/* Time row — only the HH:MM time label */}
+      {timeStr && (
+        <div className="pl-[14px]">
+          <span
+            className="text-[10px] font-medium leading-none"
+            style={{ color, opacity: 0.7 }}
+          >
+            {timeStr}
+          </span>
         </div>
       )}
     </div>
@@ -403,7 +432,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         ...(event.latestResult === "running" ? statusRingStyle(event.latestResult, "40") : {}),
       }}
     >
-      {/* Title row with status label + dot */}
+      {/* Title row: title · [TIMER · STATUS label · 8x8dot] */}
       <div className="flex items-center gap-1.5">
         <span
           className="flex-1 text-[13px] font-bold leading-tight truncate"
@@ -411,49 +440,75 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         >
           {event.title}
         </span>
-        {/* Status label left of the 8x8 dot */}
+        {/* Right cluster: timer · status · dot, recurring icon below */}
         {event.latestResult && (
-          <span className="inline-flex items-center gap-1 shrink-0">
-            <span
-              className="text-[9px] font-bold uppercase tracking-wider leading-none"
-              style={{ color: statusHex(event.latestResult), opacity: 0.9 }}
-            >
-              {event.latestResult === "running"
-                ? <LiveDuration startedAt={event.runStartedAt} finishedAt={event.runFinishedAt} className="text-[9px] font-bold tabular-nums" />
-                : event.latestResult === "succeeded" ? "done"
-                : event.latestResult === "failed" ? "failed"
-                : event.latestResult === "needs_retry" ? "retry"
-                : event.latestResult === "queued" ? "queued"
-                : event.latestResult === "scheduled" ? "sched"
-                : event.latestResult === "cancelled" ? "cancelled"
-                : event.latestResult === "skipped" ? "skipped"
-                : event.latestResult === "auto_retry" ? "retrying"
-                : event.latestResult}
+          <span className="inline-flex flex-col items-end gap-[2px] shrink-0">
+            <span className="inline-flex items-center gap-[3px]">
+              {event.latestResult === "running" && (
+                <LiveDuration
+                  startedAt={event.runStartedAt}
+                  finishedAt={event.runFinishedAt}
+                  className="text-[9px] font-bold tabular-nums"
+                  style={{ color: statusHex("running") }}
+                />
+              )}
+              {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
+                <CronCountdown scheduledFor={event.scheduledFor} />
+              )}
+              {(event.latestResult === "running" ||
+                event.latestResult === "queued" ||
+                event.latestResult === "scheduled") && (
+                <span
+                  className="text-[9px] leading-none"
+                  style={{ color: statusHex(event.latestResult), opacity: 0.5 }}
+                >
+                  &middot;
+                </span>
+              )}
+              <span
+                className="text-[9px] font-bold uppercase tracking-wider leading-none"
+                style={{ color: statusHex(event.latestResult), opacity: 0.9 }}
+              >
+                {event.latestResult === "running" ? "running"
+                  : event.latestResult === "succeeded" ? "done"
+                  : event.latestResult === "failed" ? "failed"
+                  : event.latestResult === "needs_retry" ? "retry"
+                  : event.latestResult === "queued" ? "queued"
+                  : event.latestResult === "scheduled" ? "sched"
+                  : event.latestResult === "cancelled" ? "cancelled"
+                  : event.latestResult === "skipped" ? "skipped"
+                  : event.latestResult === "auto_retry" ? "retrying"
+                  : event.latestResult}
+              </span>
+              <OccurrenceStatusDot result={event.latestResult} size={8} />
             </span>
-            <OccurrenceStatusDot result={event.latestResult} size={8} />
+            {/* Recurring icon below the dot cluster */}
+            {event.isRecurring && (
+              <span className="inline-flex items-center justify-end" style={{ color, opacity: 0.7 }}>
+                <RecurringIcon size={8} />
+              </span>
+            )}
+          </span>
+        )}
+        {/* Recurring icon when no status yet */}
+        {!event.latestResult && event.isRecurring && (
+          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.7 }}>
+            <RecurringIcon size={8} />
           </span>
         )}
       </div>
 
-      {/* Time + recurring + cron countdown (no status chips) */}
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        {timeStr && (
+      {/* Time row — only HH:MM + timezone */}
+      {timeStr && (
+        <div>
           <span
             className="text-[11px] font-semibold leading-none"
             style={{ color, opacity: 0.7 }}
           >
             {timeStr}{event.timezone ? ` ${getTimezoneAbbr(event.timezone)}` : ''}
           </span>
-        )}
-        {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
-          <CronCountdown scheduledFor={event.scheduledFor} />
-        )}
-        {event.isRecurring && (
-          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.9 }}>
-            <RecurringIcon size={11} />
-          </span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
