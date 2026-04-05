@@ -256,6 +256,7 @@ export async function GET(request: Request) {
             left join agenda_run_attempts ra
               on ra.occurrence_id = ao.id and ra.attempt_no = ao.latest_attempt_no
             where ao.agenda_event_id = ANY(${nonRecurringIds as string[]})
+              and ao.status <> 'cancelled'
             order by ao.agenda_event_id,
               case ao.status
                 when 'running'     then 1
@@ -307,6 +308,7 @@ export async function GET(request: Request) {
           on ara.occurrence_id = ao.id
           and ara.attempt_no = ao.latest_attempt_no
         where ao.agenda_event_id = ANY(${eventIds as string[]})
+          and ao.status <> 'cancelled'
         order by ao.agenda_event_id,
           case ao.status
             when 'running'     then 1
