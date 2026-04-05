@@ -135,11 +135,12 @@ export async function GET(request: Request): Promise<Response> {
             const occurrenceId = data?.occurrenceId;
             if (!occurrenceId) return;
 
-            // Look up occurrence + event details — use occurrence status for canonical color/label.
+            // Use action from the notification as the authoritative status — it's set
+            // by the process that just updated the DB, so it's never stale.
+            // The DB query is only for title/agentId, not status.
             const rows = await sql`
               SELECT
                 ao.id,
-                ao.status,
                 ao.agenda_event_id,
                 ae.title,
                 ae.default_agent_id AS agent_id
@@ -151,8 +152,8 @@ export async function GET(request: Request): Promise<Response> {
             const row = rows[0];
             if (!row) return;
 
-            // Use occurrence status (the canonical source) as both display label and level.
-            const displayStatus = row.status || "change";
+            // action is the authoritative status from the notification sender
+            const displayStatus = (data?.action || "change");
             const entry: ActivityEntry = {
               // Stable ID per occurrence so later status updates (succeeded/failed)
               // replace the earlier "running" entry in the sidebar, not append

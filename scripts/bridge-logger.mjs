@@ -927,36 +927,21 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
   }
 
   if (sessionTarget !== 'main') {
-    let sessionOutput = null;
-
-    // For isolated runs, the cron summary often contains only a prompt echo or an
-    // empty value. Read the actual isolated session file before falling back.
-    if (sessionId) {
-      let retries = 0;
-      sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, null, null);
-      while (!sessionOutput && retries < 3) {
-        retries++;
-        const delayMs = [2000, 4000, 6000][retries - 1];
-        console.log(`[bridge-logger] resolveAgendaOutput: isolated session had no output on first scan — retry ${retries}/3 after ${delayMs}ms for occurrence ${occurrenceId}`);
-        await new Promise(r => setTimeout(r, delayMs));
-        sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, null, null);
-      }
-
-      if (sessionOutput && !looksLikePromptEcho(sessionOutput, renderedPrompt, summaryText)) {
-        result.output = sessionOutput;
-        result.outputSource = 'isolated_session_assistant';
-        result.outputMeta.sessionOutputUsed = true;
-        return result;
-      }
-      if (sessionOutput) {
-        result.outputMeta.promptEchoDetected = true;
-      }
-    }
-
-    if (renderedPrompt && looksLikePromptEcho(summaryText, renderedPrompt, summaryText)) {
-      result.outputMeta.promptEchoDetected = true;
-      result.output = '';
-      result.outputSource = 'prompt_echo_filtered';
+    // ── Fix: For isolated runs, run.summary IS the agent's actual output ─────────
+    // (unlike main-session runs where run.summary is the prompt input).
+    // Use run.summary directly — it contains the real response text.
+    // The prompt-echo check against summaryText is skipped for isolated runs
+    // because summaryText == sessionOutput, so comparing them always triggers a
+    // false-positive match (identical text flagged as "prompt echo").
+    const isolatedOutput = summaryText;
+    if (isolatedOutput && isolatedOutput.trim()) {
+      result.output = isolatedOutput.trim().slice(0, 8000);
+      result.outputSource = 'cron_summary';
+    } else {
+      // No output at all — mark as no_output so the run is correctly
+      // treated as failed (succeeded = false) rather than falsely succeeding.
+      result.output = null;
+      result.outputSource = 'no_output';
     }
   }
 
