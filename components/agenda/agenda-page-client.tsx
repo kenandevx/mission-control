@@ -244,7 +244,10 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
         const summary: AgendaEventSummary = {
           id: String(evt.id ?? ""),
           title: String(evt.title ?? ""),
+          free_prompt: evt.free_prompt,  // keep for downstream use
+          request: evt.free_prompt ?? "",
           freePrompt: evt.free_prompt ?? "",
+          request: evt.free_prompt ?? "",
           agentId: evt.default_agent_id ?? "",
           agentName: "",
           processIds: evtProcesses.map((p) => p.process_version_id ?? "").filter(Boolean),

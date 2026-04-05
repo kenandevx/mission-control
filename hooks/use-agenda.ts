@@ -61,7 +61,7 @@ export type AgendaEventDetail = AgendaEvent & {
 
 export type AgendaEventFormData = {
   title: string;
-  freePrompt: string;
+  request: string;
   agentId: string;
   processVersionIds: string[];
   status: "draft" | "active";
@@ -118,7 +118,7 @@ function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
       backgroundColor: e.status === "draft" ? "#6b7280" : "#3b82f6",
       borderColor: e.status === "draft" ? "#6b7280" : "#2563eb",
       extendedProps: {
-        freePrompt: e.free_prompt ?? "",
+        request: e.free_prompt ?? "",
         agentId: e.default_agent_id ?? "",
         timezone: e.timezone,
         recurrence: e.recurrence_rule ?? "none",
@@ -181,7 +181,7 @@ export function useAgenda() {
     const json = await apiFetch("/api/agenda/events", {
       action: "createEvent",
       title: form.title,
-      freePrompt: form.freePrompt || null,
+      freePrompt: form.request || null,
       agentId: form.agentId || null,
       timezone: form.timezone,
       startsAt,
@@ -207,7 +207,7 @@ export function useAgenda() {
   const updateEvent = async (id: string, form: Partial<AgendaEventFormData>) => {
     const patch: Record<string, unknown> = {};
     if (form.title !== undefined) patch.title = form.title;
-    if (form.freePrompt !== undefined) patch.freePrompt = form.freePrompt || null;
+    if (form.request !== undefined) patch.freePrompt = form.request || null;
     if (form.agentId !== undefined) patch.agentId = form.agentId || null;
     if (form.timezone !== undefined) patch.timezone = form.timezone;
     if (form.startsAt !== undefined) {

@@ -66,7 +66,11 @@ import { STATUS_BADGE_MAP, STATUS_BADGE_FALLBACK } from "@/lib/status-colors";
 export type AgendaEventSummary = {
   id: string;
   title: string;
+  // Stored as free_prompt in DB but called "request" in the UI.
+  /** @deprecated use request instead */
   freePrompt: string;
+  /** The request text (UI-friendly name for free_prompt). */
+  request?: string;
   agentId: string;
   agentName: string;
   processIds: string[];
@@ -166,12 +170,16 @@ function formatTime(ts: string | null, timezone?: string) {
 function beautifyOutputSource(source: string | null | undefined) {
   const raw = String(source ?? "").trim();
   if (!raw) return "";
-  return raw
-    .replace(/assisant/gi, "assistant")
+  const cleaned = raw
+    .replace(/assisan?ts?/gi, "assistant")
+    .replace(/_session_/gi, " Session ")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+    .trim();
+  // Title-case each word nicely, preserving already-titlecased or all-caps words
+  return cleaned.replace(/\b([a-z])([a-z]*)\b/gi, (_m, first, rest) =>
+    first.toUpperCase() + rest.toLowerCase()
+  );
 }
 
 /** Wrap any element with a Radix tooltip */
@@ -530,6 +538,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [forceRetryDialogOpen, setForceRetryDialogOpen] = useState(false);
   const [copyRequested, setCopyRequested] = useState(false);
+  // Local override for occurrence status after retry (optimistic UI update)
+  const [occStatusOverride, setOccStatusOverride] = useState<{ id: string; status: string } | null>(null);
 
   const isRecurring = event ? (event.recurrence && event.recurrence !== "none") : false;
 
@@ -601,17 +611,24 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   })();
 
   const selectedOccurrence = occurrences.find((o) => o.id === selectedOccurrenceId);
+  // Override the displayed status if a retry was just triggered (optimistic update).
+  // This fixes bug #1 where retrying a done event still shows "done" in the status badge.
+  const displayedOccurrence = selectedOccurrence
+    ? occStatusOverride?.id === selectedOccurrence.id
+      ? { ...selectedOccurrence, status: occStatusOverride.status }
+      : selectedOccurrence
+    : null;
   const selectedAttempt = attempts.find((a) => a.id === selectedAttemptId);
   const attemptSteps = steps.filter((s) => s.run_attempt_id === selectedAttemptId);
 
-  const taskSummary = event.freePrompt.trim()
-    ? event.freePrompt.trim()
+  const taskSummary = ((event.request ?? event.freePrompt) || "").trim()
+    ? ((event.request ?? event.freePrompt) || "").trim()
     : event.processNames.length > 0
       ? `Runs ${event.processNames.join(" + ")}`
       : "No task specified";
 
   const recurrenceLabel = humanRecurrence(event.recurrence);
-  const overviewCardClassName = "h-full flex flex-col bg-gradient-to-t from-primary/12 to-card shadow-xs";
+  const overviewCardClassName = "h-full flex flex-col bg-gradient-to-t from-primary/12 to-card shadow-sm";
   const overviewCardFooterClassName = "mt-auto flex-col items-start gap-1 text-sm";
 
   return (
@@ -690,8 +707,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           Duplicate
                         </DropdownMenuItem>
                       )}
-                      {selectedOccurrence && selectedOccurrenceId && (() => {
-                        const canRetry = ["running", "needs_retry", "failed", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status);
+                      {displayedOccurrence && selectedOccurrenceId && (() => {
+                        const canRetry = ["running", "needs_retry", "failed", "queued", "scheduled", "succeeded", "cancelled"].includes(displayedOccurrence.status);
                         return (
                           <>
                             <DropdownMenuSeparator />
@@ -700,15 +717,16 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               disabled={!canRetry}
                               onClick={() => {
                                 if (!canRetry) return;
-                                if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
+                                if (["succeeded", "cancelled"].includes(displayedOccurrence.status)) {
                                   setForceRetryDialogOpen(true);
                                   return;
                                 }
-                                onRetry(selectedOccurrenceId, { force: selectedOccurrence.status === "running" });
+                                onRetry(selectedOccurrenceId, { force: displayedOccurrence.status === "running" });
+                                setOccStatusOverride({ id: selectedOccurrenceId, status: "queued" });
                               }}
                             >
                               <IconRefresh className="size-3.5" />
-                              {!canRetry ? "Retry (completed)" : selectedOccurrence.status === "running" ? "Force Retry" : ["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
+                              {!canRetry ? "Retry (completed)" : displayedOccurrence.status === "running" ? "Force Retry" : ["succeeded", "cancelled"].includes(displayedOccurrence.status) ? "Force Retry" : "Retry"}
                             </DropdownMenuItem>
                           </>
                         );
@@ -845,8 +863,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Created At</CardDescription>
-                      <CardTitle className="text-base font-semibold tabular-nums whitespace-nowrap">
-                        {event.createdAt ? formatTime(event.createdAt) : "—"}
+                      <CardTitle className="text-sm font-semibold tabular-nums">
+                        {event.createdAt ? formatTime(event.createdAt, event.timezone) : "—"}
                       </CardTitle>
                       <CardAction>
                         <Badge variant="outline">
@@ -855,20 +873,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className={overviewCardFooterClassName}>
-                      <div className="text-muted-foreground text-xs">
-                        {event.createdAt
-                          ? `In ${event.timezone || "local"} timezone`
-                          : "Not recorded yet"}
-                      </div>
-                    </CardFooter>
+                    <CardFooter className={overviewCardFooterClassName} />
                   </Card>
 
                   {/* Model */}
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Model</CardDescription>
-                      <CardTitle className="text-lg font-semibold truncate">
+                      <CardTitle className="text-sm font-semibold truncate">
                         {event.modelOverride || "Agent default"}
                       </CardTitle>
                       <CardAction>
@@ -878,24 +890,18 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className={overviewCardFooterClassName}>
-                      <div className="text-muted-foreground text-xs">
-                        {event.modelOverride
-                          ? `Model override for this event`
-                          : "Using the agent\'s default model"}
-                      </div>
-                    </CardFooter>
+                    <CardFooter className={overviewCardFooterClassName} />
                   </Card>
 
                   {/* Status — merged: shows occurrence + attempt status, attempt no, time, and retry action */}
-                  {selectedOccurrence && (
+                  {displayedOccurrence && (
                     <Card
                       data-slot="card"
                       className={[
                         overviewCardClassName,
-                        (selectedAttempt?.status ?? selectedOccurrence.status) === "failed"
+                        (selectedAttempt?.status ?? displayedOccurrence.status) === "failed"
                           ? "border-red-200 dark:border-red-900"
-                          : (selectedAttempt?.status ?? selectedOccurrence.status) === "running"
+                          : (selectedAttempt?.status ?? displayedOccurrence.status) === "running"
                             ? "border-blue-200 dark:border-blue-900"
                             : "",
                       ].join(" ")}
@@ -908,7 +914,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           {selectedAttempt ? (
                             <ResultBadge status={selectedAttempt.status} />
                           ) : (
-                            <ResultBadge status={selectedOccurrence.status} />
+                            <ResultBadge status={displayedOccurrence.status} />
                           )}
                         </CardTitle>
                         <CardAction>
@@ -916,8 +922,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             <IconClock className="size-3" />
                             {selectedAttempt
                               ? `Attempt ${selectedAttempt.attempt_no}`
-                              : selectedOccurrence.latest_attempt_no > 0
-                                ? `Attempt ${selectedOccurrence.latest_attempt_no} (no attempt selected)`
+                              : displayedOccurrence.latest_attempt_no > 0
+                                ? `Attempt ${displayedOccurrence.latest_attempt_no} (no attempt selected)`
                                 : "Not started"}
                           </Badge>
                         </CardAction>
@@ -932,26 +938,27 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               </>
                             )}
                           </div>
-                        ) : selectedOccurrence.scheduled_for ? (
+                        ) : displayedOccurrence.scheduled_for ? (
                           <div className="text-muted-foreground text-xs">
-                            Scheduled for {formatTime(selectedOccurrence.scheduled_for, event.timezone)}
+                            Scheduled for {formatTime(displayedOccurrence.scheduled_for, event.timezone)}
                           </div>
                         ) : null}
-                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(selectedOccurrence.status) && (
+                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(displayedOccurrence.status) && (
                           <Button
                             size="sm"
                             variant="outline"
                             className="gap-1 h-7 text-xs mt-0.5 cursor-pointer"
                             onClick={() => {
-                              if (["succeeded", "cancelled"].includes(selectedOccurrence.status)) {
+                              if (["succeeded", "cancelled"].includes(displayedOccurrence.status)) {
                                 setForceRetryDialogOpen(true);
                                 return;
                               }
                               onRetry(selectedOccurrenceId!);
+                              setOccStatusOverride({ id: selectedOccurrenceId, status: "queued" });
                             }}
                           >
                             <IconRefresh className="size-3" />
-                            {["succeeded", "cancelled"].includes(selectedOccurrence.status) ? "Force Retry" : "Retry"}
+                            {["succeeded", "cancelled"].includes(displayedOccurrence.status) ? "Force Retry" : "Retry"}
                           </Button>
                         )}
                       </CardFooter>
@@ -963,7 +970,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Recurrence</CardDescription>
-                        <CardTitle className="text-lg font-semibold">
+                        <CardTitle className="text-sm font-semibold">
                           {recurrenceLabel}
                         </CardTitle>
                         <CardAction>
@@ -973,9 +980,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className={overviewCardFooterClassName}>
-                        <div className="text-muted-foreground text-xs">Repeating schedule</div>
-                      </CardFooter>
+                      <CardFooter className={overviewCardFooterClassName} />
                     </Card>
                   )}
 
@@ -1056,10 +1061,15 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                 ) : attemptSteps.length === 0 ? (
                   <div className="flex flex-col gap-4">
                     {selectedOccurrence?.rendered_prompt && (
-                      <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Request sent to agent</p>
-                        <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">{selectedOccurrence.rendered_prompt}</p>
-                      </div>
+                      <details className="group rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-foreground/80">
+                          <span>Request sent to agent</span>
+                          <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                        </summary>
+                        <div className="px-4 pb-3 text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                          {selectedOccurrence.rendered_prompt}
+                        </div>
+                      </details>
                     )}
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <IconFileText className="size-10 text-muted-foreground/50 mb-3" />
@@ -1155,7 +1165,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                                 <span className="text-xs font-mono text-foreground/80">{step.agent_id}</span>
                               </div>
                             )}
-                            {step.step_instruction && (
+                            {step.step_instruction && !promptText && (
                               <div className="flex items-start gap-2">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground w-16 shrink-0 pt-0.5">Desc</span>
                                 <span className="text-xs text-foreground/80 leading-relaxed">{step.step_instruction.length > 300 ? step.step_instruction.slice(0, 300) + "…" : step.step_instruction}</span>
@@ -1172,12 +1182,17 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             )}
                           </div>
 
-                          {/* Prompt / Instruction */}
+                          {/* Prompt / Instruction — collapsible to avoid duplicating the top-level preview */}
                           {promptText && (
-                            <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-3">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Step request</p>
-                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}</p>
-                            </div>
+                            <details className="group rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20">
+                              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                <span>Step request</span>
+                                <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                              </summary>
+                              <div className="px-3 pb-3 text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                                {promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}
+                              </div>
+                            </details>
                           )}
 
                           {/* Output */}

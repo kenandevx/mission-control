@@ -33,10 +33,10 @@ export function AgendaSimulateModal({ open, formData, agents, processes, onClose
       const builtSteps: typeof steps = [];
 
       // Request as first step if present
-      if (formData.freePrompt?.trim()) {
+      if ((formData as Record<string, unknown>).request?.trim()) {
         builtSteps.push({
           title: "Request",
-          instruction: `[SIMULATION MODE]\n\n${formData.freePrompt}`,
+          instruction: `[SIMULATION MODE]\n\n${(formData as Record<string, unknown>).request}`,
           agentId: formData.agentId || undefined,
           modelOverride: formData.modelOverride || undefined,
           timeoutSeconds: formData.executionWindowMinutes ? formData.executionWindowMinutes * 60 : null,
@@ -64,7 +64,7 @@ export function AgendaSimulateModal({ open, formData, agents, processes, onClose
         // Fallback: just run the request as a single step
         builtSteps.push({
           title: "Agenda Event",
-          instruction: `[SIMULATION MODE]\n\n${formData.freePrompt || "No prompt or processes attached."}`,
+          instruction: `[SIMULATION MODE]\n\n${(formData as Record<string, unknown>).request || "No request or processes attached."}`,
           agentId: formData.agentId || undefined,
           modelOverride: formData.modelOverride || undefined,
         });

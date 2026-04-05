@@ -1484,9 +1484,22 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
         // does not accidentally pick up another task's output from the shared session.
         const sessionText = await readLastAssistantFromSession('main', sessionId || null, null, occurrenceId || null);
         if (sessionText && !looksLikePromptEcho(sessionText, '', summary)) {
-          actualOutput = `\n\n${sessionText.trim().slice(0, 600)}${sessionText.length > 600 ? '\u2026' : ''}`;
+          actualOutput = `\n\n📝 Result\n${sessionText.trim().slice(0, 700)}${sessionText.length > 700 ? '\u2026' : ''}`;
         }
-        const text = `${statusEmoji} Agenda task "${title}" ${statusLabel}${actualOutput}`;
+
+        let artifactSection = '';
+        if (status === 'succeeded' && occurrenceId && eventId) {
+          const artifactPayload = await scanRunArtifacts(occurrenceId, eventId);
+          const files = artifactPayload?.files ?? [];
+          if (files.length > 0) {
+            const listed = files.slice(0, 5).map((f) => `• ${f.name} — ${f.path}`).join('\n');
+            const more = files.length > 5 ? `\n• ...and ${files.length - 5} more` : '';
+            artifactSection = `\n\n💾 Saved files\n${listed}${more}`;
+          }
+        }
+
+        const header = `${statusEmoji} Agenda task "${title}" ${statusLabel}`;
+        const text = `${header}${actualOutput}${artifactSection}`;
         await execFileAsync('openclaw', [
           'message', 'send',
           '--channel', 'telegram',

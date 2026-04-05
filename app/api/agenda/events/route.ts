@@ -240,7 +240,11 @@ export async function GET(request: Request) {
           }
         }
 
-        // For non-recurring: use latest occurrence status + timing + scheduled_for
+        // For non-recurring: use the most relevant occurrence, not simply the latest timestamp.
+        // The calendar range view previously picked by scheduled_for desc only, which meant
+        // a later queued duplicate occurrence could visually override a just-succeeded run and
+        // make the event look "not done". Match the same status-priority ordering used by the
+        // non-range query below.
         const nonRecurringIds = expandedIds.filter((id) => !recurringEventIds.includes(id as string));
         if (nonRecurringIds.length > 0) {
           const occRows = await sql`
@@ -252,7 +256,18 @@ export async function GET(request: Request) {
             left join agenda_run_attempts ra
               on ra.occurrence_id = ao.id and ra.attempt_no = ao.latest_attempt_no
             where ao.agenda_event_id = ANY(${nonRecurringIds as string[]})
-            order by ao.agenda_event_id, ao.scheduled_for desc
+              and ao.status <> 'cancelled'
+            order by ao.agenda_event_id,
+              case ao.status
+                when 'running'     then 1
+                when 'needs_retry' then 2
+                when 'failed'      then 3
+                when 'succeeded'   then 4
+                when 'queued'      then 5
+                when 'scheduled'   then 6
+                else 7
+              end,
+              ao.scheduled_for desc
           `;
           const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
           for (const r of occRows) statusMap.set(r.agenda_event_id, {

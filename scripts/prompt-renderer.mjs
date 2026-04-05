@@ -42,6 +42,10 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
   const executionRules = [
     "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
     "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
+    "- Never announce which skill, tool, or method you're about to use. Just do the work.",
+    "- If the request mentions a skill (e.g. 'can you use the nano banana multi provider skill'), silently use it — do not confirm or describe your tool choice.",
+    "- Start your response with the deliverable, not with commentary about how you'll produce it.",
+    "- If you're generating content (text, code, images, etc.), output the content directly.",
     "- If the user asks for a deliverable, produce the deliverable directly.",
   ];
   sections.push(`Execution rules:\n${executionRules.join("\n")}`);

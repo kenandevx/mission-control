@@ -64,7 +64,7 @@ function buildFormFromEvent(event: AgendaEventSummary): Partial<AgendaEventFormD
 
   return {
     title: event.title,
-    freePrompt: event.freePrompt ?? "",
+    request: event.freePrompt ?? "",
     agentId: event.agentId ?? "",
     processVersionIds: event.processIds ?? [],
     status: event.status ?? "draft",
@@ -376,7 +376,8 @@ export function AgendaClientWrapper() {
 
       const body: Record<string, unknown> = {
         title: data.title,
-        freePrompt: data.freePrompt || null,
+        // API still expects freePrompt; value comes from data.request
+        freePrompt: data.request || null,
         agentId: data.agentId || null,
         timezone: tz,
         startsAt,
@@ -430,7 +431,8 @@ export function AgendaClientWrapper() {
         body: JSON.stringify({
           action: "createEvent",
           title: data.title,
-          freePrompt: data.freePrompt || null,
+          // API still expects freePrompt; value comes from data.request
+          freePrompt: data.request || null,
           agentId: data.agentId || null,
           timezone: tz,
           startsAt,

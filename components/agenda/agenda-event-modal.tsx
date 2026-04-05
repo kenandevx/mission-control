@@ -53,7 +53,7 @@ type Frequency = "daily" | "weekly";
 
 export type AgendaEventFormData = {
   title: string;
-  freePrompt: string;
+  request: string;
   agentId: string;
   processVersionIds: string[];
   status: "draft" | "active";
@@ -189,7 +189,7 @@ type StepKey = (typeof STEPS)[number]["key"];
 
 const defaultForm: AgendaEventFormData = {
   title: "",
-  freePrompt: "",
+  request: "",
   agentId: "",
   processVersionIds: [],
   status: "active",
@@ -495,7 +495,7 @@ setAgendaTimeStepMinutes(safe);
   const validateStep = (s: number): string | null => {
     if (s === 1) {
       if (!form.title.trim()) return "Title is required";
-      if (!form.freePrompt.trim() && form.processVersionIds.length === 0) {
+      if (!form.request.trim() && form.processVersionIds.length === 0) {
         return "A request or at least one process is required";
       }
     }
@@ -661,8 +661,8 @@ setAgendaTimeStepMinutes(safe);
         <Textarea
           id="ae-prompt"
           placeholder="What should the agent do?"
-          value={form.freePrompt}
-          onChange={(e) => updateField("freePrompt", e.target.value)}
+          value={form.request}
+          onChange={(e) => updateField("request", e.target.value)}
           rows={5}
           className="resize-y min-h-[100px]"
         />
@@ -1136,7 +1136,7 @@ setAgendaTimeStepMinutes(safe);
     const weekdayLabels = form.weekdays.map((v) => WEEKDAYS.find((w) => w.value === v)?.label ?? v).join(", ");
     const promptPreview = buildPromptPreview({
       title: form.title,
-      request: form.freePrompt,
+      request: form.request,
       instructions: previewInstructions,
     });
 
@@ -1150,7 +1150,7 @@ setAgendaTimeStepMinutes(safe);
         <div className="rounded-xl border bg-muted/20 divide-y">
           <ReviewRow label="Type" value={form.taskType === "one_time" ? "One-time" : "Repeatable"} />
           <ReviewRow label="Title" value={form.title} />
-          {form.freePrompt && <ReviewRow label="Request" value={form.freePrompt} truncate />}
+          {form.request && <ReviewRow label="Request" value={form.request} truncate />}
           {processNames.length > 0 && <ReviewRow label="Processes" value={processNames.join(", ")} />}
           <ReviewRow label="Agent" value={agentName} />
           {form.modelOverride && <ReviewRow label="Model" value={modelName} />}
@@ -1185,7 +1185,7 @@ setAgendaTimeStepMinutes(safe);
           )}
 
           {/* Simulate section — only show if there's something to simulate */}
-          {(form.freePrompt || form.processVersionIds.length > 0) && (
+          {(form.request || form.processVersionIds.length > 0) && (
             <div className="p-3">
               <AgendaSimulateModal
                 open={true}
@@ -1197,7 +1197,7 @@ setAgendaTimeStepMinutes(safe);
             </div>
           )}
 
-          {(form.title.trim() || form.freePrompt.trim() || form.processVersionIds.length > 0) && (
+          {(form.title.trim() || form.request.trim() || form.processVersionIds.length > 0) && (
             <div className="p-3 pt-0">
               <details className="group rounded-xl border border-dashed border-muted-foreground/25 bg-muted/15 px-4 py-3">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
