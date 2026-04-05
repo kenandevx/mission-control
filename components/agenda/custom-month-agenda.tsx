@@ -433,7 +433,7 @@ function DayCell({
   const [showAllDialog, setShowAllDialog] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
   const dayEvents = events.filter((e) => e.date === dateStr)
-    .sort((a, b) => (a.scheduledFor ?? a.start ?? "").localeCompare(b.scheduledFor ?? b.start ?? ""));
+    .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const visible = dayEvents.slice(0, MAX_VISIBLE);
   const overflow = dayEvents.length - MAX_VISIBLE;
   const hasEvents = dayEvents.length > 0;
