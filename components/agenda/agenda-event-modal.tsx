@@ -37,7 +37,9 @@ import {
   IconCpu,
   IconShieldCheck,
   IconServer,
-  IconLink } from "@tabler/icons-react";
+  IconLink,
+  IconTerminal2,
+  IconChevronDown } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgendaSimulateModal } from "@/components/agenda/agenda-simulate-modal";
@@ -1207,18 +1209,54 @@ setAgendaTimeStepMinutes(safe);
           )}
 
           {(form.title.trim() || form.request.trim() || form.processVersionIds.length > 0) && (
-            <div className="px-4 pb-4 pt-4">
-              <details className="group rounded-xl border bg-card shadow-xs">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-foreground">
-                  <span>Preview input sent to agent</span>
-                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">▾</span>
+            <div className="px-4 pb-4 pt-2">
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-xl border bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/50 select-none">
+                  <span className="flex items-center justify-center size-7 rounded-lg bg-primary/10 shrink-0">
+                    <IconTerminal2 className="size-3.5 text-primary" />
+                  </span>
+                  <span className="flex-1 text-sm font-semibold text-foreground">Preview input sent to agent</span>
+                  <IconChevronDown className="size-4 text-muted-foreground transition-transform duration-200 group-open:rotate-180" />
                 </summary>
-                <div className="px-4 pb-4">
-                  <p className="text-[10px] text-muted-foreground mb-2 italic">
-                    This is a live preview based on the current template. The actual prompt sent to the agent may differ.
-                  </p>
-                  <div className="rounded-lg bg-muted/50 p-4 text-sm leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono max-h-[360px] overflow-y-auto">
-                    {promptPreview}
+
+                <div className="mt-2 rounded-xl border bg-card overflow-hidden shadow-sm">
+                  {/* Header bar */}
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/20">
+                    <span className="size-2 rounded-full bg-red-400/70" />
+                    <span className="size-2 rounded-full bg-yellow-400/70" />
+                    <span className="size-2 rounded-full bg-green-400/70" />
+                    <span className="ml-2 text-[10px] font-mono text-muted-foreground/60 tracking-wide">prompt-renderer.mjs — live preview</span>
+                    <span className="ml-auto text-[9px] text-muted-foreground/40 italic">actual prompt may differ</span>
+                  </div>
+                  {/* Prompt content */}
+                  <div className="max-h-[340px] overflow-y-auto">
+                    <div className="p-4 font-mono text-[11.5px] leading-relaxed">
+                      {promptPreview.split("\n").map((line, i) => {
+                        const isSectionHeader = /^(Task|Context|Instructions|Request|Execution rules|Output rules):$/.test(line.trim());
+                        const isRule = /^- /.test(line);
+                        const isNumbered = /^\d+\./.test(line.trim());
+                        const isEmpty = line.trim() === "";
+                        return (
+                          <div key={i} className={isEmpty ? "h-3" : "leading-relaxed"}>
+                            {isSectionHeader ? (
+                              <span className="text-primary font-bold text-[11px] uppercase tracking-widest opacity-80">{line}</span>
+                            ) : isRule ? (
+                              <span className="text-muted-foreground/70 text-[11px]">
+                                <span className="text-primary/50 mr-1">–</span>
+                                {line.slice(2)}
+                              </span>
+                            ) : isNumbered ? (
+                              <span className="text-foreground/80 text-[11px]">
+                                <span className="text-primary/60 mr-1">{line.match(/^(\d+\.)/)?.[1]}</span>
+                                {line.replace(/^\d+\.\s*/, "")}
+                              </span>
+                            ) : (
+                              <span className="text-foreground/85 text-[11px]">{line}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </details>
