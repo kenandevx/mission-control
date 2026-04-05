@@ -789,16 +789,16 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   {/* Schedule */}
                   <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
-                      <CardDescription>Schedule</CardDescription>
-                      <div className="flex items-center justify-between gap-2">
-                        <CardTitle className="text-sm font-semibold tabular-nums min-w-0 flex-1">
-                          {getScheduleDisplay(event)}
-                        </CardTitle>
-                        <Badge variant="outline" className="shrink-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <CardDescription className="m-0">Schedule</CardDescription>
+                        <Badge variant="outline" className="shrink-0 text-[10px]">
                           <IconCalendar className="size-3" />
                           {event.startDate ?? "Not set"}
                         </Badge>
                       </div>
+                      <CardTitle className="text-sm font-semibold tabular-nums">
+                        {getScheduleDisplay(event)}
+                      </CardTitle>
                     </CardHeader>
                     <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">{event.timezone}</div>
