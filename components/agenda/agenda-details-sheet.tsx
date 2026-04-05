@@ -1188,17 +1188,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             )}
                           </div>
 
-                          {/* Prompt / Instruction — collapsible to avoid duplicating the top-level preview */}
+                          {/* Step Request — always visible, styled like the input card */}
                           {promptText && (
-                            <details className="group rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20">
-                              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                                <span>Step request</span>
-                                <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
-                              </summary>
-                              <div className="px-3 pb-3 text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                            <div className="rounded-lg border bg-card px-4 py-3 shadow-xs">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Step request</p>
+                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 rounded-md p-3 max-h-[400px] overflow-y-auto">
                                 {promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}
-                              </div>
-                            </details>
+                              </p>
+                            </div>
                           )}
 
                           {/* Output */}
