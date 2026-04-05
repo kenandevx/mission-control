@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { statusHex } from "@/lib/status-colors";
 
 type AgendaStats = {
   totalEvents: number;
@@ -118,16 +119,26 @@ export function AgendaStatsCards() {
         </CardFooter>
       </Card>
 
-      <Card data-slot="card" className={`min-h-[150px] ${stats && (stats.runningCount ?? 0) > 0 ? "border-indigo-200 dark:border-indigo-900" : ""}`}>
+      <Card
+        data-slot="card"
+        className="min-h-[150px]"
+        style={stats && (stats.runningCount ?? 0) > 0 ? { borderColor: `${statusHex("running")}55` } : undefined}
+      >
         <CardHeader>
           <CardDescription>Running</CardDescription>
-          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats && (stats.runningCount ?? 0) > 0 ? "text-indigo-600" : ""}`}>
+          <CardTitle
+            className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl"
+            style={stats && (stats.runningCount ?? 0) > 0 ? { color: statusHex("running") } : undefined}
+          >
             {stats ? (
               <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.runningCount ?? 0}</motion.span>
             ) : "—"}
           </CardTitle>
           <CardAction>
-            <Badge variant={stats && (stats.runningCount ?? 0) > 0 ? "outline" : "outline"} className={stats && (stats.runningCount ?? 0) > 0 ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : ""}>
+            <Badge
+              variant="outline"
+              style={stats && (stats.runningCount ?? 0) > 0 ? { borderColor: `${statusHex("running")}66`, backgroundColor: `${statusHex("running")}1A`, color: statusHex("running") } : undefined}
+            >
               {stats && (stats.runningCount ?? 0) > 0 ? "● Live" : "Idle"}
             </Badge>
           </CardAction>
@@ -138,16 +149,26 @@ export function AgendaStatsCards() {
         </CardFooter>
       </Card>
 
-      <Card data-slot="card" className={`min-h-[150px] ${stats && stats.failedCount > 0 ? "border-red-200 dark:border-red-900" : ""}`}>
+      <Card
+        data-slot="card"
+        className="min-h-[150px]"
+        style={stats && stats.failedCount > 0 ? { borderColor: `${statusHex("failed")}55` } : undefined}
+      >
         <CardHeader>
           <CardDescription>Failed Count</CardDescription>
-          <CardTitle className={`text-2xl font-semibold tabular-nums @[250px]/card:text-3xl ${stats && stats.failedCount > 0 ? "text-red-600" : ""}`}>
+          <CardTitle
+            className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl"
+            style={stats && stats.failedCount > 0 ? { color: statusHex("failed") } : undefined}
+          >
             {stats ? (
               <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>{stats.failedCount}</motion.span>
             ) : "—"}
           </CardTitle>
           <CardAction>
-            <Badge variant={stats && stats.failedCount > 0 ? "destructive" : "outline"}>
+            <Badge
+              variant="outline"
+              style={stats && stats.failedCount > 0 ? { borderColor: `${statusHex("failed")}66`, backgroundColor: `${statusHex("failed")}1A`, color: statusHex("failed") } : undefined}
+            >
               <IconTrendingUp />
               {stats && stats.failedCount > 0 ? "Attention" : "Clean"}
             </Badge>

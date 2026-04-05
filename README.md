@@ -112,7 +112,7 @@ mission-control/
 │   ├── use-agenda.ts                # Agenda data fetching
 │   └── use-tasks.ts                 # Board/task data fetching
 ├── lib/
-│   ├── status-colors.ts             # ⭐ Centralized status → color mapping
+│   ├── status-colors.ts             # ⭐ SHARED color source — all status hex values & helpers (STATUS_HEX, statusHex, statusBg, statusText)
 │   ├── agenda/
 │   │   ├── constants.ts             # Status enums, retry codes
 │   │   ├── render-prompt.ts         # Prompt rendering helpers
@@ -262,21 +262,25 @@ All PID files: `.runtime/pids/*.pid` · All logs: `.runtime/logs/*.log`
 
 ### Status Colors
 
-Event pills on the calendar use the latest occurrence status. **Single source of truth: `lib/status-colors.ts`.**
+Event pills on the calendar use the latest occurrence status.
+**Single source of truth: `lib/status-colors.ts` → `STATUS_HEX`.**
 
-| Status | Color | Meaning |
-|---|---|---|
-| `scheduled` | 🔵 Indigo | Created, waiting for scheduler to assign cron job |
-| `queued` | 🟣 Violet | Cron job assigned in gateway, waiting to fire |
-| `running` | 🔵 Blue | Agent **actively executing** right now |
-| `succeeded` | 🟢 Green | Completed successfully |
-| `needs_retry` | 🟡 Amber | Run failed, manual retry required |
-| `failed` | 🔴 Rose | Terminal failure — all retries exhausted |
-| `auto_retry` | 🩷 Pink | Automatically retrying with fallback model |
-| `stale_recovery` | 🟠 Orange | Recovered from stuck/stale running state |
-| `cancelled` | ⬜ Zinc | Manually dismissed — will not run |
-| `skipped` | 🟡 Yellow | Skipped due to unmet dependency |
-| `draft` | ⬜ Gray | Inactive — won't schedule until set to Active |
+All status colors are centralized — every component imports from this shared module.
+Use `statusHex(status)`, `statusBg(status)`, `statusText(status)` helpers, or read `STATUS_HEX` directly.
+
+| Status | Hex | Preview | Meaning |
+|---|---|---|---|
+| `scheduled` | `#A8DADC` | <span style="color:#A8DADC">███</span> Soft powder-blue | Created, waiting for scheduler to assign cron job |
+| `queued` | `#CDB4DB` | <span style="color:#CDB4DB">███</span> Soft lavender | Cron job assigned in gateway, waiting to fire |
+| `running` | `#F4A261` | <span style="color:#F4A261">███</span> Warm sand-orange | Agent **actively executing** right now |
+| `auto_retry` | `#FFAFCC` | <span style="color:#FFAFCC">███</span> Soft pink | Automatically retrying with fallback model |
+| `stale_recovery` | `#FFB4A2` | <span style="color:#FFB4A2">███</span> Soft peach | Recovered from stuck/stale running state |
+| `succeeded` | `#2E7D32` | <span style="color:#2E7D32">███</span> Forest green | Completed successfully |
+| `needs_retry` | `#FFD166` | <span style="color:#FFD166">███</span> Warm yellow | Run failed, manual retry required |
+| `failed` | `#E63946` | <span style="color:#E63946">███</span> Imperial red | Terminal failure — all retries exhausted |
+| `cancelled` | `#D3D3D3` | <span style="color:#D3D3D3">███</span> Light silver | Manually dismissed — will not run |
+| `skipped` | `#EAD7A1` | <span style="color:#EAD7A1">███</span> Soft gold | Skipped due to unmet dependency |
+| `draft` | `#C9D6DF` | <span style="color:#C9D6DF">███</span> Steel blue-grey | Inactive — won't schedule until set to Active |
 
 ### Retry Flow
 
@@ -784,7 +788,7 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Issue | Diagnosis | Fix |
 |---|---|---|
-| Calendar shows blue for events that aren't running | `queued` status was incorrectly colored blue (pre-v2.8) | Update to v2.8+ — `queued` is now violet; only `running` is blue |
+| Calendar shows blue/green/pink/etc. for events that aren't running | Status colors were Tailwind approximations (v2.7–2.8.1) | Update to v2.8.2+ — all colors now use exact design hex values from `STATUS_HEX` in `lib/status-colors.ts` |
 | `scheduled` events never become `queued` | Scheduler not running | `bash scripts/mc-services.sh status` → restart agenda-scheduler |
 | Output tab empty after successful run | `agenda_run_steps` not populated | Check bridge-logger is running; verify `~/.openclaw/cron/runs/*.jsonl` exists |
 | Artifact files not appearing in Output tab | Agent didn't write to the artifact path | Agent must write to the `artifactDir` embedded in the prompt (shown in run output) |

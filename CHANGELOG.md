@@ -2,6 +2,27 @@
 
 All notable changes to Mission Control are documented here.
 
+## [2.8.2] - 2026-04-05
+
+### Refactor
+- **Shared status colors**: All status hex values now live in a single source of truth (`STATUS_HEX` in `lib/status-colors.ts`). Six component files refactored to import from this shared module instead of hardcoding colors.
+- Updated color palette to the design-specified hex values:
+  - Scheduled `#A8DADC` · Queued `#CDB4DB` · Running `#F4A261`
+  - Auto-retry `#FFAFCC` · Stale Recovery `#FFB4A2` · Succeeded `#2E7D32`
+  - Needs Retry `#FFD166` · Failed `#E63946` · Cancelled `#D3D3D3`
+  - Skipped `#EAD7A1` · Draft `#C9D6DF`
+- Helper functions `statusHex()`, `statusBg()`, `statusText()` for consumers that need exact hex.
+- `STATUS_GUIDE_ENTRIES`, `STATUS_BADGE_MAP`, `STATUS_META` now auto-derived from the single hex map — zero duplication.
+- Dot/status indicators, badges, running/spinner, needs-retry, and status guide cards all use exact shared hex values.
+
+### Fixed
+- Details-sheet event log "Running" title was still blue — now `#F4A261`.
+- Active events with no `latestResult` displayed as grey (indigo fallback) — now correctly show as cyan `#A8DADC` (scheduled).
+- `custom-month-agenda.tsx` — 167 lines cleaned: removed `RESULT_INDICATOR` and `STATUS_LABEL_COLORS` maps; everything now sourced from `STATUS_HEX`.
+- `agenda-stats-cards.tsx` — running card ring/badge updated to `#F4A261` instead of indigo.
+- `agenda-failed-bucket.tsx` — failed/needs_retry badge colors from shared hex.
+- `agenda-test-panel.tsx` — test status badges/icons from shared hex.
+
 ## [2.8.1] - 2026-04-04
 
 ### Changed

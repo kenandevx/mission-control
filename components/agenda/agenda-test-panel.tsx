@@ -23,12 +23,13 @@ import {
 import { useAgendaTests } from "./use-agenda-tests";
 import { AGENDA_TESTS } from "./agenda-test-definitions";
 import type { TestResult } from "./agenda-test-definitions";
+import { STATUS_HEX } from "@/lib/status-colors";
 
 function statusIcon(status: TestResult["status"]) {
   switch (status) {
-    case "passed": return <IconCheck className="size-4 text-emerald-500" />;
-    case "failed":  return <IconAlertTriangle className="size-4 text-red-500" />;
-    case "running": return <div className="size-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />;
+    case "passed": return <IconCheck className="size-4" style={{ color: STATUS_HEX.succeeded }} />;
+    case "failed":  return <IconAlertTriangle className="size-4" style={{ color: STATUS_HEX.failed }} />;
+    case "running": return <div className="size-4 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: STATUS_HEX.running, borderTopColor: "transparent" }} />;
     case "skipped": return <IconX className="size-4 text-muted-foreground" />;
     default:        return <IconClock className="size-4 text-muted-foreground" />;
   }
@@ -36,9 +37,9 @@ function statusIcon(status: TestResult["status"]) {
 
 function statusBadge(status: TestResult["status"]) {
   switch (status) {
-    case "passed": return <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 text-xs gap-1"><span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />Passed</Badge>;
-    case "failed":  return <Badge variant="outline" className="border-red-500/40 bg-red-500/10 text-red-600 text-xs gap-1"><span className="size-1.5 rounded-full bg-red-500 shrink-0" />Failed</Badge>;
-    case "running": return <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs gap-1"><div className="size-1.5 rounded-full border border-primary border-t-transparent animate-spin shrink-0" />Running</Badge>;
+    case "passed": return <Badge variant="outline" className="text-xs gap-1" style={{ borderColor: `${STATUS_HEX.succeeded}66`, backgroundColor: `${STATUS_HEX.succeeded}1A`, color: STATUS_HEX.succeeded }}><span className="size-1.5 rounded-full shrink-0" style={{ backgroundColor: STATUS_HEX.succeeded }} />Passed</Badge>;
+    case "failed":  return <Badge variant="outline" className="text-xs gap-1" style={{ borderColor: `${STATUS_HEX.failed}66`, backgroundColor: `${STATUS_HEX.failed}1A`, color: STATUS_HEX.failed }}><span className="size-1.5 rounded-full shrink-0" style={{ backgroundColor: STATUS_HEX.failed }} />Failed</Badge>;
+    case "running": return <Badge variant="outline" className="text-xs gap-1" style={{ borderColor: `${STATUS_HEX.running}66`, backgroundColor: `${STATUS_HEX.running}1A`, color: STATUS_HEX.running }}><div className="size-1.5 rounded-full border border-t-transparent animate-spin shrink-0" style={{ borderColor: STATUS_HEX.running, borderTopColor: "transparent" }} />Running</Badge>;
     case "skipped": return <Badge variant="outline" className="text-muted-foreground text-xs gap-1">Skipped</Badge>;
     default:        return <Badge variant="outline" className="text-muted-foreground text-xs">Pending</Badge>;
   }
@@ -131,12 +132,12 @@ function SummaryBar({ results, running }: {
         </div>
       ) : done > 0 ? (
         <>
-          <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+          <div className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: STATUS_HEX.succeeded }}>
             <IconShieldCheck className="size-4" />
             {passed} passed
           </div>
           {failed > 0 && (
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-red-600 dark:text-red-400">
+            <div className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: STATUS_HEX.failed }}>
               <IconAlertTriangle className="size-4" />
               {failed} failed
             </div>

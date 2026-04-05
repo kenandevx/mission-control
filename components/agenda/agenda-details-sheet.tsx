@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,7 @@ import {
   IconLock,
   IconCopy,
 } from "@tabler/icons-react";
-import { STATUS_BADGE_MAP, STATUS_BADGE_FALLBACK } from "@/lib/status-colors";
+import { STATUS_BADGE_MAP, STATUS_BADGE_FALLBACK, STATUS_HEX } from "@/lib/status-colors";
 
 
 export type AgendaEventSummary = {
@@ -351,16 +352,16 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
     "agenda.skipped": "Skipped",
     "agenda.cancelled": "Cancelled",
   };
-  const eventTone: Record<string, string> = {
-    "agenda.created": "text-muted-foreground",
-    "agenda.queued": "text-muted-foreground",
-    "agenda.started": "text-orange-600 dark:text-orange-400",
-    "agenda.output_captured": "text-muted-foreground",
-    "agenda.succeeded": "text-emerald-600 dark:text-emerald-400",
-    "agenda.failed": "text-red-600 dark:text-red-400",
-    "agenda.fallback": "text-amber-600 dark:text-amber-400",
-    "agenda.skipped": "text-slate-500 dark:text-slate-400",
-    "agenda.cancelled": "text-muted-foreground",
+  const eventTone: Record<string, CSSProperties> = {
+    "agenda.created": {},
+    "agenda.queued": {},
+    "agenda.started": { color: STATUS_HEX.running },
+    "agenda.output_captured": {},
+    "agenda.succeeded": { color: STATUS_HEX.succeeded },
+    "agenda.failed": { color: STATUS_HEX.failed },
+    "agenda.fallback": { color: STATUS_HEX.needs_retry },
+    "agenda.skipped": { color: STATUS_HEX.skipped },
+    "agenda.cancelled": {},
   };
 
   return (
@@ -368,7 +369,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
       {logs.map((log) => (
         <div key={log.id} className="rounded-md border bg-card p-3 text-xs">
           <div className="flex items-center justify-between gap-2 mb-1">
-            <span className={`font-semibold ${eventTone[log.event_type] ?? 'text-foreground'}`}>
+            <span className="font-semibold text-foreground" style={eventTone[log.event_type] ?? undefined}>
               {eventLabel[log.event_type] ?? log.event_type.replace(/^agenda\./, '').replaceAll('_', ' ')}
             </span>
             <span className="text-muted-foreground text-[10px]">

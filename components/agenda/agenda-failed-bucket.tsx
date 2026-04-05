@@ -21,6 +21,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import { statusHex } from "@/lib/status-colors";
 
 type FailedOccurrence = {
   id: string;
@@ -34,12 +35,19 @@ type FailedOccurrence = {
 };
 
 function StatusBadge({ status }: { status: string }): React.ReactElement {
-  const map: Record<string, { label: string; className: string }> = {
-    failed: { label: "Failed", className: "bg-red-500/10 text-red-600 border-red-500/20" },
-    needs_retry: { label: "Needs Retry", className: "bg-amber-500/10 text-amber-600 border-amber-500/20" },
+  const map: Record<string, { label: string; color?: string }> = {
+    failed: { label: "Failed", color: statusHex("failed") },
+    needs_retry: { label: "Needs Retry", color: statusHex("needs_retry") },
   };
-  const cfg = map[status] ?? { label: status, className: "" };
-  return <Badge variant="outline" className={cfg.className}>{cfg.label}</Badge>;
+  const cfg = map[status] ?? { label: status };
+  return (
+    <Badge
+      variant="outline"
+      style={cfg.color ? { backgroundColor: `${cfg.color}1A`, color: cfg.color, borderColor: `${cfg.color}33` } : undefined}
+    >
+      {cfg.label}
+    </Badge>
+  );
 }
 
 function formatScheduledFor(iso: string): string {
