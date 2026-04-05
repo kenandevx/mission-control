@@ -80,7 +80,7 @@ export const STATUS_COLOR_MAP: Record<string, EventColor> = {
   cancelled:    "zinc",
   skipped:      "yellow",
   auto_retry:   "pink",
-  stale_recovery: "orange",
+  stale_recovery: "fuchsia",
 };
 
 export function resolveEventColorKey(event: { status?: string; latestResult?: string | null; color?: EventColor }): EventColor {
@@ -88,7 +88,7 @@ export function resolveEventColorKey(event: { status?: string; latestResult?: st
   if (event.latestResult && STATUS_COLOR_MAP[event.latestResult]) {
     return STATUS_COLOR_MAP[event.latestResult];
   }
-  if (event.status === "active") return "indigo";
+  if (event.status === "active") return "cyan";
   return "gray";
 }
 
@@ -108,7 +108,7 @@ export const STATUS_BADGE_MAP: Record<string, { label: string; className: string
   scheduled:      { label: "Scheduled",      className: "border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400", tooltip: "Scheduled for future execution" },
   needs_retry:    { label: "⚠ Needs Retry",  className: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", tooltip: "All retries exhausted — needs manual retry" },
   auto_retry:     { label: "↺ Auto-retry",   className: "border-pink-500/40 bg-pink-500/10 text-pink-600 dark:text-pink-400", tooltip: "Automatically retrying with fallback model" },
-  stale_recovery: { label: "⟳ Stale",        className: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400", tooltip: "Recovered from a stuck running state" },
+  stale_recovery: { label: "⟳ Stale",        className: "border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400", tooltip: "Recovered from a stuck running state" },
   cancelled:      { label: "Cancelled",       className: "border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400", tooltip: "Manually dismissed" },
   skipped:        { label: "⏭ Skipped",      className: "border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400", tooltip: "Skipped due to unmet dependency" },
   draft:          { label: "Draft",          className: "border-gray-400/40 bg-gray-400/10 text-gray-500 dark:text-gray-400", tooltip: "Inactive event" },
@@ -191,9 +191,9 @@ export const STATUS_GUIDE_ENTRIES: ReadonlyArray<{
     key: "stale_recovery",
     label: "Stale Recovery",
     desc: "Recovered from a stuck running state.",
-    colorKey: "orange" as EventColor,
-    bg: "bg-orange-500/8 dark:bg-orange-500/10",
-    ring: "ring-orange-500/20",
+    colorKey: "fuchsia" as EventColor,
+    bg: "bg-fuchsia-500/8 dark:bg-fuchsia-500/10",
+    ring: "ring-fuchsia-500/20",
   },
   // ── Disabled / inactive ──
   {

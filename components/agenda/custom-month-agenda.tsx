@@ -119,7 +119,7 @@ const HOUR_HEIGHT = 72; // px per hour slot in week/day views
 
 const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: boolean }> = {
   running:      { emoji: "", color: "bg-orange-500", pulse: true },
-  scheduled:    { emoji: "", color: "bg-teal-500" },
+  scheduled:    { emoji: "", color: "bg-cyan-500" },
   queued:       { emoji: "", color: "bg-violet-500" },
   succeeded:    { emoji: "", color: "bg-emerald-500" },
   failed:       { emoji: "", color: "bg-rose-500" },
@@ -127,7 +127,7 @@ const RESULT_INDICATOR: Record<string, { emoji: string; color: string; pulse?: b
   cancelled:    { emoji: "", color: "bg-zinc-400" },
   skipped:      { emoji: "", color: "bg-yellow-500" },
   auto_retry:   { emoji: "", color: "bg-pink-500", pulse: true },
-  stale_recovery: { emoji: "", color: "bg-orange-500" },
+  stale_recovery: { emoji: "", color: "bg-fuchsia-500" },
 };
 
 // ── Cron countdown (for queued/scheduled events) ─────────────────────────────
@@ -221,9 +221,9 @@ function NeedsRetryBadge() {
 const STATUS_LABEL_COLORS: Record<string, string> = {
   scheduled: "#0891b2",
   queued: "#8b5cf6",
-  running: "#2563eb",
+  running: "#ea580c",
   auto_retry: "#ec4899",
-  stale_recovery: "#ea580c",
+  stale_recovery: "#c026d3",
   succeeded: "#16a34a",
   failed: "#e11d48",
   needs_retry: "#d97706",
@@ -1146,7 +1146,8 @@ export function CustomMonthAgenda({
         color: (props.color as EventColor) ?? "default",
         isRecurring: !!props.recurrence && (props.recurrence as string) !== "none",
         status: (props.status as "draft" | "active") ?? "active",
-        latestResult: (props.latestResult as CalendarEvent["latestResult"]) ?? null,
+        latestResult: (props.latestResult as CalendarEvent["latestResult"]) ??
+          (props.status === "active" ? "scheduled" : null),
         runStartedAt: (props.runStartedAt as string) ?? null,
         runFinishedAt: (props.runFinishedAt as string) ?? null,
         timezone: tz,

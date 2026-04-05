@@ -354,7 +354,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
   const eventTone: Record<string, string> = {
     "agenda.created": "text-muted-foreground",
     "agenda.queued": "text-muted-foreground",
-    "agenda.started": "text-blue-600 dark:text-blue-400",
+    "agenda.started": "text-orange-600 dark:text-orange-400",
     "agenda.output_captured": "text-muted-foreground",
     "agenda.succeeded": "text-emerald-600 dark:text-emerald-400",
     "agenda.failed": "text-red-600 dark:text-red-400",
