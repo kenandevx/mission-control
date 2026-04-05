@@ -167,11 +167,9 @@ export async function POST(
     const existingCronJobId = occurrence.cron_job_id as string | null;
 
     const sessionTarget = (occurrence.session_target as string) || "isolated";
-    // Main-session agenda runs do not reliably honor per-event model pinning.
-    // Ignore override model there so runtime behavior matches stored config/UI.
-    const overrideModel = sessionTarget === "main"
-      ? undefined
-      : ((body.model as string | undefined) || (occurrence.model_override as string) || undefined);
+    // Per docs: --model works for both isolated and main-session cron jobs.
+    // Apply model override for all session targets.
+    const overrideModel = (body.model as string | undefined) || (occurrence.model_override as string) || undefined;
 
     // Step 1: always replace retry cron jobs with a freshly rendered one.
     // Re-using an existing cron job can preserve stale rendered_prompt text, old
