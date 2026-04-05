@@ -170,17 +170,18 @@ function formatTime(ts: string | null, timezone?: string) {
 function beautifyOutputSource(source: string | null | undefined) {
   const raw = String(source ?? "").trim();
   if (!raw) return "";
-  // Step 1: fix common typos/misspellings
-  // Step 2: replace separators
-  // Step 3: title-case each word
+  // Step 1: fix common typos/misspellings first (order matters — specific before general)
   let s = raw
-    .replace(/assis[t]?an[t]?s?/gi, "Assistant")    // assisant, assistant, assitants, etc.
     .replace(/_session_/gi, " Session ")
-    .replace(/_[a-z]/g, (m) => ` ${m[1].toUpperCase()}`)  // snake_case → camel display
+    // Normalize any variant of "assistant" (assistan, assisant, assisstant, assistent, etc.)
+    .replace(/assis[st]?[aie][n]?[st]?s?/gi, "Assistant")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  // Step 2: title-case each word
+  return s.replace(/\b([a-z])([a-z]*)\b/gi, (m, first, rest) =>
+    first.toUpperCase() + rest.toLowerCase()
+  );
 }
 
 /** Wrap any element with a Radix tooltip */

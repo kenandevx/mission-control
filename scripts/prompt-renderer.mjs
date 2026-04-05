@@ -1,10 +1,6 @@
 /**
- * Prompt template v2 — unified task message renderer.
- *
- * The rules below are intentionally strict to prevent common LLM pitfalls:
- *   - No meta-commentary about skills, tools, or methods
- *   - No "I'll..." or "Let me..." filler
- *   - Produce the deliverable directly, don't announce it
+ * Prompt template v2.1 — unified task message renderer.
+ * v2.1 changes: restored explicit skill-reference instruction to prevent meta-commentary.
  *
  * When you modify these rules, existing events continue using whatever
  * rendered_prompt they already have (persisted at schedule time).
@@ -54,10 +50,12 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
 
   const executionRules = [
     "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
-    "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary.",
+    "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
     "- Never announce which skill, tool, or method you're about to use. Just do the work.",
+    "- If the request mentions a skill or tool by name, silently use it — do not describe your tool choice.",
     "- Start your response with the deliverable, not with commentary about how you'll produce it.",
     "- If you're generating content (text, code, images, etc.), output the content directly.",
+    "- If the user asks for a deliverable, produce the deliverable directly.",
   ];
   sections.push(`Execution rules:\n${executionRules.join("\n")}`);
 
@@ -76,4 +74,4 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
   return sections.filter((s) => clean(s)).join("\n\n");
 }
 
-export const TEMPLATE_VERSION = 2;
+export const TEMPLATE_VERSION = 2.1;
