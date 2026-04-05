@@ -697,6 +697,15 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Close button — same style as the 3-dots menu trigger */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                    onClick={() => onClose()}
+                  >
+                    <IconX className="size-4" />
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button size="sm" variant="outline" className="h-8 w-8 p-0 cursor-pointer">
