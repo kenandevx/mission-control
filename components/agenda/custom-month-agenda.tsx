@@ -368,7 +368,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
         })()}
         {/* Recurring icon when no status yet */}
         {!event.latestResult && event.isRecurring && (
-          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.65 }}>
+          <span className="inline-flex items-center justify-center shrink-0 ml-1" style={{ color, opacity: 0.65 }}>
             <RecurringIcon size={8} />
           </span>
         )}
@@ -482,7 +482,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         })()}
         {/* Recurring icon when no status yet */}
         {!event.latestResult && event.isRecurring && (
-          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.65 }}>
+          <span className="inline-flex items-center justify-center shrink-0 ml-1" style={{ color, opacity: 0.65 }}>
             <RecurringIcon size={8} />
           </span>
         )}
