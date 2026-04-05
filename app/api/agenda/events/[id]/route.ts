@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { DateTime } from "luxon";
 import { buildCleanEnv } from "@/scripts/openclaw-config.mjs";
-import { getRootArtifactDir } from "@/scripts/runtime-artifacts.mjs";;
+import { getRootArtifactDir } from "@/scripts/runtime-artifacts.mjs";
 
 const execFileAsync = promisify(execFile);
 
