@@ -33,7 +33,7 @@ export function AgendaSimulateModal({ open, formData, agents, processes, onClose
       const builtSteps: typeof steps = [];
 
       // Request as first step if present
-      if ((formData as Record<string, unknown>).request?.trim()) {
+      if (formData.request?.trim()) {
         builtSteps.push({
           title: "Request",
           instruction: `[SIMULATION MODE]\n\n${(formData as Record<string, unknown>).request}`,

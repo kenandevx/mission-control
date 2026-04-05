@@ -529,6 +529,15 @@ function humanRecurrence(recurrence: string) {
   return map[recurrence] ?? recurrence;
 }
 
+function getScheduleDisplay(event: AgendaEventSummary): string {
+  if (!event.startDate) return "Not set";
+  const time = event.startTime || "";
+  const tz = event.startTime ? ` ${getTimezoneAbbr(event.timezone)}` : "";
+  const main = `${event.startDate} ${time}${tz}`.trim();
+  if (event.endDate) return `${main} to ${event.endDate}`;
+  return main;
+}
+
 export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCopy, onRetry, onDelete }: Props) {
   const [activeTab, setActiveTab] = useState("overview");
   const [occurrences, setOccurrences] = useState<{ id: string; scheduled_for: string; status: string; latest_attempt_no: number; rendered_prompt?: string | null }[]>([]);
@@ -773,7 +782,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                     <CardHeader>
                       <CardDescription>Schedule</CardDescription>
                       <CardTitle className="text-sm font-semibold tabular-nums truncate">
-                        {event.startDate ? `${event.startDate} ${event.startTime ? event.startTime : ""} ${event.startTime ? getTimezoneAbbr(event.timezone) : ""}`.trim() || "—"} {event.endDate ? `→ ${event.endDate}` : ""}
+                        {getScheduleDisplay(event)}
                       </CardTitle>
                       <CardAction>
                         <Badge variant="outline">
@@ -956,7 +965,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                                 return;
                               }
                               onRetry(selectedOccurrenceId!);
-                              setOccStatusOverride({ id: selectedOccurrenceId, status: "queued" });
+                              setOccStatusOverride({ id: selectedOccurrenceId as string, status: "queued" });
                             }}
                           >
                             <IconRefresh className="size-3" />
