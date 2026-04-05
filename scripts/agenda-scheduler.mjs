@@ -149,6 +149,17 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
   const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
   // Main session cron jobs require --system-event; isolated sessions use --message.
   const isMain = target === "main";
+  // For main sessions, wrap the message in a user-style prompt so the System
+  // instructions don't leak as visible "System:" messages in the Telegram chat.
+  // The rendered prompt contains full system instructions — if injected raw via
+  // --system-event, the user sees every System (untrusted): line in their chat.
+  const effectiveMessage = isMain
+    ? `[Agenda Task: ${title}]
+
+${message}
+
+(Agenda system instructions above — respond to the task, do not repeat these instructions.)`
+    : message;
   const args = [
     "add",
     "--name", `MC: ${title}`,
@@ -157,7 +168,7 @@ async function createCronJob({ title, message, agentId, model, scheduledFor, ses
     // OpenClaw requires --system-event for main session cron jobs.
     // --message is only valid for isolated agent sessions.
     isMain ? "--system-event" : "--message",
-    message,
+    isMain && effectiveMessage.length > 4000 ? effectiveMessage.slice(0, 4000) + '\n\n[Instructions truncated for session size — respond to the task above.]' : effectiveMessage,
     "--agent", agentId || "main",
     "--delete-after-run",
     // Isolated runs must not announce back to Telegram — bridge-logger captures
@@ -319,6 +330,10 @@ async function renderPromptForEvent(event, occurrenceId) {
     occurrenceId: occurrenceId || "unknown",
   });
 
+  // Main-session events get a clean prompt — Execution rules / Output rules
+  // are internal framework instructions that would leak into the user's chat.
+  const isMainSession = event.session_target === "main";
+
   // Inject a unique marker into the task text. Bridge-logger uses this to locate
   // the exact injection point in the session file regardless of when the task fired,
   // solving the session_line_offset capture-time mismatch problem.
@@ -331,6 +346,7 @@ async function renderPromptForEvent(event, occurrenceId) {
     instructions: composedSteps,
     request: event.free_prompt ? String(event.free_prompt) : "",
     artifactDir,
+    isMainSession,
   });
 
   return `${markerLine}\n\n${rendered}`;
@@ -790,7 +806,8 @@ try {
 
     const { occurrenceId, fallbackModel } = data;
     const [occ] = await sql`
-      SELECT ao.id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target, ao.scheduled_for
+      SELECT ao.id, ao.rendered_prompt, ae.title, ae.default_agent_id, ae.session_target,
+             ae.free_prompt, ao.scheduled_for
       FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
       WHERE ao.id = ${occurrenceId} AND ao.status = 'needs_retry'
@@ -805,7 +822,7 @@ try {
     let message;
     try {
       message = await renderPromptForEvent(
-        { id: occ.agenda_event_id, title: occ.title, free_prompt: occ.free_prompt },
+        { id: occ.agenda_event_id, title: occ.title, free_prompt: occ.free_prompt, session_target: occ.session_target },
         occurrenceId,
       );
       // Update the stored prompt so future fallback retries also use the correct ID.

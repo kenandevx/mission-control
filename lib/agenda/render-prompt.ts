@@ -16,11 +16,16 @@ interface AgendaEvent {
   id: string;
   title: string;
   free_prompt?: string | null;
+  session_target?: string | null;
 }
 
 /**
  * Render the full task prompt for an event + occurrence.
  * Loads all linked process versions and their steps from the DB.
+ *
+ * When session_target is 'main', a minimal prompt is used (no Execution rules,
+ * no Output rules) to prevent framework instructions from leaking into the
+ * user's main session chat.
  */
 export async function renderPromptForOccurrence(
   sql: Sql,
@@ -66,11 +71,17 @@ export async function renderPromptForOccurrence(
     runId: "artifacts",
   });
 
+  // Main session events get a clean prompt — no internal framework rules.
+  // The user WILL see this prompt in their Telegram chat if the session
+  // target is 'main', so keep it minimal and user-facing only.
+  const isMainSession = event.session_target === "main";
+
   return renderUnifiedTaskMessage({
     title: event.title,
     context: "",
     instructions: composedSteps,
     request: event.free_prompt ? String(event.free_prompt) : "",
     artifactDir,
+    isMainSession,
   });
 }
