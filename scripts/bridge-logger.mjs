@@ -741,7 +741,15 @@ async function readLastAssistantFromSession(sessionTarget, sessionId, fromLineOf
           console.log(`[bridge-logger] readLastAssistantFromSession: found assistant msg (${text.trim().length} chars) in ${path.basename(sessionFilePath)} at line ${i+1} (markerLine=${injectionLineIdx !== null} scanStart=${scanStartIdx})`);
           return text.trim().slice(0, 8000);
         }
-        // Empty assistant message — keep scanning (task may be still processing or rate-limited).
+        // Empty assistant message — check for an error (e.g. rate-limit, model error).
+        // If errorMessage is present, surface it as a special sentinel so the caller
+        // can report the real failure reason instead of a generic no_output.
+        const errMsg = parsed?.message?.errorMessage ?? parsed?.errorMessage ?? null;
+        if (errMsg) {
+          console.warn(`[bridge-logger] readLastAssistantFromSession: assistant error at line ${i+1} for occurrence ${occurrenceId}: ${errMsg}`);
+          return `__SESSION_ERROR__:${errMsg}`;
+        }
+        // Empty assistant message with no error — keep scanning.
       } catch { continue; }
     }
     console.log(`[bridge-logger] readLastAssistantFromSession: no assistant message found in ${path.basename(sessionFilePath)} (marker=${injectionLineIdx !== null}, fromLineOffset=${fromLineOffset}) — task produced no output`);
@@ -870,6 +878,16 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
     // growth between scheduling and firing times.
     let sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
 
+    // ── Session error sentinel: empty assistant turn with an errorMessage (e.g. rate-limit) ─
+    // Don't retry — the error is definitive. Fail immediately with the real error text.
+    if (typeof sessionOutput === 'string' && sessionOutput.startsWith('__SESSION_ERROR__:')) {
+      const errMsg = sessionOutput.slice('__SESSION_ERROR__:'.length);
+      result.output = null;
+      result.outputSource = 'no_output';
+      result.outputMeta.sessionError = errMsg;
+      return result;
+    }
+
     // ── Fix #1: Retry with backoff for main-session no_output race condition ─
     // The agent writes its response asynchronously to the session file.
     // If bridge-logger scans before the response is flushed, it falsely
@@ -882,6 +900,14 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       console.log(`[bridge-logger] resolveAgendaOutput: no output on first scan — retry ${retries}/3 after ${delayMs}ms for occurrence ${occurrenceId}`);
       await new Promise(r => setTimeout(r, delayMs));
       sessionOutput = await readLastAssistantFromSession(sessionTarget, sessionId, fromLineOffset, occurrenceId);
+      // Also check for session error sentinel on retries
+      if (typeof sessionOutput === 'string' && sessionOutput.startsWith('__SESSION_ERROR__:')) {
+        const errMsg = sessionOutput.slice('__SESSION_ERROR__:'.length);
+        result.output = null;
+        result.outputSource = 'no_output';
+        result.outputMeta.sessionError = errMsg;
+        return result;
+      }
       if (sessionOutput) {
         console.log(`[bridge-logger] resolveAgendaOutput: found output on retry ${retries} for occurrence ${occurrenceId} (${sessionOutput.trim().length} chars)`);
       }
@@ -1341,8 +1367,11 @@ async function handleCronRunLine(getSql, jobId, line) {
     const fallbackModel = String(occ.fallback_model || globalFallback || "").trim();
     const shouldTryFallback = fallbackModel && !occ.fallback_attempted && attemptNo >= maxRetries;
     const isNoOutput = outputResolution.outputSource === 'no_output';
+    const sessionErrorMsg = outputResolution.outputMeta?.sessionError ?? null;
     const failureReason = isNoOutput
-      ? `no_output: task produced no output (possible rate-limit / session failure, model=${run.model || 'unknown'})`
+      ? sessionErrorMsg
+        ? `session_error: ${sessionErrorMsg}`
+        : `no_output: task produced no output (possible rate-limit / session failure, model=${run.model || 'unknown'})`
       : String(run.error || '').slice(0, 2000);
     const targetStatus = shouldTryFallback ? 'needs_retry' : (occ.fallback_attempted ? 'failed' : 'needs_retry');
 
