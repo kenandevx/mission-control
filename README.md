@@ -2,7 +2,7 @@
 
 **The OpenClaw native dashboard** — manage scheduled agenda tasks, multi-step processes, Kanban boards, agent logs, file browsing, and system settings from a single UI.
 
-**Version 2.8.1** · Next.js 14 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
+**Version 2.9.0** · Next.js 14 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
 
 > **No Redis. No BullMQ.** Execution is handled natively by the OpenClaw cron engine (v2+).
 
@@ -83,7 +83,7 @@ mission-control/
 │   │   ├── agenda-page-client.tsx   # Main calendar page
 │   │   ├── agenda-details-sheet.tsx # Side sheet: Overview / Output / Logs tabs
 │   │   ├── agenda-event-modal.tsx   # Create/edit event form
-│   │   ├── custom-month-agenda.tsx # Custom month calendar (status legend)
+│   │   ├── custom-month-agenda.tsx  # Custom month calendar (status legend)
 │   │   ├── agenda-simulate-modal.tsx
 │   │   ├── agenda-stats-cards.tsx
 │   │   └── agenda-failed-bucket.tsx # Needs-retry occurrences
@@ -113,8 +113,10 @@ mission-control/
 │   └── use-tasks.ts                 # Board/task data fetching
 ├── lib/
 │   ├── status-colors.ts             # ⭐ Centralized status → color mapping
-│   ├── agenda-domain.ts             # Agenda business logic (transitions, etc.)
-│   ├── agenda-render-prompt.ts      # Prompt rendering helpers
+│   ├── agenda/
+│   │   ├── constants.ts             # Status enums, retry codes
+│   │   ├── render-prompt.ts         # Prompt rendering helpers
+│   │   └── domain.ts                # Agenda business logic
 │   ├── agent-log-utils.ts           # Log message parsing + display utils
 │   ├── db/adapter.ts                # PostgreSQL query wrapper
 │   ├── db/server-data.ts            # Server-side data helpers
@@ -125,7 +127,7 @@ mission-control/
 │   ├── bridge-logger.mjs            # File watcher → agent_logs DB ingestion
 │   ├── gateway-sync.mjs             # One-shot: imports agents + sessions from gateway
 │   ├── prompt-renderer.mjs          # Renders unified task message from event + process
-│   ├── runtime-artifacts.mjs        # Artifact dir management (scan, cleanup)
+│   ├── runtime-artifacts.mjs        # Artifact dir management (scan, cleanup, delete)
 │   ├── db-setup.mjs                 # DB migrations, seed, reset
 │   ├── db-init.sh                   # Docker init container entrypoint
 │   ├── agenda-selfcheck.mjs         # Health check
@@ -141,7 +143,9 @@ mission-control/
 │   ├── agents.ts                   # Agent + AgentLog TypeScript types
 │   └── tasks.ts                    # Board/column/ticket types
 └── runtime-artifacts/              # Agent-generated output files (gitignored)
-    └── agenda/<eventId>/occurrences/cron/runs/<runId>/<files>
+    └── agenda/<eventId>/occurrences/
+        ├── <occurrenceId>/artifacts/  # Canonical agent output directory
+        └── <occurrenceId>/runs/       # per-run artifact dirs (attempt level)
 ```
 
 ---
@@ -179,8 +183,8 @@ mission-control/
 
 | Service | Script | Runs | Purpose |
 |---|---|---|---|
-| **agenda-scheduler** | `agenda-scheduler.mjs` | Persistent | Expands RRULE → creates `openclaw cron` jobs → syncs results via bridge-logger |
-| **bridge-logger** | `bridge-logger.mjs` | Persistent | Watches gateway log + session files + cron runs → writes to `agent_logs` table |
+| **agenda-scheduler** | `agenda-scheduler.mjs` | Persistent | Expands RRULE → creates `openclaw cron` jobs → detects orphaned cron jobs |
+| **bridge-logger** | `bridge-logger.mjs` | Persistent | Watches gateway log + session files + cron runs → writes to `agent_logs` + syncs agenda results |
 | **gateway-sync** | `gateway-sync.mjs` | One-shot (exits) | Imports agents + sessions from OpenClaw gateway into DB on startup |
 | **nextjs** | `npm run start` | Persistent | Production Next.js server |
 | **watchdog** | built into `mc-services.sh` | Persistent | Checks every 30s, auto-restarts crashed services |
@@ -212,11 +216,11 @@ All PID files: `.runtime/pids/*.pid` · All logs: `.runtime/logs/*.log`
 ### How It Works (End-to-End)
 
 1. **Event created** — user fills in title, prompt, recurrence (RRULE), agent, model, execution window
-2. **Scheduler cycle** (every `poll_interval_seconds`) — for each active event, expands RRULE over the next 14 days; creates `agenda_occurrences` rows with status `scheduled`
+2. **Scheduler cycle** (every ~15s) — for each active event, expands RRULE over the next 14 days; creates `agenda_occurrences` rows with status `scheduled`
 3. **Occurrence queued** — occurrence's scheduled time is within the lookahead window → scheduler calls `openclaw cron add --at <timestamp>`; sets occurrence status to `queued`; stores `cron_job_id`
-4. **Cron fires** — OpenClaw gateway executes the cron job in an isolated agent session; output lands in `~/.openclaw/cron/runs/<jobId>.jsonl`
-5. **bridge-logger detects** the cron run file → parses result → sets occurrence to `succeeded` or `failed`
-6. **If failed** — scheduler checks if fallback model is set; if yes, creates a new cron job with fallback model (status `auto_retry`); if no more retries, sets `needs_retry`
+4. **Cron fires** — OpenClaw gateway executes the cron job in an agent session; output lands in `~/.openclaw/cron/runs/<jobId>.jsonl`
+5. **bridge-logger detects** the cron run file → parses result → reads actual agent output → sets occurrence to `succeeded` or `failed`
+6. **If failed** — scheduler checks if fallback model is set; if yes, creates a new cron job with fallback model; if no more retries, sets `needs_retry`
 7. **Dashboard reflects state** via SSE subscriptions on `pg_notify('agenda_change')`
 
 ### Occurrence Lifecycle
@@ -252,7 +256,7 @@ All PID files: `.runtime/pids/*.pid` · All logs: `.runtime/logs/*.log`
 │  cancelled  ←── user dismissed / deleted occurrence               │
 │  skipped    ←── dependency failed or timed out                    │
 │  draft      ←── event deactivated                                 │
-│  stale_recovery ←── recovered from stuck running state            │
+│  stale_recovery ←── recovered from stuck running state             │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -262,40 +266,53 @@ Event pills on the calendar use the latest occurrence status. **Single source of
 
 | Status | Color | Meaning |
 |---|---|---|
-| `scheduled` | ⚪ Grey | Created, waiting for scheduler to assign cron job |
-| `queued` | ⚪ Grey | Cron job assigned, waiting to fire — **not blue** |
-| `running` | 🔵 Blue | Agent **actively executing** right now — **only this status is blue** |
+| `scheduled` | 🔵 Indigo | Created, waiting for scheduler to assign cron job |
+| `queued` | 🟣 Violet | Cron job assigned in gateway, waiting to fire |
+| `running` | 🔵 Blue | Agent **actively executing** right now |
 | `succeeded` | 🟢 Green | Completed successfully |
-| `needs_retry` | 🟡 Amber | All retries exhausted, needs manual intervention |
-| `failed` | 🔴 Rose | Terminal failure |
-| `auto_retry` | 🔵 Indigo | Automatically retrying with fallback model |
-| `force_retry` | 🟣 Purple | Manually triggered re-run |
+| `needs_retry` | 🟡 Amber | Run failed, manual retry required |
+| `failed` | 🔴 Rose | Terminal failure — all retries exhausted |
+| `auto_retry` | 🩷 Pink | Automatically retrying with fallback model |
 | `stale_recovery` | 🟠 Orange | Recovered from stuck/stale running state |
-| `cancelled` / `skipped` / `draft` | ⬜ Grey muted | Inactive — won't run |
+| `cancelled` | ⬜ Zinc | Manually dismissed — will not run |
+| `skipped` | 🟡 Yellow | Skipped due to unmet dependency |
+| `draft` | ⬜ Gray | Inactive — won't schedule until set to Active |
 
 ### Retry Flow
 
-- **Primary attempt fails** → scheduler checks `fallback_model` on the event
-- If fallback is set and not yet attempted → creates a new cron job with fallback model; occurrence status → `auto_retry`
-- If fallback is set but already attempted, or no fallback → `needs_retry`; alert sent
+- **Primary attempt fails** → bridge-logger checks `fallback_model` on the event
+- If fallback is set and not yet attempted → creates a new cron job with fallback model; occurrence status → `needs_retry` (fallback run picks it up)
+- If fallback is set but already attempted, or no fallback → `needs_retry`; alert sent to user
 - User can click **Retry** on any failed/needs_retry occurrence → creates new cron job → `queued`
-- User can **Edit + Save** a needs_retry occurrence → re-renders prompt → new cron job
+- User can **Force Retry** on succeeded/cancelled occurrences to re-run them
 
 ### Artifact Files
 
-When an agent writes files to the path embedded in the prompt (e.g. `/home/user/.openclaw/runtime-artifacts/agenda/<eventId>/occurrences/cron/runs/<runId>/`), bridge-logger scans that directory and persists file metadata to `runtime-artifacts.mjs` state. The Output tab in the occurrence detail sheet shows file previews and download links via `/api/agenda/artifacts/[stepId]/[filename]`.
+When an agent writes files to the path embedded in the prompt (e.g. `<OPENCLAW_HOME>/runtime-artifacts/agenda/<eventId>/occurrences/<occurrenceId>/artifacts/`), bridge-logger scans that directory after run completion and persists file metadata. The Output tab in the occurrence detail sheet shows file previews and download links via `/api/agenda/artifacts/[stepId]/[filename]`. On event deletion, the entire `runtime-artifacts/agenda/<eventId>/` tree is cleaned up.
 
 ### Scheduler Details (`agenda-scheduler.mjs`)
 
 - **Lookahead**: 14 days (`AGENDA_LOOKAHEAD_DAYS` env var)
-- **Cycle interval**: `poll_interval_seconds` from `worker_settings` table (default 20s)
-- **Cron creation**: uses `openclaw cron add --at <ISO timestamp> --session isolated --message "<rendered prompt>" --agent <agentId> --model <model> --delete-after-run --no-deliver --json`
-- **Past timestamps**: if `<scheduled> - now() < 30s`, uses `--at 30s` instead (cron rejects past dates)
+- **Cycle interval**: ~15s (`SCHEDULER_TICK_MS`)
+- **Cron creation**: 
+  - Isolated sessions: `openclaw cron add --at <ISO> --session isolated --message "<prompt>" --agent <id> --model <model> --delete-after-run --no-deliver --json`
+  - Main sessions: same but `--session main --system-event "<prompt>"` (no `--no-deliver`)
+- **Past timestamps**: if scheduled time is already past, uses `--at 1s` so cron fires immediately
 - **Session isolation**: agenda tasks run in `isolated` sessions by default (no Telegram noise); `session_target` can be set to `main`
 - **Result sync**: scheduler does NOT read cron run results — bridge-logger handles that via `~/.openclaw/cron/runs/*.jsonl` watching
 - **Fallback trigger**: listens for `pg_notify('agenda_change')` signals emitted by bridge-logger after failed runs
+- **Orphan detection**: each cycle compares live cron job IDs against DB, recovering queued occurrences that lost their cron job and marking running orphans as `needs_retry`
 
 ### Bridge-Logger Details (`bridge-logger.mjs`)
+
+- **File watching**: tracks read offsets for session `.jsonl` files, gateway logs, and cron run files
+- **Main session retry**: for `session_target=main`, retries output resolution up to 3× with backoff (3→5→7s) to handle async file flushing
+- **Marker scanning**: uses `AGENDA_MARKER:occurrence_id=<id>` injected into prompts to find exact task output in the shared session file
+- **Tail-scan fallback**: if the marker is lost (session rotation), scans the last 200 lines as a safety net
+- **Prompt echo detection**: prevents returning the input prompt as "output" when echo occurs
+- **Artifact scanning**: recursively scans the canonical occurrence artifact directory (3 levels deep) after each run
+- **Status sync**: uses unconditional `UPDATE` + `WHERE IN ('running','queued','scheduled')` guards to prevent race conditions with `promotePastDueToRunning`
+- **Telegram alerts**: sends `needs_retry` and terminal failure alerts directly to Telegram
 
 See the **Logs → Log Data Flow** section below for the full picture.
 
@@ -325,7 +342,7 @@ Processes are attached to agenda events via `agenda_event_processes` (many-to-ma
 - **Trigger**: "Simulate" button on any process card
 - **Endpoint**: `POST /api/processes/simulate` → returns SSE stream
 - **How it works**: each step is executed live against the real agent; output is streamed back step-by-step via SSE events (`process.step`, `process.output`, `process.done`, `process.error`)
-- **Cleanup**: after simulation, `POST /api/processes/simulate/cleanup` truncates the agent's session `.jsonl` files back to their pre-sim byte offsets (stored in `session_snapshots` on `agenda_run_attempts`)
+- **Cleanup**: after simulation, `POST /api/processes/simulate/cleanup` truncates the agent's session `.jsonl` files back to their pre-sim byte offsets
 - **Use case**: test a process without creating real agenda occurrences
 
 ### How Processes Attach to Agenda Events
@@ -337,15 +354,15 @@ Processes are attached to agenda events via `agenda_event_processes` (many-to-ma
   1. Fetches all linked process versions + steps for the event
   2. Fetches the occurrence's `rendered_prompt` (or renders it fresh)
   3. Concatenates: `Task: <title>`, `Context: <free_prompt>`, `Instructions: <step-by-step>`, `Request: <...>`
-  4. Returns the unified message string passed to `openclaw cron add --message`
+  4. Returns the unified message string passed to `openclaw cron add`
 
 ### Prompt Rendering (`prompt-renderer.mjs`)
 
 ```js
 renderUnifiedTaskMessage({ title, context, request, instructions, artifactDir })
-// title     — event title
-// context   — event's free_prompt
-// request   — (empty for process-based events, free text for pure prompt events)
+// title       — event title
+// context     — event's free_prompt
+// request     — free text for pure prompt events, empty for process-based events
 // instructions — array of { order, title, instruction, skillKey }
 // artifactDir — per-occurrence artifact path for file outputs
 ```
@@ -390,7 +407,7 @@ activity_logs  (workspace-wide audit trail, also written by all ticket mutations
    - `activity_logs` table (workspace-wide audit trail)
    - `agent_logs` table (type=`workflow`, `event_type=task.event`)
 
-### Ticket Activity Feed
+### Activity Feed
 
 The boards page has an **Activity** tab per ticket. It queries `ticket_activity` ordered by `occurred_at DESC`. Event types include: `created`, `moved`, `edited`, `assigned`, `commented`, `subtask_added`, `checklist_done`.
 
@@ -417,15 +434,15 @@ Every mutation through `/api/tasks` logs to three places simultaneously:
 | `workflow` | Chat messages in/out, task events | bridge-logger reading session `.jsonl` files |
 | `tool` | Tool calls: `tool.success`, `tool.error` | bridge-logger reading session `.jsonl` files |
 | `memory` | Memory operations: `memory.search`, `memory.write`, `memory.error` | bridge-logger reading session `.jsonl` files |
-| `agenda` | Agenda lifecycle events | scheduler emitting via `emitSchedulerLog()` |
+| `agenda` | Agenda lifecycle events | bridge-logger + scheduler emitting via `emitSchedulerLog()` |
 
 ### Log Sources (bridge-logger watches these files)
 
 | Source path | What it contains | Emits |
 |---|---|---|
-| `~/.openclaw/agents/*/sessions/*.jsonl` | One file per agent session; structured JSON lines | `system`, `workflow`, `tool`, `memory` logs |
+| `~/.openclaw/agents/*/sessions/*.jsonl` | One file per agent session; structured JSON lines | `workflow`, `tool`, `memory`, `system` logs |
 | `/tmp/openclaw/openclaw-YYYY-MM-DD.log` | Gateway daily system log | `system.event`, `system.warning`, `system.error` |
-| `~/.openclaw/cron/runs/*.jsonl` | One file per cron job run result | `agenda.created`, `agenda.succeeded`, `agenda.failed`, `agenda.fallback` |
+| `~/.openclaw/cron/runs/*.jsonl` | One file per cron job run result | Agenda result sync (`succeeded`/`failed`/`needs_retry`) |
 
 ### Runtime Logs Tab
 
@@ -443,8 +460,10 @@ Shows all `agent_logs` rows where `type = 'agenda'`. The `event_type` column giv
 | `agenda.succeeded` | Cron run completed successfully |
 | `agenda.failed` | Cron run failed (terminal) |
 | `agenda.fallback` | Primary model exhausted, fallback model queued |
+| `agenda.failed` | Terminal failure after fallback also exhausted |
+| `agenda.output_captured` | Output resolution log (with source: session/artifact/cron) |
 | `agenda.skipped` | Dependency event failed or timed out |
-| `agenda.error` | Cron job creation itself failed |
+| `agenda.error` | Scheduling or cron job creation failed |
 
 ### Services Tab
 
@@ -453,9 +472,9 @@ Shows `service_health` table rows for all services. Columns: Service, Status (ru
 ### How SSE Live-Refresh Works
 
 1. Client opens Logs page → calls `GET /api/agent/logs/stream` (SSE)
-2. Server sets up `sql.subscribe('pg_notify_channel')` for the relevant workspace
-3. When bridge-logger or scheduler writes a row, it also calls `sql` .notify()` on the channel
-4. Server reads the notification → pushes a newline-delimited JSON event to the SSE stream
+2. Server subscribes to `pg_notify` on the relevant channel
+3. When bridge-logger or scheduler writes a row, it emits a notification
+4. Server pushes the event to the SSE stream
 5. Client's `EventSource` receives the event → appends to the log table in real-time
 
 ### Log Data Flow
@@ -468,13 +487,14 @@ Session .jsonl files                  Gateway .log                   Cron runs .
       │  reads JSON lines               │  reads log levels             │  reads result JSON
       │  offset-tracked                 │  offset-tracked               │  offset-tracked
       │  ↓                              │  ↓                            │  ↓
-      │  system/workflow/               │  system.event/                │  agenda.created/
-      │  tool/memory logs               │  system.warning/              │  agenda.succeeded/
-      │                                  │  system.error                  │  agenda.failed
-      │                                  │                               │
+      │  workflow/                      │  system.event/                │  agenda.result sync
+      │  tool/memory logs               │  system.warning/              │  + output resolution
+      │                                  │  system.error                  │
       └──────────────────────────────────┴───────────────────────────────┘
                                           │
                                  pg_notify('agenda_change')
+                                         +
+                                 pg_notify('agent_logs')
                                           │
                               ┌───────────▼──────────┐
                               │   PostgreSQL         │
@@ -485,7 +505,7 @@ Session .jsonl files                  Gateway .log                   Cron runs .
                               │  SSE stream           │
                               │  /api/agent/logs/     │
                               │  /stream              │
-                              └───────────────────────┘
+                              └──────────────────────┘
 ```
 
 ---
@@ -516,7 +536,7 @@ On every Mission Control startup, `gateway-sync.mjs` runs once and:
 3. Calls `GET /v1/sessions` for each agent → upserts into `agent_sessions`
 4. Exits (it is NOT a persistent service)
 
-Agents are also created on-demand by `agenda-scheduler.mjs` when emitting agenda logs (ensures `agent_id` FK always exists).
+Agents are also created on-demand by `bridge-logger.mjs` and `agenda-scheduler.mjs` when emitting agenda logs (ensures `agent_id` FK always exists).
 
 ---
 
@@ -552,10 +572,10 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `poll_interval_seconds` | 20 | How often scheduler wakes to check for new occurrences |
-| `max_retries` | 1 | How many fallback attempts before `needs_retry` |
-| `default_fallback_model` | `""` | Model to use after primary model fails |
-| `scheduling_interval_minutes` | 15 | Slot enforcement — events must fit within N-minute windows |
+| `max_retries` | 1 | How many retry attempts before moving to `needs_retry` |
+| `default_fallback_model` | `""` | Model to use after primary model exhausts retries |
+| `scheduling_interval_minutes` | 15 | Slot enforcement — events must start on N-minute boundaries |
+| `agenda_concurrency` | 5 | Max simultaneous agenda runs |
 | `sidebar_activity_count` | 8 | Number of recent activity items shown in sidebar |
 
 ### System Updates
@@ -572,18 +592,19 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Route | Method | Purpose | Params/Body |
 |---|---|---|---|
-| `/api/agenda/events` | GET | List events with latest occurrence | `?workspace_id=&status=` |
+| `/api/agenda/events` | GET | List events with latest occurrence | `?status=` |
 | `/api/agenda/events` | POST | Create event | `title, free_prompt, recurrence_rule, agent_id, model, ...` |
-| `/api/agenda/events/stream` | GET | SSE: real-time calendar updates | `?workspace_id=` |
-| `/api/agenda/events/[id]` | GET | Single event + occurrences | |
-| `/api/agenda/events/[id]` | PATCH | Update event | |
-| `/api/agenda/events/[id]` | DELETE | Delete event + occurrences | |
-| `/api/agenda/events/[id]/occurrences/[occId]` | POST | Manual retry | |
+| `/api/agenda/events/stream` | GET | SSE: real-time calendar updates | |
+| `/api/agenda/events/[id]` | GET | Single event + occurrences + attempts | |
+| `/api/agenda/events/[id]` | PATCH | Update event (supports editScope: single/this_and_future) | |
+| `/api/agenda/events/[id]` | DELETE | Delete event + occurrences + artifacts | `?hard=1` for permanent delete |
+| `/api/agenda/events/[id]/occurrences/[occId]` | POST | Manual retry | `{ action: "retry", force?: boolean }` |
 | `/api/agenda/events/[id]/occurrences/[occId]` | DELETE | Dismiss occurrence | |
-| `/api/agenda/events/[id]/occurrences/[occId]/runs` | GET | Run attempts + steps | |
+| `/api/agenda/events/[id]/occurrences/[occId]/runs` | GET | Run attempts + steps for an occurrence | |
 | `/api/agenda/artifacts/[stepId]/[filename]` | GET | Download artifact file | |
 | `/api/agenda/failed` | GET | Failed + needs_retry occurrences | |
 | `/api/agenda/settings` | GET | Worker settings | |
+| `/api/agenda/settings` | PATCH | Update worker settings | |
 | `/api/agenda/stats` | GET | Occurrence counts by status | |
 | `/api/agenda/logs` | GET | Agenda log entries (type=agenda) | `?occurrence_id=` |
 | `/api/agenda/debug/run-steps` | GET | Test harness: run steps for occurrence | `?occurrence_id=` |
@@ -612,7 +633,7 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/services` | GET | Service health from `service_health` table |
-| `/api/services` | POST | Start/stop/restart service | `{ action: "start\|stop\|restart", service: "name" }` |
+| `/api/services` | POST | Start/stop/restart service | `{ action: "start|stop|restart", service: "name" }` |
 
 ### Models
 
@@ -634,18 +655,17 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 |---|---|---|
 | `/api/tasks` | GET | List tickets | `?board_id=&column_id=` |
 | `/api/tasks` | POST | Create ticket or board | `{ action: "create", board_id, ... }` |
-| `/api/tasks` | PUT | Update ticket / move column | `{ action: "update\|move", ticket_id, ... }` |
+| `/api/tasks` | PUT | Update ticket / move column | `{ action: "update|move", ticket_id, ... }` |
 | `/api/tasks` | DELETE | Delete ticket | `{ ticket_id }` |
 | `/api/tasks/worker-metrics` | GET | Worker health stats |
 
-### Events / SSE
+### Events / SSE / Notifications
 
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/events` | GET | SSE: ticket activity + worker ticks |
 | `/api/notifications/recent` | GET | Last N activity entries |
 | `/api/notifications/stream` | GET | SSE: unified ticket + agenda activity |
-| `/api/notifications/recent` | GET | Recent notifications |
 
 ### Files
 
@@ -658,7 +678,7 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/system` | POST | Check updates / apply / clean reset | `{ action: "check\|update\|clean" }` |
+| `/api/system` | POST | Check updates / apply / clean reset | `{ action: "check|update|clean" }` |
 | `/api/setup` | GET/POST | Setup wizard status + completion |
 
 ### Skills
@@ -683,12 +703,12 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `agenda_events` | Event definitions | `id`, `workspace_id`, `title`, `free_prompt`, `recurrence_rule`, `status` (draft/active), `default_agent_id`, `model_override`, `fallback_model`, `session_target` (isolated/main), `execution_window_minutes` |
-| `agenda_occurrences` | Per-scheduled-run rows | `id`, `agenda_event_id`, `scheduled_for`, `status`, `cron_job_id`, `latest_attempt_no`, `fallback_attempted`, `rendered_prompt`, `queued_at`, `retry_requested_at` |
+| `agenda_events` | Event definitions | `id`, `workspace_id`, `title`, `free_prompt`, `recurrence_rule`, `status` (draft/active), `default_agent_id`, `model_override`, `fallback_model`, `session_target` (isolated/main), `execution_window_minutes`, `dependency_type`, `dependency_event_id`, `dependency_timeout_hours` |
+| `agenda_occurrences` | Per-scheduled-run rows | `id`, `agenda_event_id`, `scheduled_for`, `status`, `cron_job_id`, `latest_attempt_no`, `fallback_attempted`, `rendered_prompt`, `session_line_offset`, `queued_at`, `retry_requested_at`, `skip_reason` |
 | `agenda_event_processes` | Event ↔ ProcessVersion links | `id`, `agenda_event_id`, `process_version_id`, `sort_order` |
-| `agenda_run_attempts` | Per cron firing attempt | `id`, `occurrence_id`, `attempt_no`, `cron_job_id`, `status`, `started_at`, `finished_at`, `summary`, `error_message`, `session_snapshots`, `cleanup_status` |
-| `agenda_run_steps` | Per-step output within an attempt | `id`, `run_attempt_id`, `process_version_id`, `process_step_id`, `step_order`, `agent_id`, `skill_key`, `status`, `input_payload`, `output_payload`, `artifact_payload`, `started_at`, `finished_at` |
-| `agenda_occurrence_overrides` | Per-occurrence prompt/time overrides | `id`, `occurrence_id`, `overridden_free_prompt`, `overridden_agent_id`, ... |
+| `agenda_run_attempts` | Per cron firing attempt | `id`, `occurrence_id`, `attempt_no`, `cron_job_id`, `status`, `started_at`, `finished_at`, `summary`, `error_message` |
+| `agenda_run_steps` | Per-step output within an attempt | `id`, `run_attempt_id`, `step_order`, `agent_id`, `input_payload`, `output_payload`, `artifact_payload`, `status`, `started_at`, `finished_at` |
+| `agenda_occurrence_overrides` | Per-occurrence prompt/time overrides | `id`, `occurrence_id`, `overridden_title`, `overridden_free_prompt`, `overridden_agent_id`, `overridden_starts_at` |
 | `agent_execution_locks` | Per-agent lock during agenda run | `agent_id`, `occurrence_id`, `locked_at` |
 
 ### Process Tables
@@ -724,7 +744,7 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `worker_settings` | Agenda defaults (single row) | `poll_interval_seconds`, `max_retries`, `default_fallback_model`, `scheduling_interval_minutes`, `sidebar_activity_count`, `instance_name` |
+| `worker_settings` | Agenda defaults (single row) | `max_retries`, `default_fallback_model`, `scheduling_interval_minutes`, `agenda_concurrency`, `sidebar_activity_count`, `instance_name` |
 | `service_health` | Service heartbeats | `name`, `status`, `pid`, `last_heartbeat_at`, `last_error` |
 
 ### Notification Tables
@@ -747,16 +767,16 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 | `db-init.sh` | Docker init container entrypoint — applies schema | Bash |
 | `db-setup.mjs` | DB migrations (assert schema, seed, reset) | Node.js |
 | `gateway-sync.mjs` | One-shot import of agents + sessions from gateway | Node.js |
-| `bridge-logger.mjs` | Persistent file watcher → agent_logs ingestion | Node.js |
-| `agenda-scheduler.mjs` | RRULE expansion + cron job creation + fallback | Node.js |
+| `bridge-logger.mjs` | Persistent file watcher → agent_logs ingestion + agenda result sync | Node.js |
+| `agenda-scheduler.mjs` | RRULE expansion + cron job creation + orphan detection + fallback | Node.js |
 | `prompt-renderer.mjs` | Composes unified task message from event + process | Node.js |
-| `runtime-artifacts.mjs` | Artifact dir management (scan, cleanup) | Node.js |
+| `runtime-artifacts.mjs` | Artifact dir management (scan, cleanup, delete event tree) | Node.js |
 | `agenda-selfcheck.mjs` | Health check: schema, gateway, stuck occurrences | Node.js |
 | `agenda-domain.mjs` | Agenda state transition helpers | Node.js |
 | `agenda-codes.mjs` | Agenda event code/ID utilities | Node.js |
 | `agenda-schema-check.mjs` | Schema assertion helpers | Node.js |
-| `openclaw-config.mjs` | Reads gateway token from openclaw.json | Node.js |
 | `agenda-integration-test.mjs` | Full integration test harness | Node.js |
+| `openclaw-config.mjs` | Reads gateway token from openclaw.json | Node.js |
 
 ---
 
@@ -764,21 +784,18 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 
 | Issue | Diagnosis | Fix |
 |---|---|---|
-| Calendar shows blue for events that aren't running | `queued` status was incorrectly colored blue (pre-v2.8) | Update to v2.8+ — `queued` is now grey; only `running` is blue |
+| Calendar shows blue for events that aren't running | `queued` status was incorrectly colored blue (pre-v2.8) | Update to v2.8+ — `queued` is now violet; only `running` is blue |
 | `scheduled` events never become `queued` | Scheduler not running | `bash scripts/mc-services.sh status` → restart agenda-scheduler |
-| `cron.add: schedule.at is in the past` | Scheduler tried to create a cron job for a past timestamp | Fixed in v2.7 — scheduler now uses `--at 30s` for timestamps < 30s away |
-| `pairing required` when running `openclaw cron` | Gateway pairing not approved | Run `openclaw doctor --fix` or approve CLI device in `~/.openclaw/devices/` |
-| Occurrence stuck in `scheduled` (no `cron_job_id`) | Scheduler error — check `.runtime/logs/agenda-scheduler.log` | Restart scheduler: `bash scripts/mc-services.sh restart agenda-scheduler` |
 | Output tab empty after successful run | `agenda_run_steps` not populated | Check bridge-logger is running; verify `~/.openclaw/cron/runs/*.jsonl` exists |
-| Artifact files not appearing in Output tab | Agent didn't write to the artifact path | Agent must write to `<OPENCLAW_HOME>/runtime-artifacts/agenda/<eventId>/occurrences/cron/runs/<runId>/` |
+| Artifact files not appearing in Output tab | Agent didn't write to the artifact path | Agent must write to the `artifactDir` embedded in the prompt (shown in run output) |
 | All services show STOPPED | .env not loaded by mc-services.sh | `set -a && source .env && set +a && bash scripts/mc-services.sh start` |
 | DB connection refused | Docker PostgreSQL not running | `docker compose up -d db` |
-| Port 3000 stuck | Next.js server didn't exit cleanly | `pkill -f next-server; fuser -k 3000/tcp` |
 | bridge-logger OFFSETS reset / logs duplicated | Offset file was corrupted | Delete `.runtime/bridge-logger/offsets.json` — bridge-logger will rescan from start |
 | `needs_retry` occurrence won't retry | Manual retry requires occurrence to be in needs_retry/failed | Click the "Retry" button in occurrence detail sheet |
 | Kanban board not updating in real-time | SSE connection dropped | Refresh page to reconnect; check `/api/events` SSE stream |
 | gateway-sync shows STOPPED | Normal — it's a one-shot script, not a daemon | It runs once at startup then exits |
 | Logs tab shows no data | bridge-logger not watching the right paths | Verify `OPENCLAW_HOME`, `AGENTS_DIR`, `GATEWAY_LOG_DIR` in env match actual filesystem |
+| `no_output` on main-session runs (rare) | Agent output not yet flushed when bridge-logger scans | Fixed in v2.9 — bridge-logger now retries up to 3× with backoff (3→5→7s) |
 
 ---
 
@@ -809,7 +826,7 @@ Built into `mc-services.sh`. Checks every 30 seconds (configurable via `WATCHDOG
 mc-services.sh
     ├── nextjs ──────────────────────────► port 3000 (user-facing)
     ├── gateway-sync ────────────────────► exits after 1 run (no watchdog)
-    ├── bridge-logger ───────────────────► writes to agent_logs
+    ├── bridge-logger ───────────────────► writes to agent_logs, syncs agenda results
     │       watches: sessions/*.jsonl
     │              gateway .log
     │              cron/runs/*.jsonl
@@ -839,7 +856,7 @@ mc-services.sh
 | `OPENCLAW_GATEWAY_URL` | No | `ws://127.0.0.1:18789` | Gateway WebSocket URL |
 | `OPENCLAW_GATEWAY_TOKEN` | No | auto-discovered | Gateway auth token (read from `openclaw.json` by default) |
 
-> **Note:** Do NOT set `OPENCLAW_GATEWAY_URL` or `OPENCLAW_GATEWAY_TOKEN` manually unless OpenClaw 4.x pairing is failing. The install script auto-discovers these from `~/.openclaw/openclaw.json`.
+> **Note:** Do NOT set `OPENCLAW_GATEWAY_URL` or `OPENCLAW_GATEWAY_TOKEN` manually unless pairing is failing. The install script auto-discovers these from `~/.openclaw/openclaw.json`.
 
 ### Application
 
