@@ -945,7 +945,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             {selectedAttempt
                               ? `Attempt ${selectedAttempt.attempt_no}`
                               : displayedOccurrence.latest_attempt_no > 0
-                                ? `Attempt ${displayedOccurrence.latest_attempt_no} (no attempt selected)`
+                                ? `Attempt ${displayedOccurrence.latest_attempt_no}`
                                 : "Not started"}
                           </Badge>
                         </CardAction>
@@ -1300,10 +1300,10 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
             </AlertDialogDescription>
           </AlertDialogHeader>
           {isRecurring ? (
-            <div className="flex flex-col gap-2 mt-2 pr-6">
+            <div className="flex flex-col gap-2">
               <Button
                 variant="outline"
-                className="h-auto px-4 py-3 justify-start text-left gap-3 cursor-pointer border-destructive/30 hover:bg-destructive/5"
+                className="h-auto px-4 py-3 justify-start text-left gap-3 cursor-pointer border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
                 onClick={() => {
                   // Cancel just this occurrence
                   if (selectedOccurrenceId) {
@@ -1315,20 +1315,20 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                 }}
               >
                 <IconCalendar className="size-4 text-destructive shrink-0" />
-                <div>
-                  <p className="font-semibold text-sm">Only this occurrence</p>
-                  <p className="text-xs text-muted-foreground">Cancel this one run only. The rest of the series continues.</p>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-sm text-foreground">Only this occurrence</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">Cancel this one run only. The rest of the series continues.</p>
                 </div>
               </Button>
               <Button
                 variant="outline"
-                className="h-auto px-4 py-3 justify-start text-left gap-3 cursor-pointer border-destructive/30 hover:bg-destructive/5"
+                className="h-auto px-4 py-3 justify-start text-left gap-3 cursor-pointer border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
                 onClick={() => { onDelete(event.id); setDeleteDialogOpen(false); onClose(); }}
               >
                 <IconX className="size-4 text-destructive shrink-0" />
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="font-semibold text-sm text-destructive">Delete all future events</p>
-                  <p className="text-xs text-muted-foreground">Stop the entire series and cancel all future runs. Past runs are kept for history.</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">Stop the entire series and cancel all future runs. Past runs are kept for history.</p>
                 </div>
               </Button>
               <AlertDialogFooter className="mt-1">
