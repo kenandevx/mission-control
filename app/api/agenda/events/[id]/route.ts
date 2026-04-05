@@ -440,8 +440,10 @@ export async function PATCH(
     const startsAtMs = new Date(startsAt).getTime();
     if (startsAtMs < nowMs - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");
     if (startsAtMs < nowMs) {
-      // Within grace window — bump to now so it executes immediately
-      effectiveStartsAt = new Date();
+      // Within grace window — keep the user's exact chosen timestamp (seconds=0, ms=0 from Luxon).
+      // The scheduler detects past timestamps and fires them via --at 1s.
+      // Do NOT overwrite with raw new Date() — that corrupts the minute value
+      // (e.g. user picked 8:45 but now is 8:44:50 → would store as 8:44 instead of 8:45).
       bumpedToNow = true;
     }
 

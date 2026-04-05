@@ -1,14 +1,13 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
 export function useNow(intervalMs = 60_000): Date {
   const [now, setNow] = useState(() => new Date());
-  const startedRef = useRef(false);
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    // Always create a fresh interval when intervalMs changes.
+    // This ensures live timers (1s) actually tick every second.
     const timer = setInterval(() => setNow(new Date()), intervalMs);
-    return () => { clearInterval(timer); startedRef.current = false; };
+    return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
 }

@@ -392,8 +392,10 @@ export async function POST(request: Request) {
       let bumpedToNow = false;
       if (startsAt.getTime() < now.getTime() - PAST_GRACE_MS) return fail("Cannot create events in the past.");
       if (startsAt < now) {
-        // Within grace window — bump to now so it executes immediately instead of being flagged as missed
-        startsAt.setTime(now.getTime());
+        // Within grace window — keep the user's exact chosen timestamp (seconds=0, ms=0 from Luxon).
+        // The scheduler detects past timestamps and fires them immediately via --at 1s.
+        // Do NOT overwrite with raw Date.now() — that would corrupt the minute value
+        // (e.g. user picked 8:45 but raw now() is 8:44:50 → stored as 8:44 instead of 8:45).
         bumpedToNow = true;
       }
 

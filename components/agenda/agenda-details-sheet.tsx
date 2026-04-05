@@ -987,7 +987,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             Scheduled for {formatTime(displayedOccurrence.scheduled_for, event.timezone)}
                           </div>
                         ) : null}
-                        {["failed", "needs_retry", "queued", "scheduled", "succeeded", "cancelled"].includes(displayedOccurrence.status) && (
+                        {["failed", "needs_retry", "succeeded", "cancelled"].includes(displayedOccurrence.status) && (
                           <Button
                             size="sm"
                             variant="outline"

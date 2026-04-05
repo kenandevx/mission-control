@@ -276,13 +276,13 @@ function buildPromptPreview(params: {
   request: string;
   instructions: Array<{ title: string; instruction: string; skillKey?: string | null }>;
 }) {
+  // Mirror renderUnifiedTaskMessage from prompt-renderer.mjs exactly
   const clean = (value: string | null | undefined) => String(value ?? "").trim();
   const sections: string[] = [];
 
-  sections.push("You are handling one task. Use only the information below.");
-
-  const title = clean(params.title);
-  if (title) sections.push(`Task:\n${title}`);
+  const genericTitles = new Set(["new event", "event", "test", "untitled", "new task", "task"]);
+  const t = clean(params.title);
+  if (t && !genericTitles.has(t.toLowerCase())) sections.push(`Task:\n${t}`);
 
   const validInstructions = params.instructions
     .map((step, index) => {
@@ -301,20 +301,29 @@ function buildPromptPreview(params: {
   const request = clean(params.request);
   if (request) sections.push(`Request:\n${request}`);
 
+  // Execution rules — always included (mirrors prompt-renderer.mjs)
   sections.push([
     "Execution rules:",
     "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
     "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
+    "- Never announce which skill, tool, or method you're about to use. Just do the work.",
+    "- If the request mentions a skill or tool by name, silently use it — do not describe your tool choice.",
+    "- Start your response with the deliverable, not with commentary about how you'll produce it.",
+    "- If you're generating content (text, code, images, etc.), output the content directly.",
     "- If the user asks for a deliverable, produce the deliverable directly.",
-    "",
+  ].join("\n"));
+
+  // Output rules — always included (mirrors prompt-renderer.mjs)
+  sections.push([
     "Output rules:",
     "- Return only the requested deliverable.",
     "- Do not include internal labels, IDs, or system metadata.",
     "- Do not repeat section labels unless they help the final result.",
     "- Do not invent missing facts.",
+    "- If you create any output files, save them to: <artifact directory set at runtime>.",
   ].join("\n"));
 
-  return sections.join("\n\n");
+  return sections.filter((s) => s.trim()).join("\n\n");
 }
 
 // ── Step indicator (floating cards) ─────────────────────────────────────────
