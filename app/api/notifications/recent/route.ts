@@ -19,11 +19,19 @@ function agendaLevelFromStatus(status: string): string {
     case "succeeded":
       return "success";
     case "failed":
+    case "stale_recovery":
       return "error";
     case "running":
     case "auto_retry":
     case "needs_retry":
+    case "force_retry":
       return "warning";
+    case "queued":
+    case "scheduled":
+    case "cancelled":
+    case "skipped":
+    case "draft":
+      return "info";
     default:
       return "info";
   }
@@ -58,17 +66,15 @@ export async function GET(): Promise<Response> {
 
     const agendaRows = await sql`
       SELECT
-        ara.id::text,
-        ara.occurrence_id::text,
+        ao.id::text AS occurrence_id,
         ao.agenda_event_id::text,
-        ara.status,
-        ara.started_at,
+        ao.status,
+        ao.scheduled_for,
         ae.title,
         ae.default_agent_id AS agent_id
-      FROM agenda_run_attempts ara
-      JOIN agenda_occurrences ao ON ao.id = ara.occurrence_id
+      FROM agenda_occurrences ao
       JOIN agenda_events ae ON ae.id = ao.agenda_event_id
-      ORDER BY ara.started_at DESC
+      ORDER BY ao.scheduled_for DESC
       LIMIT ${limit}
     `;
 
@@ -89,14 +95,14 @@ export async function GET(): Promise<Response> {
 
     for (const row of agendaRows) {
       entries.push({
-        // Use occurrence_id as the stable key so SSE updates replace initial entries
-        id: `agenda-${row.occurrence_id || row.id}`,
+        // Stable ID per occurrence so SSE updates replace initial entries
+        id: `agenda-${row.occurrence_id}`,
         type: "agenda",
         title: row.title || "Unknown event",
         event: row.status || "change",
         agent: row.agent_id || "main",
         level: agendaLevelFromStatus(row.status || ""),
-        timestamp: row.started_at || new Date().toISOString(),
+        timestamp: row.scheduled_for || new Date().toISOString(),
         targetUrl: row.agenda_event_id ? `/agenda?event=${encodeURIComponent(String(row.agenda_event_id))}` : "/agenda",
       });
     }

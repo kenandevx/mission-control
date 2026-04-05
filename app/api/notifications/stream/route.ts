@@ -26,6 +26,11 @@ function levelFromAction(action: string): string {
     case "force_retry":
     case "needs_retry":
       return "warning";
+    case "queued":
+    case "scheduled":
+    case "cancelled":
+    case "skipped":
+      return "info";
     default:
       return "info";
   }
@@ -127,11 +132,10 @@ export async function GET(request: Request): Promise<Response> {
         const meta = await sql.listen("agenda_change", async (payload: string) => {
           try {
             const data = typeof payload === "string" ? JSON.parse(payload) : payload;
-            const action = data?.action || "change";
             const occurrenceId = data?.occurrenceId;
             if (!occurrenceId) return;
 
-            // Look up occurrence + event details
+            // Look up occurrence + event details — use occurrence status for canonical color/label.
             const rows = await sql`
               SELECT
                 ao.id,
@@ -147,15 +151,17 @@ export async function GET(request: Request): Promise<Response> {
             const row = rows[0];
             if (!row) return;
 
+            // Use occurrence status (the canonical source) as both display label and level.
+            const displayStatus = row.status || "change";
             const entry: ActivityEntry = {
               // Stable ID per occurrence so later status updates (succeeded/failed)
               // replace the earlier "running" entry in the sidebar, not append
               id: `agenda-${occurrenceId}`,
               type: "agenda",
               title: row.title || "Unknown event",
-              event: action,
+              event: displayStatus,
               agent: String(row.agent_id || "main"),
-              level: levelFromAction(action),
+              level: levelFromAction(displayStatus),
               timestamp: new Date().toISOString(),
               targetUrl: `/agenda?event=${encodeURIComponent(String(row.agenda_event_id))}`,
             };

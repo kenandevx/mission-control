@@ -49,19 +49,19 @@ function relativeTime(dateStr: string): string {
 
 function formatActivityEvent(entry: ActivityEntry): string {
   const raw = (entry.event || "").toLowerCase();
+
+  // Agenda entries: use canonical status labels from status-colors.ts
   if (entry.type === "agenda" && statusMeta(raw)) return statusLabel(raw);
-  if (raw === "force_retry" || raw.includes("force_retry") || raw.includes("force retry")) return "Force Retried";
-  if (raw === "auto_retry" || raw.includes("auto_retry")) return "Auto-retrying";
-  if (raw === "needs_retry" || raw.includes("needs_retry")) return "Needs Retry";
-  if (raw === "stale_recovery" || raw.includes("stale")) return "Stale Recovery";
+
+  // Ticket / non-canonical: human-readable fallback
+  if (raw === "force_retry" || raw.includes("force retry")) return "Force retried";
+  if (raw === "created") return "Created";
+  if (raw === "updated") return "Updated";
+  if (raw === "activity" || raw === "change") return "Activity";
   if (raw.includes("running") || raw.includes("picked up") || raw.includes("planning")) return "Running";
-  if (raw === "queued" || raw.includes("queued")) return "Queued";
-  if (raw === "scheduled" || raw.includes("scheduled")) return "Scheduled";
-  if (raw === "succeeded" || raw.includes("succeeded") || raw.includes("completed")) return "Succeeded";
-  if (raw === "failed" || raw.includes("failed") || raw.includes("expired")) return "Failed";
-  if (raw === "cancelled" || raw.includes("cancelled")) return "Cancelled";
-  if (raw === "created" || raw.includes("created")) return "Created";
-  if (raw === "updated" || raw.includes("updated")) return "Updated";
+  if (raw.includes("succeeded") || raw.includes("completed")) return "Succeeded";
+  if (raw.includes("failed") || raw.includes("expired")) return "Failed";
+  if (raw.includes("cancelled")) return "Cancelled";
   return entry.event || "Activity";
 }
 
