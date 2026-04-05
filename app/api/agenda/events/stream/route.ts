@@ -18,6 +18,17 @@ export async function GET(request: Request): Promise<Response> {
   const stream = new ReadableStream({
     async start(controller) {
       let closed = false;
+      let cleanupStarted = false;
+
+      const cleanup = () => {
+        if (cleanupStarted) return;
+        cleanupStarted = true;
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        if (unlisten) unlisten().catch(() => {});
+        try { controller.close(); } catch { /* already closed */ }
+      };
 
       const send = (event: string, data: string) => {
         if (closed) return;
@@ -42,14 +53,6 @@ export async function GET(request: Request): Promise<Response> {
       } catch {
         // If listen fails, we still serve heartbeats (graceful degradation)
       }
-
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        if (unlisten) unlisten().catch(() => {});
-        try { controller.close(); } catch { /* already closed */ }
-      };
 
       // Handle client disconnect via AbortSignal
       signal.addEventListener("abort", cleanup, { once: true });

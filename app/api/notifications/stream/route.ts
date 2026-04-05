@@ -43,6 +43,22 @@ export async function GET(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
+      let cleanupStarted = false;
+
+      const cleanup = () => {
+        if (cleanupStarted) return;
+        cleanupStarted = true;
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        if (unlistenTicket) unlistenTicket().catch(() => {});
+        if (unlistenAgenda) unlistenAgenda().catch(() => {});
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
 
       const send = (event: string, data: string) => {
         if (closed) return;
@@ -58,19 +74,6 @@ export async function GET(request: Request): Promise<Response> {
 
       let unlistenTicket: (() => Promise<void>) | null = null;
       let unlistenAgenda: (() => Promise<void>) | null = null;
-
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        if (unlistenTicket) unlistenTicket().catch(() => {});
-        if (unlistenAgenda) unlistenAgenda().catch(() => {});
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
 
       signal.addEventListener("abort", cleanup, { once: true });
 

@@ -122,6 +122,7 @@ function toCalendarEvents(events: AgendaEvent[]): EventInput[] {
         agentId: e.default_agent_id ?? "",
         timezone: e.timezone,
         recurrence: e.recurrence_rule ?? "none",
+        isRecurring: !!e.recurrence_rule && e.recurrence_rule !== "none" && e.recurrence_rule !== "null",
         status: e.status,
         color: colorKey,
         processes: e.processes ?? [],

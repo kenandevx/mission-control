@@ -264,7 +264,7 @@ function RecurringIcon({ size = 9 }: { size?: number }) {
   return (
     <FontAwesomeIcon
       icon={faArrowsRotate}
-      className="shrink-0 opacity-70"
+      className="shrink-0 opacity-90"
       style={{ width: size, height: size, display: "block" }}
       aria-hidden="true"
     />
@@ -319,7 +319,11 @@ function EventPill({ event }: { event: CalendarEvent }) {
         >
           {event.title}
         </span>
-        {event.isRecurring && <RecurringIcon size={10} />}
+        {event.isRecurring && (
+          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.9 }}>
+            <RecurringIcon size={11} />
+          </span>
+        )}
         <OccurrenceStatusDot result={event.latestResult} size={6} />
       </div>
 
@@ -427,7 +431,11 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         {(event.latestResult === "queued" || event.latestResult === "scheduled") && (
           <CronCountdown scheduledFor={event.scheduledFor} />
         )}
-        {event.isRecurring && <RecurringIcon size={10} />}
+        {event.isRecurring && (
+          <span className="inline-flex items-center justify-center shrink-0" style={{ color, opacity: 0.9 }}>
+            <RecurringIcon size={11} />
+          </span>
+        )}
         {event.latestResult && event.latestResult !== "scheduled" && event.latestResult !== "queued" && (
           event.latestResult === "running" ? (
             <span className="inline-flex items-center gap-1.5">
@@ -1147,7 +1155,7 @@ export function CustomMonthAgenda({
         date: dateStr,
         time: timeStr,
         color: (props.color as EventColor) ?? "default",
-        isRecurring: !!props.recurrence && (props.recurrence as string) !== "none",
+        isRecurring: Boolean(props.isRecurring ?? (!!props.recurrence && (props.recurrence as string) !== "none")),
         status: (props.status as "draft" | "active") ?? "active",
         latestResult: (props.latestResult as CalendarEvent["latestResult"]) ??
           (props.status === "active" ? "scheduled" : null),
