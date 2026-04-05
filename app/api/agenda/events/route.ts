@@ -258,6 +258,10 @@ export async function GET(request: Request) {
             where ao.agenda_event_id = ANY(${nonRecurringIds as string[]})
               and ao.status <> 'cancelled'
             order by ao.agenda_event_id,
+              -- Most-recent occurrence wins. Status priority only breaks ties on
+              -- the same scheduled_for (running/needs_retry surface before succeeded
+              -- for the same slot, but a newer succeeded always beats an older needs_retry).
+              ao.scheduled_for desc,
               case ao.status
                 when 'running'     then 1
                 when 'needs_retry' then 2
@@ -266,8 +270,7 @@ export async function GET(request: Request) {
                 when 'queued'      then 5
                 when 'scheduled'   then 6
                 else 7
-              end,
-              ao.scheduled_for desc
+              end
           `;
           const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
           for (const r of occRows) statusMap.set(r.agenda_event_id, {
@@ -310,6 +313,10 @@ export async function GET(request: Request) {
         where ao.agenda_event_id = ANY(${eventIds as string[]})
           and ao.status <> 'cancelled'
         order by ao.agenda_event_id,
+          -- Most-recent occurrence wins. Status priority only breaks ties on
+          -- the same scheduled_for (running/needs_retry surface before succeeded
+          -- for the same slot, but a newer succeeded always beats an older needs_retry).
+          ao.scheduled_for desc,
           case ao.status
             when 'running'     then 1
             when 'needs_retry' then 2
@@ -318,8 +325,7 @@ export async function GET(request: Request) {
             when 'queued'      then 5
             when 'scheduled'   then 6
             else 7
-          end,
-          ao.scheduled_for desc
+          end
       `;
       const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
       for (const r of occRows) statusMap.set(r.agenda_event_id, {
