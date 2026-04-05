@@ -1376,7 +1376,8 @@ async function handleCronRunLine(getSql, jobId, line) {
       deleteCronJobSilently(jobId).catch(() => {});
     } else if (occ.fallback_attempted) {
       // Fallback also failed — terminal failure. Status already set to 'failed' by the
-      // unconditional update above. Alert the user.
+      // unconditional update above. Notify the user via notifyMainSession (handles both
+      // isolated and main — Telegram + system event).
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
@@ -1398,18 +1399,11 @@ async function handleCronRunLine(getSql, jobId, line) {
         },
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${failureReason.slice(0, 120)}`);
-      if ((occ.session_target || 'isolated') === 'main') {
-        // Main-session failures already notify the user directly via Telegram alert.
-        // Do not also route through notifyMainSession — that causes duplicate messages.
-        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
-      } else {
-        notifyMainSession(occ.session_target || 'isolated', {
-          title: occ.title, status: 'failed', summary: agentOutput || failureReason.slice(0, 200),
-          occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-          sessionId: run.sessionId || null,
-        }).catch(() => {});
-        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
-      }
+      notifyMainSession(occ.session_target || 'isolated', {
+        title: occ.title, status: 'failed', summary: failureReason.slice(0, 400),
+        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+        sessionId: run.sessionId || null,
+      }).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
     } else {
       // Retries exhausted, no fallback configured. Status already set to 'needs_retry' above.
@@ -1435,17 +1429,11 @@ async function handleCronRunLine(getSql, jobId, line) {
       });
       console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} needs_retry: ${failureReason.slice(0, 120)}`);
       deleteCronJobSilently(jobId).catch(() => {});
-      if ((occ.session_target || 'isolated') === 'main') {
-        // Main-session retry notifications should send exactly one user-facing message.
-        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
-      } else {
-        notifyMainSession(occ.session_target || 'isolated', {
-          title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 200),
-          occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-          sessionId: run.sessionId || null,
-        }).catch(() => {});
-        sendTelegramAlert(getSql, occ.title, occ.occurrence_id, failureReason).catch(() => {});
-      }
+      notifyMainSession(occ.session_target || 'isolated', {
+        title: occ.title, status: 'needs_retry', summary: agentOutput || failureReason.slice(0, 400),
+        occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
+        sessionId: run.sessionId || null,
+      }).catch(() => {});
     }
   }
 }
@@ -1489,100 +1477,102 @@ async function scanRunArtifacts(occurrenceId, eventId) {
 }
 
 /**
- * Inject a short system event into the main OpenClaw session to notify
- * the main agent that an agenda task finished.
- * Only fires for isolated sessions — main session runs already land in chat.
+ * Send a Telegram notification for an agenda task result.
+ * Works for both main-session and isolated sessions.
  * Non-fatal.
  */
-async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId, sessionId }) {
-  // For isolated runs: inject a system event into the main session so the user
-  // sees the result in chat. For main session runs: the agent runs inside the
-  // main session but the output doesn't auto-deliver back to Telegram — we need
-  // to send it explicitly via the Telegram channel.
-  const isIsolated = sessionTarget !== 'main';
-  if (!isIsolated) {
-    // Main session run — send summary directly to Telegram
+async function sendTelegramNotification(title, status, summary, occurrenceId, eventId) {
+  try {
+    const sessionsPath = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', 'sessions.json');
+    let chatId;
+    try {
+      const data = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+      for (const val of Object.values(data)) {
+        if (val?.deliveryContext?.channel === 'telegram' && val?.deliveryContext?.to) {
+          chatId = String(val.deliveryContext.to).replace(/^telegram:/, '');
+          break;
+        }
+      }
+    } catch { return; }
+    if (!chatId) return;
+
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+
     const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
     const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
     const snippet = summary && summary.length > 0
       ? `\n\n${String(summary).slice(0, 400)}${summary.length > 400 ? '\u2026' : ''}`
       : '';
-    try {
-      const { execFile } = await import('node:child_process');
-      const { promisify } = await import('node:util');
-      const execFileAsync = promisify(execFile);
-      const sessionsPath = path.join(OPENCLAW_HOME, 'agents', 'main', 'sessions', 'sessions.json');
-      let chatId;
+
+    let artifactSection = '';
+    if (status === 'succeeded' && occurrenceId && eventId) {
       try {
-        const data = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
-        for (const val of Object.values(data)) {
-          if (val?.deliveryContext?.channel === 'telegram' && val?.deliveryContext?.to) {
-            chatId = String(val.deliveryContext.to).replace(/^telegram:/, '');
-            break;
-          }
+        const artifactPayload = await scanRunArtifacts(occurrenceId, eventId);
+        const files = artifactPayload?.files ?? [];
+        if (files.length > 0) {
+          const listed = files.slice(0, 5).map((f) => `• ${f.name}`).join('\n');
+          const more = files.length > 5 ? `\n• ...and ${files.length - 5} more` : '';
+          artifactSection = `\n\n💾 Saved files\n${listed}${more}`;
         }
-      } catch { /* no sessions file yet */ }
-      if (chatId) {
-        // For main-session runs the cron `summary` field may be the rendered prompt
-        // rather than the real assistant output. Resolve the main session file the
-        // same way as the run-sync path and prefer the assistant text when it does
-        // not look like a prompt echo.
-        let actualOutput = snippet; // fallback to summary snippet
-        // Use occurrence marker when available so main-session direct Telegram delivery
-        // does not accidentally pick up another task's output from the shared session.
-        const sessionText = await readLastAssistantFromSession('main', sessionId || null, null, occurrenceId || null);
-        if (sessionText && !looksLikePromptEcho(sessionText, '', summary)) {
-          actualOutput = `\n\n📝 Result\n${sessionText.trim().slice(0, 700)}${sessionText.length > 700 ? '\u2026' : ''}`;
-        }
-
-        let artifactSection = '';
-        if (status === 'succeeded' && occurrenceId && eventId) {
-          const artifactPayload = await scanRunArtifacts(occurrenceId, eventId);
-          const files = artifactPayload?.files ?? [];
-          if (files.length > 0) {
-            const listed = files.slice(0, 5).map((f) => `• ${f.name} — ${f.path}`).join('\n');
-            const more = files.length > 5 ? `\n• ...and ${files.length - 5} more` : '';
-            artifactSection = `\n\n💾 Saved files\n${listed}${more}`;
-          }
-        }
-
-        const header = `${statusEmoji} Agenda task "${title}" ${statusLabel}`;
-        const text = `${header}${actualOutput}${artifactSection}`;
-        await execFileAsync('openclaw', [
-          'message', 'send',
-          '--channel', 'telegram',
-          '--target', chatId,
-          '--message', text,
-        ], { timeout: 15000 });
-        console.log(`[bridge-logger] Telegram delivery for main-session run "${title}" (${status})`);
-      } else {
-        console.warn('[bridge-logger] notifyMainSession: no Telegram chatId found in sessions.json');
-      }
-    } catch (err) {
-      console.warn('[bridge-logger] notifyMainSession (main/telegram) failed:', err?.message);
+      } catch { /* best effort */ }
     }
+
+    const header = `${statusEmoji} Agenda task "${title}" ${statusLabel}`;
+    const text = `${header}${snippet}${artifactSection}`;
+    await execFileAsync('openclaw', [
+      'message', 'send',
+      '--channel', 'telegram',
+      '--target', chatId,
+      '--message', text,
+    ], { timeout: 15000 });
+    console.log(`[bridge-logger] Telegram notification for "${title}" (${status})`);
+  } catch (err) {
+    console.warn('[bridge-logger] Telegram notification failed:', err?.message);
+  }
+}
+
+/**
+ * Inject a short system event into the main OpenClaw session to notify
+ * the main agent that an agenda task finished.
+ * For isolated sessions: also sends a Telegram notification so the user
+ * knows the task completed without having to check Mission Control.
+ * For main session runs: only sends Telegram (output already in chat).
+ * Non-fatal.
+ */
+async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId, sessionId }) {
+  const isIsolated = sessionTarget !== 'main';
+
+  if (isIsolated) {
+    // Isolated session: inject system event AND send Telegram notification
+    try {
+      const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
+      const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
+      const snippet = summary ? ` — ${String(summary).slice(0, 120)}${summary.length > 120 ? '…' : ''}` : '';
+      const systemEvent = `${statusEmoji} Agenda task "${title}" ${statusLabel}${snippet}. (Mission Control)`;
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      await execFileAsync("openclaw", [
+        "cron", "add",
+        "--name", `MC: ${title}`,
+        "--at", "5s",
+        "--session", "main",
+        "--system-event", systemEvent,
+        "--delete-after-run",
+        "--json",
+      ], { timeout: 15000 });
+    } catch (err) {
+      console.warn("[bridge-logger] notifyMainSession system event failed (non-fatal):", err?.message);
+    }
+    // Also send a Telegram notification for isolated sessions
+    await sendTelegramNotification(title, status, summary, occurrenceId, eventId);
     return;
   }
-  try {
-    const statusEmoji = status === 'succeeded' ? '✅' : status === 'needs_retry' ? '⚠️' : '❌';
-    const statusLabel = status === 'succeeded' ? 'completed' : status === 'needs_retry' ? 'needs retry' : 'failed';
-    const snippet = summary ? ` — ${String(summary).slice(0, 120)}${summary.length > 120 ? '…' : ''}` : '';
-    const systemEvent = `${statusEmoji} Agenda task "${title}" ${statusLabel}${snippet}. (Mission Control)`;
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    await execFileAsync("openclaw", [
-      "cron", "add",
-      "--name", `MC: ${title}`,
-      "--at", "5s",
-      "--session", "main",
-      "--system-event", systemEvent,
-      "--delete-after-run",
-      "--json",
-    ], { timeout: 15000 });
-  } catch (err) {
-    console.warn("[bridge-logger] notifyMainSession failed (non-fatal):", err?.message);
-  }
+
+  // Main session run — send summary directly to Telegram (output already lands in chat)
+  await sendTelegramNotification(title, status, summary, occurrenceId, eventId);
 }
 
 async function sendTelegramAlert(getSql, title, occurrenceId, reason) {

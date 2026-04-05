@@ -264,9 +264,11 @@ function EventPill({ event }: { event: CalendarEvent }) {
       ].join(" ")}
       style={{
         backgroundColor: bg,
-        borderLeft: `3px solid ${dotColor}`,
+        // Use explicit border props to avoid React shorthand conflict warning
+        borderLeftWidth: "3px",
+        borderLeftStyle: isDraft ? "dashed" : "solid",
+        borderLeftColor: dotColor,
         opacity: isDraft ? 0.65 : 1,
-        borderStyle: isDraft ? "dashed" : "solid",
       }}
     >
       {/* Title row */}
@@ -352,9 +354,11 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
       ].join(" ")}
       style={{
         backgroundColor: bg,
-        borderLeft: `4px solid ${dotColor}`,
+        // Use explicit border props to avoid React shorthand conflict warning
+        borderLeftWidth: "4px",
+        borderLeftStyle: isDraft ? "dashed" : "solid",
+        borderLeftColor: dotColor,
         opacity: isDraft ? 0.65 : 1,
-        borderStyle: isDraft ? "dashed" : "solid",
       }}
     >
       {/* Title row with status */}

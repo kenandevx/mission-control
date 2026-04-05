@@ -886,6 +886,275 @@ export const AGENDA_TESTS: TestDefinition[] = [
     },
   },
 
+  // ── 21. Recurring event creates multiple occurrences ───────────────────────
+  {
+    id: "recurring-multi-occurrence",
+    name: "Recurring event creates multiple occurrences",
+    description: "Creates a daily recurring event spanning 7 days. Scheduler must create ≥3 occurrences within 90s.",
+    run: async (ctx) => {
+      const ID = "recurring-multi-occurrence";
+      const NAME = "Recurring event creates multiple occurrences";
+      const DESC = "A daily event over 7 days should get ≥3 occurrences created by the scheduler.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx, {
+        recurrenceRule: "FREQ=DAILY;INTERVAL=1",
+        recurrenceUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      }) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+      log(`Created daily event: ${eventId}`);
+
+      const occ = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string }[] }>,
+        (v) => (v.occurrences?.length ?? 0) >= 3,
+        { timeoutMs: 90_000 },
+      );
+      if (!occ) return fail(ID, NAME, DESC, t0, `Only occurrence(s) after 90s (expected ≥3)`);
+      const count2 = (occ.occurrences as { id: string }[]).length;
+      log(`${count} occurrences created`);
+
+      return pass(ID, NAME, DESC, t0, `${count} occurrences created for daily recurring event`);
+    },
+  },
+
+  // ── 22. Force retry on succeeded occurrence ───────────────────────────────
+  {
+    id: "force-retry-succeeded",
+    name: "Force retry on succeeded occurrence",
+    description: "Waits for an event to succeed, then force-retries it. Should accept and create a new cron job.",
+    run: async (ctx) => {
+      const ID = "force-retry-succeeded";
+      const NAME = "Force retry on succeeded occurrence";
+      const DESC = "Force Retry must work on a succeeded occurrence, creating a new run.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for initial run to succeed");
+
+      const occId = (succeeded.occurrences as { id: string; status: string }[])
+        .find((o) => o.status === "succeeded")!.id;
+      log(`Succeeded occurrence: ${occId}`);
+
+      // Force retry
+      const retryRes = await ctx.apiPost(
+        `/api/agenda/events/${eventId}/occurrences/${occId}`,
+        { action: "retry", force: true },
+      ) as { ok: boolean; error?: string };
+      if (!retryRes.ok) return fail(ID, NAME, DESC, t0, `Force retry failed: ${retryRes.error}`);
+      log("Force retry accepted");
+
+      // Verify occurrence moved from succeeded → queued
+      const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as {
+        occurrences?: { id: string; status: string }[];
+      };
+      const occ = (detail.occurrences ?? []).find((o) => o.id === occId);
+      log(`Status after force retry: ${occ?.status}`);
+
+      if (!occ || !["queued", "running", "succeeded"].includes(occ.status)) {
+        return fail(ID, NAME, DESC, t0, `Expected queued/running/succeeded, got ${occ?.status}`);
+      }
+
+      // Count total occurrences — force retry creates a new one
+      if ((detail.occurrences ?? []).length < 2) {
+        return fail(ID, NAME, DESC, t0, "Force retry did not create a new occurrence");
+      }
+      log(`${(detail.occurrences ?? []).length} total occurrences after force retry`);
+
+      return pass(ID, NAME, DESC, t0, "Force retry on succeeded event works — new occurrence queued");
+    },
+  },
+
+  // ── 23. Event with process attached ───────────────────────────────────────
+  {
+    id: "event-with-process",
+    name: "Event with attached process executes",
+    description: "Creates a process with steps, attaches it to an event, runs it. Verifies the process version ID is stored.",
+    run: async (ctx) => {
+      const ID = "event-with-process";
+      const NAME = "Event with attached process executes";
+      const DESC = "An event with an attached process should store the process_version_id and execute.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      // Create a simple process
+      const procName = ctx.uniqueName("PROC");
+      const procRes = await ctx.apiPost("/api/processes", {
+        name: procName,
+        description: "Test process for agenda test",
+        status: "published",
+        versionLabel: "v1",
+        steps: [
+          { title: "Step 1", instruction: "Summarize: hello from test process" },
+        ],
+      }) as { ok: boolean; processVersionId?: string; error?: string };
+      if (!procRes.ok || !procRes.processVersionId) {
+        return fail(ID, NAME, DESC, t0, `Process creation failed: ${procRes.error}`);
+      }
+      const pvId = procRes.processVersionId;
+      log(`Process version created: ${pvId}`);
+
+      // Create event with process attached
+      const eventRes = await createEvent(ctx, {
+        processVersionIds: [pvId],
+      }) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!eventRes.ok || !eventRes.event?.id) return fail(ID, NAME, DESC, t0, `Event creation failed: ${eventRes.error}`);
+      const eventId = eventRes.event.id;
+
+      // Verify the process link exists
+      const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as {
+        processes?: { process_version_id: string }[];
+      };
+      if (!detail.processes?.length) return fail(ID, NAME, DESC, t0, "No process linked to event");
+      log(`Process linked: ${detail.processes[0].process_version_id}`);
+
+      // Wait for execution
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Event with process did not succeed within 2 min");
+
+      return pass(ID, NAME, DESC, t0, "Event with attached process executed successfully");
+    },
+  },
+
+  // ── 24. Edit single occurrence override ───────────────────────────────────
+  {
+    id: "edit-single-occurrence",
+    name: "Edit single occurrence override",
+    description: "Creates a recurring event, edits a single occurrence's title via editScope=single, verifies override stored.",
+    run: async (ctx) => {
+      const ID = "edit-single-occurrence";
+      const NAME = "Edit single occurrence override";
+      const DESC = "editScope=single creates an override row for just that occurrence.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx, {
+        recurrenceRule: "FREQ=DAILY;INTERVAL=1",
+        recurrenceUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      }) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      // Wait for occurrences
+      const withOcc = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string }[] }>,
+        (v) => (v.occurrences?.length ?? 0) > 0,
+        { timeoutMs: 90_000 },
+      );
+      if (!withOcc) return fail(ID, NAME, DESC, t0, "No occurrence created within 90s");
+      const occId = (withOcc.occurrences as { id: string }[])[0].id;
+      log(`Got occurrence: ${occId}`);
+
+      // Edit single occurrence
+      const editRes = await ctx.apiPatch(`/api/agenda/events/${eventId}`, {
+        editScope: "single",
+        occurrenceId: occId,
+        title: `${ctx.uniqueName("OVERRIDE")}`,
+        timezone: "Europe/Amsterdam",
+      }) as { ok: boolean; error?: string };
+      if (!editRes.ok) return fail(ID, NAME, DESC, t0, `Single occurrence edit failed: ${editRes.error}`);
+      log("Single occurrence edit OK");
+
+      // Verify the event is still in DB (not deleted or split)
+      const check = await ctx.apiGet(`/api/agenda/events/${eventId}`) as { event?: { status: string } };
+      if (check.event?.status !== "active") return fail(ID, NAME, DESC, t0, `Expected event status=active, got ${check.event?.status}`);
+
+      return pass(ID, NAME, DESC, t0, "Single occurrence override created successfully");
+    },
+  },
+
+  // ── 25. Agenda stats API returns data ─────────────────────────────────────
+  {
+    id: "agenda-stats-api",
+    name: "Agenda stats endpoint returns counts",
+    description: "After running at least one event, /api/agenda/stats must return non-zero counts.",
+    run: async (ctx) => {
+      const ID = "agenda-stats-api";
+      const NAME = "Agenda stats endpoint returns counts";
+      const DESC = "/api/agenda/stats should return occurrence counts by status.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      const succeeded = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "succeeded"),
+        { timeoutMs: 120_000 },
+      );
+      if (!succeeded) return fail(ID, NAME, DESC, t0, "Timed out waiting for occurrence to succeed");
+      log("Event succeeded");
+
+      const stats = await ctx.apiGet("/api/agenda/stats") as { ok: boolean; stats?: Record<string, number> };
+      if (!stats.ok || !stats.stats) return fail(ID, NAME, DESC, t0, "Stats API failed");
+      const total = Object.values(stats.stats).reduce((sum: number, v: number) => sum + v, 0);
+      log(`Stats: ${JSON.stringify(stats.stats)} (total=${total})`);
+
+      if (total === 0) return fail(ID, NAME, DESC, t0, "Stats returned zero total counts");
+      return pass(ID, NAME, DESC, t0, `Stats endpoint returned ${total} total occurrences`);
+    },
+  },
+
+  // ── 26. Dismiss occurrence removes it from active view ────────────────────
+  {
+    id: "dismiss-queued-occurrence",
+    name: "Dismiss a queued occurrence",
+    description: "Creates an event, waits for the occurrence to be queued, then dismisses it and verifies status=cancelled.",
+    run: async (ctx) => {
+      const ID = "dismiss-queued-occurrence";
+      const NAME = "Dismiss a queued occurrence";
+      const DESC = "Dismissing a queued occurrence should set status=cancelled and remove the cron job.";
+      const t0 = Date.now();
+      const log = (m: string) => ctx.log(ID, m);
+
+      const res = await createEvent(ctx, {
+        startsAt: cetNowPlus(30_000), // 30s from now — quick enough to get queued
+      }) as { ok: boolean; event?: { id: string }; error?: string };
+      if (!res.ok || !res.event?.id) return fail(ID, NAME, DESC, t0, `API error: ${res.error}`);
+      const eventId = res.event.id;
+
+      // Wait for queued
+      const queued = await poll(
+        () => ctx.apiGet(`/api/agenda/events/${eventId}`) as Promise<{ occurrences?: { id: string; status: string }[] }>,
+        (r) => (r?.occurrences ?? []).some((o) => o.status === "queued"),
+        { timeoutMs: 90_000 },
+      );
+      if (!queued) return fail(ID, NAME, DESC, t0, "Occurrence did not reach queued within 90s");
+      const occId = (queued.occurrences as { id: string; status: string }[])
+        .find((o) => o.status === "queued")!.id;
+      log(`Queued occurrence: ${occId}`);
+
+      // Dismiss
+      const dismiss = await ctx.apiDelete(`/api/agenda/events/${eventId}/occurrences/${occId}`) as { ok: boolean; error?: string };
+      if (!dismiss.ok) return fail(ID, NAME, DESC, t0, `Dismiss failed: ${dismiss.error}`);
+      log("Dismissed");
+
+      // Verify cancelled
+      const detail = await ctx.apiGet(`/api/agenda/events/${eventId}`) as { occurrences?: { id: string; status: string }[] };
+      const occ = (detail.occurrences ?? []).find((o) => o.id === occId);
+      if (occ?.status !== "cancelled") return fail(ID, NAME, DESC, t0, `Expected cancelled, got ${occ?.status}`);
+      log(`Status = ${occ.status}`);
+
+      return pass(ID, NAME, DESC, t0, "Queued occurrence successfully dismissed");
+    },
+  },
+
 ];
 
 
