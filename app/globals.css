@@ -182,8 +182,8 @@ a {
 
 /* Agenda event animations */
 @keyframes agenda-running-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.0), 0 0 8px rgba(99,102,241,0.15); }
-  50% { box-shadow: 0 0 0 3px rgba(99,102,241,0.12), 0 0 16px rgba(99,102,241,0.25); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(214,138,74,0), 0 0 10px rgba(214,138,74,0.18); }
+  50% { box-shadow: 0 0 0 3px rgba(214,138,74,0.14), 0 0 18px rgba(214,138,74,0.30); }
 }
 
 @keyframes agenda-retry-pulse {

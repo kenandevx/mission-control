@@ -439,13 +439,15 @@ function AgentOutput({ outputPayload }: { outputPayload: string | Record<string,
   if (!parsed) return null;
 
   return (
-    <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-2">
+    <div className="min-w-0 overflow-hidden rounded-lg border bg-muted/40 p-4 flex flex-col gap-2 break-words [overflow-wrap:anywhere]">
       {parsed.outputSource ? (
-        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground break-words [overflow-wrap:anywhere]">
           Output source: {beautifyOutputSource(parsed.outputSource)}
         </p>
       ) : null}
-      {renderMarkdown(parsed.cleaned)}
+      <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+        {renderMarkdown(parsed.cleaned)}
+      </div>
     </div>
   );
 }
@@ -1231,8 +1233,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                                 Step request
                               </p>
-                              <div className="rounded-lg border bg-muted/40 p-4">
-                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-[400px] overflow-y-auto">
+                              <div className="min-w-0 overflow-hidden rounded-lg border bg-muted/40 p-4">
+                                <p className="text-xs text-foreground/80 whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed font-mono max-h-[400px] overflow-y-auto">
                                   {promptText}
                                 </p>
                               </div>

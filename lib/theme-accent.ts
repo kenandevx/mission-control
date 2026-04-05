@@ -37,7 +37,7 @@ export type ThemeAccent = {
 };
 
 // Each accent: primary, muted (=accent), primaryGlow (=primary /0.5 alpha), sidebar-accent (=accent), chart spreads
-export const THEME_ACCENTS: ThemeAccent[] = [
+const BASE_THEME_ACCENTS: ThemeAccent[] = [
   {
     id: "purple",
     label: "Purple (Default)",
@@ -389,6 +389,56 @@ export const THEME_ACCENTS: ThemeAccent[] = [
     chart5: "oklch(0.66 0.12 350)",
   },
 ];
+
+function makePastelAccent(id: string, label: string, hue: number): ThemeAccent {
+  const swatch = `hsl(${Math.round(hue)} 82% 78%)`;
+  return {
+    id,
+    label,
+    swatch,
+    primary: `oklch(0.78 0.12 ${hue})`,
+    primaryForeground: `oklch(0.22 0.02 ${hue})`,
+    ring: `oklch(0.84 0.10 ${hue})`,
+    secondary: `oklch(0.975 0.010 ${hue})`,
+    secondaryForeground: `oklch(0.30 0.018 ${hue})`,
+    accent: `oklch(0.968 0.014 ${hue})`,
+    accentForeground: `oklch(0.30 0.018 ${hue})`,
+    muted: `oklch(0.968 0.014 ${hue})`,
+    mutedForeground: `oklch(0.54 0.018 ${hue})`,
+    sidebarPrimary: `oklch(0.78 0.12 ${hue})`,
+    sidebarPrimaryForeground: `oklch(0.22 0.02 ${hue})`,
+    sidebarAccent: `oklch(0.968 0.014 ${hue})`,
+    sidebarAccentForeground: `oklch(0.30 0.018 ${hue})`,
+    sidebar: `oklch(0.988 0.006 ${hue})`,
+    sidebarForeground: `oklch(0.22 0.018 ${hue})`,
+    sidebarBorder: `oklch(0.92 0.008 ${hue})`,
+    sidebarRing: `oklch(0.84 0.10 ${hue})`,
+    foreground: `oklch(0.22 0.018 ${hue})`,
+    card: `oklch(0.995 0.003 ${hue})`,
+    cardForeground: `oklch(0.22 0.018 ${hue})`,
+    popover: `oklch(0.995 0.003 ${hue})`,
+    popoverForeground: `oklch(0.22 0.018 ${hue})`,
+    border: `oklch(0.92 0.008 ${hue})`,
+    input: `oklch(0.92 0.008 ${hue})`,
+    primaryGlow: `oklch(0.78 0.12 ${hue} / 0.52)`,
+    chart1: `oklch(0.80 0.11 ${hue})`,
+    chart2: `oklch(0.74 0.12 ${wrapHue(hue + 28)})`,
+    chart3: `oklch(0.72 0.12 ${wrapHue(hue + 65)})`,
+    chart4: `oklch(0.76 0.11 ${wrapHue(hue + 110)})`,
+    chart5: `oklch(0.74 0.12 ${wrapHue(hue + 150)})`,
+  };
+}
+
+const PASTEL_ACCENTS: ThemeAccent[] = Array.from({ length: 50 }, (_, index) => {
+  const hue = wrapHue(6 + index * 7.2);
+  return makePastelAccent(
+    `pastel-${index + 1}`,
+    `Pastel ${String(index + 1).padStart(2, "0")}`,
+    hue,
+  );
+});
+
+export const THEME_ACCENTS: ThemeAccent[] = [...BASE_THEME_ACCENTS, ...PASTEL_ACCENTS];
 
 function wrapHue(value: number): number {
   const mod = value % 360;

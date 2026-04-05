@@ -203,7 +203,7 @@ export async function GET(request: Request) {
           // For recurring: fetch ALL occurrences with run timing and match by scheduled_for date
           // Join agenda_events to get timezone for CET-date key computation
           const allOccRows = await sql`
-            select ao.agenda_event_id, ao.scheduled_for, ao.status,
+            select ao.agenda_event_id, ao.scheduled_for, ao.status, ao.locked_at,
                    ra.started_at as run_started_at, ra.finished_at as run_finished_at,
                    ae.timezone as event_timezone
             from agenda_occurrences ao
@@ -221,7 +221,10 @@ export async function GET(request: Request) {
             const dateKey = extractLocalTime(new Date(r.scheduled_for), tz).date;
             const key = `${r.agenda_event_id}:${dateKey}`;
             occDateMap.set(key, r.status);
-            occTimingMap.set(key, { run_started_at: r.run_started_at, run_finished_at: r.run_finished_at });
+            occTimingMap.set(key, {
+              run_started_at: r.run_started_at ?? (r.status === "running" ? (r.locked_at ?? r.scheduled_for) : null),
+              run_finished_at: r.run_finished_at,
+            });
           }
           // Augment each expanded recurring occurrence with its own occurrence status
           for (const e of expanded) {
@@ -251,6 +254,7 @@ export async function GET(request: Request) {
             select distinct on (ao.agenda_event_id)
               ao.agenda_event_id, ao.status as latest_occurrence_status,
               ao.scheduled_for as next_scheduled_for,
+              ao.locked_at,
               ra.started_at as run_started_at, ra.finished_at as run_finished_at
             from agenda_occurrences ao
             left join agenda_run_attempts ra
@@ -275,7 +279,7 @@ export async function GET(request: Request) {
           const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
           for (const r of occRows) statusMap.set(r.agenda_event_id, {
             status: r.latest_occurrence_status,
-            run_started_at: r.run_started_at,
+            run_started_at: r.run_started_at ?? (r.latest_occurrence_status === "running" ? (r.locked_at ?? r.next_scheduled_for) : null),
             run_finished_at: r.run_finished_at,
             next_scheduled_for: r.next_scheduled_for,
           });
@@ -304,6 +308,7 @@ export async function GET(request: Request) {
           ao.agenda_event_id,
           ao.status as latest_occurrence_status,
           ao.scheduled_for as next_scheduled_for,
+          ao.locked_at,
           ara.started_at as run_started_at,
           ara.finished_at as run_finished_at
         from agenda_occurrences ao
@@ -330,7 +335,7 @@ export async function GET(request: Request) {
       const statusMap = new Map<string, { status: string; run_started_at: string | null; run_finished_at: string | null; next_scheduled_for: string | null }>();
       for (const r of occRows) statusMap.set(r.agenda_event_id, {
         status: r.latest_occurrence_status,
-        run_started_at: r.run_started_at ?? null,
+        run_started_at: r.run_started_at ?? (r.status === "running" ? (r.locked_at ?? r.next_scheduled_for) : null),
         run_finished_at: r.run_finished_at ?? null,
         next_scheduled_for: r.next_scheduled_for ?? null,
       });

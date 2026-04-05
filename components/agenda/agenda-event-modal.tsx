@@ -740,7 +740,7 @@ setAgendaTimeStepMinutes(safe);
       </div>
 
       {/* Agent + model controls */}
-      <div className={`grid gap-3 ${form.sessionTarget === "main" ? "grid-cols-1" : "grid-cols-2"}`}>
+      <div className={`grid gap-3 ${form.sessionTarget === "main" ? "grid-cols-1" : "grid-cols-3"}`}>
         {/* Agent */}
         <div className="flex flex-col gap-1.5 min-w-0">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
@@ -797,8 +797,8 @@ setAgendaTimeStepMinutes(safe);
               </Select>
             </div>
 
-            {/* Model Override — full width */}
-            <div className="col-span-2 flex flex-col gap-1.5 min-w-0">
+            {/* Model Override */}
+            <div className="flex flex-col gap-1.5 min-w-0">
               <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
                 <IconCpu className="size-3.5 text-primary" />
                 Model override
@@ -827,9 +827,6 @@ setAgendaTimeStepMinutes(safe);
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Applied when this event runs as an isolated session.
-              </p>
             </div>
           </>
         )}

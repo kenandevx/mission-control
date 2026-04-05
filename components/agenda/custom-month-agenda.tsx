@@ -339,7 +339,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
                 {/* Timer */}
                 {event.latestResult === "running" && (
                   <LiveDuration
-                    startedAt={event.runStartedAt}
+                    startedAt={event.runStartedAt ?? event.scheduledFor ?? null}
                     finishedAt={event.runFinishedAt}
                     className={labelCls}
                     style={{ color: statusColor }}
@@ -457,7 +457,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
               <span className="inline-flex items-center gap-[3px]">
                 {event.latestResult === "running" && (
                   <LiveDuration
-                    startedAt={event.runStartedAt}
+                    startedAt={event.runStartedAt ?? event.scheduledFor ?? null}
                     finishedAt={event.runFinishedAt}
                     className={labelCls}
                     style={{ color: statusColor }}

@@ -23,6 +23,15 @@ type ActivityEntry = {
   targetUrl?: string;
 };
 
+function normalizeAgendaEvent(rawEvent: string): string {
+  const raw = String(rawEvent || "").trim().toLowerCase();
+  if (!raw) return raw;
+  const withoutPrefix = raw.startsWith("agenda.") ? raw.slice("agenda.".length) : raw;
+  if (withoutPrefix === "started") return "running";
+  if (withoutPrefix === "created") return "scheduled";
+  return withoutPrefix;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(dateStr: string): string {
@@ -44,9 +53,10 @@ function relativeTime(dateStr: string): string {
 /** Human-readable label for the event status/action. */
 function formatActivityEvent(entry: ActivityEntry): string {
   const raw = (entry.event || "").toLowerCase();
+  const normalizedAgenda = entry.type === "agenda" ? normalizeAgendaEvent(raw) : raw;
 
   // Agenda: use canonical labels from status-colors.ts
-  if (entry.type === "agenda" && statusMeta(raw)) return statusLabel(raw);
+  if (entry.type === "agenda" && statusMeta(normalizedAgenda)) return statusLabel(normalizedAgenda);
 
   // Ticket / non-canonical fallback
   if (raw === "force_retry") return "Force retried";
@@ -81,9 +91,12 @@ function agentLabel(agent: string): string {
 /** Returns inline style for the colored status dot. */
 function dotStyle(entry: ActivityEntry): React.CSSProperties {
   // Agenda entries: use exact hex from status-colors
-  if (entry.type === "agenda" && statusMeta(entry.event)) {
-    const hex = statusHex(entry.event);
-    return { backgroundColor: hex, boxShadow: `0 0 5px ${hex}70` };
+  if (entry.type === "agenda") {
+    const normalized = normalizeAgendaEvent(entry.event);
+    if (statusMeta(normalized)) {
+      const hex = statusHex(normalized);
+      return { backgroundColor: hex, boxShadow: `0 0 5px ${hex}70` };
+    }
   }
   // Ticket / fallback: derive from level
   const LEVEL_HEX: Record<string, string> = {
@@ -98,8 +111,9 @@ function dotStyle(entry: ActivityEntry): React.CSSProperties {
 
 /** Returns the CSS color for the event label text. */
 function labelColor(entry: ActivityEntry): string {
-  if (entry.type === "agenda" && statusMeta(entry.event)) {
-    return statusText(entry.event);
+  if (entry.type === "agenda") {
+    const normalized = normalizeAgendaEvent(entry.event);
+    if (statusMeta(normalized)) return statusText(normalized);
   }
   const LEVEL_TEXT: Record<string, string> = {
     success: "#22c55e",
@@ -113,7 +127,7 @@ function labelColor(entry: ActivityEntry): string {
 // ── Running dot animation class ───────────────────────────────────────────────
 
 function isAnimated(entry: ActivityEntry): boolean {
-  return entry.type === "agenda" && ["running", "auto_retry"].includes(entry.event);
+  return entry.type === "agenda" && ["running", "auto_retry"].includes(normalizeAgendaEvent(entry.event));
 }
 
 const MAX_ENTRIES = 8;
