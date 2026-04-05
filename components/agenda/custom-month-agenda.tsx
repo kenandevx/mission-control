@@ -28,6 +28,8 @@ import {
   IconChevronRight,
   IconInfoCircle,
 } from "@tabler/icons-react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faArrowsRotate } from "@fortawesome/free-solid-svg-icons";
 import type { AgendaEventSummary } from "@/components/agenda/agenda-details-sheet";
 import { useNow, formatDuration, LiveDuration } from "@/hooks/use-now";
 import {
@@ -260,21 +262,12 @@ function statusRingStyle(result: CalendarEvent["latestResult"], alpha: string) {
 
 function RecurringIcon({ size = 9 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.5}
+    <FontAwesomeIcon
+      icon={faArrowsRotate}
       className="shrink-0 opacity-70"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
+      style={{ width: size, height: size, display: "block" }}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -326,6 +319,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
         >
           {event.title}
         </span>
+        {event.isRecurring && <RecurringIcon size={10} />}
         <OccurrenceStatusDot result={event.latestResult} size={6} />
       </div>
 

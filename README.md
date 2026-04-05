@@ -209,6 +209,9 @@ All PID files: `.runtime/pids/*.pid` · All logs: `.runtime/logs/*.log`
 | `/approvals` | Approvals | Pending Telegram/Slack approval requests |
 | `/setup` | Setup Wizard | First-run gateway pairing + workspace init |
 
+Agenda calendar note:
+- Recurring event pills use a Font Awesome repeat/rotate icon for consistent rendering in the custom calendar views.
+
 ---
 
 ## 📅 Agenda
@@ -293,6 +296,10 @@ Use `statusHex(status)`, `statusBg(status)`, `statusText(status)` helpers, or re
 ### Artifact Files
 
 When an agent writes files to the path embedded in the prompt (e.g. `<OPENCLAW_HOME>/runtime-artifacts/agenda/<eventId>/occurrences/<occurrenceId>/artifacts/`), bridge-logger scans that directory after run completion and persists file metadata. The Output tab in the occurrence detail sheet shows file previews and download links via `/api/agenda/artifacts/[stepId]/[filename]`. On event deletion, the entire `runtime-artifacts/agenda/<eventId>/` tree is cleaned up.
+
+UI behavior:
+- If a run only produced artifacts and the captured text output was filtered down to empty content (for example `prompt_echo_filtered` with no remaining body), the Output tab hides the empty output block instead of rendering a blank "Output source" panel.
+- Image artifact preview cards use consistent inner padding for the filename and preview area.
 
 ### Scheduler Details (`agenda-scheduler.mjs`)
 

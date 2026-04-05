@@ -396,7 +396,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
   );
 }
 
-function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
+function parseAgentOutput(outputPayload: string | Record<string, unknown> | null): { cleaned: string; outputSource: string } | null {
   if (!outputPayload) return null;
   let outputText = "";
   let outputSource = "";
@@ -423,14 +423,22 @@ function AgentOutput({ outputPayload }: { outputPayload: string | Record<string,
     } catch { /* keep raw string */ }
   }
   const cleaned = outputText.replace(/\n*>\s*`Agent:.*`$/, "").trim();
+  if (!cleaned) return null;
+  return { cleaned, outputSource };
+}
+
+function AgentOutput({ outputPayload }: { outputPayload: string | Record<string, unknown> | null }) {
+  const parsed = parseAgentOutput(outputPayload);
+  if (!parsed) return null;
+
   return (
     <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-2">
-      {outputSource ? (
+      {parsed.outputSource ? (
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          Output source: {beautifyOutputSource(outputSource)}
+          Output source: {beautifyOutputSource(parsed.outputSource)}
         </p>
       ) : null}
-      {renderMarkdown(cleaned)}
+      {renderMarkdown(parsed.cleaned)}
     </div>
   );
 }
@@ -501,13 +509,17 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
       {files.some((f) => f.mimeType?.startsWith("image/")) && (
         <div className="flex flex-col gap-2 mt-1">
           {files.filter((f) => f.mimeType?.startsWith("image/")).map((file) => (
-            <div key={`preview-${file.name}`} className="rounded-lg border overflow-hidden bg-muted/10">
-              <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1 font-medium">{file.name}</p>
-              <img
-                src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
-                alt={file.name}
-                className="max-h-[300px] w-full object-contain"
-              />
+            <div key={`preview-${file.name}`} className="rounded-lg border bg-muted/10 p-3">
+              <div className="flex flex-col gap-3">
+                <p className="text-[10px] text-muted-foreground font-medium leading-none">{file.name}</p>
+                <div className="rounded-md overflow-hidden bg-background/60">
+                  <img
+                    src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
+                    alt={file.name}
+                    className="max-h-[300px] w-full object-contain"
+                  />
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -1225,16 +1237,22 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                               {step.error_message}
                             </div>
                           )}
-                          {step.output_payload ? (
-                            <>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                                {step.status === "failed" ? "Output (failed run)" : "Output"}
-                              </p>
-                              <AgentOutput outputPayload={step.output_payload} />
-                            </>
-                          ) : !step.error_message ? (
-                            <p className="text-sm text-muted-foreground">No output available</p>
-                          ) : null}
+                          {(() => {
+                            const parsedOutput = parseAgentOutput(step.output_payload ?? null);
+                            if (parsedOutput) {
+                              return (
+                                <>
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                    {step.status === "failed" ? "Output (failed run)" : "Output"}
+                                  </p>
+                                  <AgentOutput outputPayload={step.output_payload} />
+                                </>
+                              );
+                            }
+                            return !step.error_message ? (
+                              <p className="text-sm text-muted-foreground">No output available</p>
+                            ) : null;
+                          })()}
 
                           {/* Artifacts */}
                           {(() => {

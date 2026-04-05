@@ -12,13 +12,33 @@ export async function GET() {
 
   let keepAlive: ReturnType<typeof setInterval> | null = null;
   let listener: { unlisten: () => Promise<void> } | null = null;
+  let closed = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(encoder.encode(sse({ connected: true }, "ready")));
+      const cleanup = async () => {
+        if (closed) return;
+        closed = true;
+        if (keepAlive) clearInterval(keepAlive);
+        keepAlive = null;
+        if (listener) await listener.unlisten().catch(() => {});
+        listener = null;
+        try { controller.close(); } catch { /* already closed */ }
+      };
+
+      const send = async (payload: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(payload));
+        } catch {
+          await cleanup();
+        }
+      };
+
+      await send(sse({ connected: true }, "ready"));
 
       keepAlive = setInterval(() => {
-        controller.enqueue(encoder.encode(sse({ ok: true }, "ping")));
+        void send(sse({ ok: true }, "ping"));
       }, 20000);
 
       listener = await sql.listen("agent_logs", async (payload) => {
@@ -60,13 +80,14 @@ export async function GET() {
         `;
         const row = rows[0] || null;
         if (!row) return;
-        controller.enqueue(encoder.encode(sse({ row }, "log_row")));
+        await send(sse({ row }, "log_row"));
       });
     },
     async cancel() {
+      closed = true;
       if (keepAlive) clearInterval(keepAlive);
       keepAlive = null;
-      if (listener) await listener.unlisten();
+      if (listener) await listener.unlisten().catch(() => {});
       listener = null;
     },
   });

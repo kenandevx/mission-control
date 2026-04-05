@@ -12,13 +12,33 @@ export async function GET() {
 
   let keepAlive: ReturnType<typeof setInterval> | null = null;
   let listenerActivity: { unlisten: () => Promise<void> } | null = null;
+  let closed = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(encoder.encode(sse({ connected: true }, "ready")));
+      const cleanup = async () => {
+        if (closed) return;
+        closed = true;
+        if (keepAlive) clearInterval(keepAlive);
+        keepAlive = null;
+        if (listenerActivity) await listenerActivity.unlisten().catch(() => {});
+        listenerActivity = null;
+        try { controller.close(); } catch { /* already closed */ }
+      };
+
+      const send = async (payload: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(payload));
+        } catch {
+          await cleanup();
+        }
+      };
+
+      await send(sse({ connected: true }, "ready"));
 
       keepAlive = setInterval(() => {
-        controller.enqueue(encoder.encode(sse({ ok: true }, "ping")));
+        void send(sse({ ok: true }, "ping"));
       }, 20000);
 
       // Note: worker_tick listener removed in v2 (BullMQ/Redis removed; execution via openclaw cron)
@@ -46,16 +66,17 @@ export async function GET() {
           `;
           const row = rows[0] || null;
           if (!row) return;
-          controller.enqueue(encoder.encode(sse({ row }, "ticket_activity")));
+          await send(sse({ row }, "ticket_activity"));
         } catch (err) {
           // ignore
         }
       });
     },
     async cancel() {
+      closed = true;
       if (keepAlive) clearInterval(keepAlive);
       keepAlive = null;
-      if (listenerActivity) await listenerActivity.unlisten();
+      if (listenerActivity) await listenerActivity.unlisten().catch(() => {});
       listenerActivity = null;
     },
   });
