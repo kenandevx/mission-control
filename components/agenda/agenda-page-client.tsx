@@ -303,7 +303,7 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
         if (json.ok) {
           toast.success("Retry requested");
           setDetailsSheetOpen(false);
-          void loadEvents();
+          document.dispatchEvent(new CustomEvent("agenda-refresh"));
           return;
         }
         toast.error(json.error ?? "Retry failed");
@@ -311,7 +311,7 @@ export function AgendaPageClient({ onEditEvent, onCopyEvent, onDeleteEvent, onAd
         toast.error("Retry failed");
       }
     },
-    [selectedEvent, loadEvents]
+    [selectedEvent]
   );
 
   return (

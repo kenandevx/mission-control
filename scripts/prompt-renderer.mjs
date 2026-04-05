@@ -39,6 +39,13 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
   const r = clean(request);
   if (r) sections.push(`Request:\n${r}`);
 
+  const executionRules = [
+    "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
+    "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
+    "- If the user asks for a deliverable, produce the deliverable directly.",
+  ];
+  sections.push(`Execution rules:\n${executionRules.join("\n")}`);
+
   const ad = clean(artifactDir);
   const outputRules = [
     "- Return only the requested deliverable.",

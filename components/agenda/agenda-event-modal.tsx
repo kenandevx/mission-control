@@ -271,6 +271,52 @@ function buildInitialForm(data: Partial<AgendaEventFormData>): AgendaEventFormDa
   };
 }
 
+function buildPromptPreview(params: {
+  title: string;
+  request: string;
+  instructions: Array<{ title: string; instruction: string; skillKey?: string | null }>;
+}) {
+  const clean = (value: string | null | undefined) => String(value ?? "").trim();
+  const sections: string[] = [];
+
+  sections.push("You are handling one task. Use only the information below.");
+
+  const title = clean(params.title);
+  if (title) sections.push(`Task:\n${title}`);
+
+  const validInstructions = params.instructions
+    .map((step, index) => {
+      const instruction = clean(step.instruction);
+      if (!instruction) return null;
+      const stepTitle = clean(step.title) || `Step ${index + 1}`;
+      const skillTag = clean(step.skillKey) ? ` [Skill: ${clean(step.skillKey)}]` : "";
+      return `${index + 1}. ${stepTitle}${skillTag} — ${instruction}`;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  if (validInstructions.length > 0) {
+    sections.push(`Instructions:\n${validInstructions.join("\n")}`);
+  }
+
+  const request = clean(params.request);
+  if (request) sections.push(`Request:\n${request}`);
+
+  sections.push([
+    "Execution rules:",
+    "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
+    "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
+    "- If the user asks for a deliverable, produce the deliverable directly.",
+    "",
+    "Output rules:",
+    "- Return only the requested deliverable.",
+    "- Do not include internal labels, IDs, or system metadata.",
+    "- Do not repeat section labels unless they help the final result.",
+    "- Do not invent missing facts.",
+  ].join("\n"));
+
+  return sections.join("\n\n");
+}
+
 // ── Step indicator (floating cards) ─────────────────────────────────────────
 
 function StepIndicator({ currentStep, onStepClick, canReach }: { currentStep: number; onStepClick: (i: number) => void; canReach?: (step: number) => boolean }) {
@@ -326,6 +372,7 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   const [error, setError] = useState("");
   const [step, setStep] = useState(0);
   const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
+  const [previewInstructions, setPreviewInstructions] = useState<Array<{ title: string; instruction: string; skillKey?: string | null }>>([]);
   const models = useModels();
 
   const initialDataRef = useRef(initialData);
@@ -388,6 +435,42 @@ setAgendaTimeStepMinutes(safe);
 
   const timeOptions = buildTimeOptions(agendaTimeStepMinutes === 0 ? 15 : agendaTimeStepMinutes);
 
+  useEffect(() => {
+    if (!open) return;
+    if (form.processVersionIds.length === 0) {
+      setPreviewInstructions([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const nextInstructions: Array<{ title: string; instruction: string; skillKey?: string | null }> = [];
+      for (const pid of form.processVersionIds) {
+        try {
+          const res = await fetch(`/api/processes/${pid}`, { cache: "reload" });
+          const json = await res.json();
+          if (!json.ok || !Array.isArray(json.steps)) continue;
+          for (const step of json.steps) {
+            const instruction = String(step.instruction ?? "").trim();
+            if (!instruction) continue;
+            nextInstructions.push({
+              title: String(step.title || step.step_title || processes.find((p) => p.id === pid)?.name || "Step"),
+              instruction,
+              skillKey: step.skill_key || step.skillKey || null,
+            });
+          }
+        } catch {
+          // Best effort only; preview still shows request-only content.
+        }
+      }
+      if (!cancelled) setPreviewInstructions(nextInstructions);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, form.processVersionIds, processes]);
+
   const isValidTimeValue = (value: string): boolean => {
     if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(value)) return false;
     if (agendaTimeStepMinutes === 0) return true;
@@ -413,7 +496,7 @@ setAgendaTimeStepMinutes(safe);
     if (s === 1) {
       if (!form.title.trim()) return "Title is required";
       if (!form.freePrompt.trim() && form.processVersionIds.length === 0) {
-        return "A free prompt or at least one process is required";
+        return "A request or at least one process is required";
       }
     }
     if (s === 2) {
@@ -569,15 +652,15 @@ setAgendaTimeStepMinutes(safe);
         />
       </div>
 
-      {/* Free prompt */}
+      {/* Request */}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="ae-prompt" className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
           <IconMicrophone className="size-3.5 text-primary" />
-          Free prompt
+          Request
         </Label>
         <Textarea
           id="ae-prompt"
-          placeholder="Give the agent a free-text instruction..."
+          placeholder="What should the agent do?"
           value={form.freePrompt}
           onChange={(e) => updateField("freePrompt", e.target.value)}
           rows={5}
@@ -1051,6 +1134,11 @@ setAgendaTimeStepMinutes(safe);
       return proc ? proc.name : pid;
     });
     const weekdayLabels = form.weekdays.map((v) => WEEKDAYS.find((w) => w.value === v)?.label ?? v).join(", ");
+    const promptPreview = buildPromptPreview({
+      title: form.title,
+      request: form.freePrompt,
+      instructions: previewInstructions,
+    });
 
     return (
       <div className="flex flex-col gap-3">
@@ -1062,7 +1150,7 @@ setAgendaTimeStepMinutes(safe);
         <div className="rounded-xl border bg-muted/20 divide-y">
           <ReviewRow label="Type" value={form.taskType === "one_time" ? "One-time" : "Repeatable"} />
           <ReviewRow label="Title" value={form.title} />
-          {form.freePrompt && <ReviewRow label="Prompt" value={form.freePrompt} truncate />}
+          {form.freePrompt && <ReviewRow label="Request" value={form.freePrompt} truncate />}
           {processNames.length > 0 && <ReviewRow label="Processes" value={processNames.join(", ")} />}
           <ReviewRow label="Agent" value={agentName} />
           {form.modelOverride && <ReviewRow label="Model" value={modelName} />}
@@ -1106,6 +1194,20 @@ setAgendaTimeStepMinutes(safe);
                 processes={processes}
                 onClose={() => {}}
               />
+            </div>
+          )}
+
+          {(form.title.trim() || form.freePrompt.trim() || form.processVersionIds.length > 0) && (
+            <div className="p-3 pt-0">
+              <details className="group rounded-xl border border-dashed border-muted-foreground/25 bg-muted/15 px-4 py-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
+                  <span>Preview prompt sent to agent</span>
+                  <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="mt-3 rounded-lg bg-background/70 p-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap font-mono max-h-[320px] overflow-y-auto">
+                  {promptPreview}
+                </div>
+              </details>
             </div>
           )}
         </div>

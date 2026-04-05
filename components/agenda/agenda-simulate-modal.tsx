@@ -32,10 +32,10 @@ export function AgendaSimulateModal({ open, formData, agents, processes, onClose
     try {
       const builtSteps: typeof steps = [];
 
-      // Free prompt as first step if present
+      // Request as first step if present
       if (formData.freePrompt?.trim()) {
         builtSteps.push({
-          title: "Free Prompt",
+          title: "Request",
           instruction: `[SIMULATION MODE]\n\n${formData.freePrompt}`,
           agentId: formData.agentId || undefined,
           modelOverride: formData.modelOverride || undefined,
@@ -61,7 +61,7 @@ export function AgendaSimulateModal({ open, formData, agents, processes, onClose
       }
 
       if (builtSteps.length === 0) {
-        // Fallback: just run the free prompt as a single step
+        // Fallback: just run the request as a single step
         builtSteps.push({
           title: "Agenda Event",
           instruction: `[SIMULATION MODE]\n\n${formData.freePrompt || "No prompt or processes attached."}`,

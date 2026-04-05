@@ -163,6 +163,17 @@ function formatTime(ts: string | null, timezone?: string) {
   }
 }
 
+function beautifyOutputSource(source: string | null | undefined) {
+  const raw = String(source ?? "").trim();
+  if (!raw) return "";
+  return raw
+    .replace(/assisant/gi, "assistant")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 /** Wrap any element with a Radix tooltip */
 function Tip({ text, children }: { text: string; children: React.ReactNode }) {
   if (!text) return <>{children}</>;
@@ -364,7 +375,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
                 <span>Delay: {Number(log.raw_payload.runDelaySeconds)}s</span>
               ) : null}
               {log.raw_payload?.model ? <span>Model: {String(log.raw_payload.model)}</span> : null}
-              {log.raw_payload?.outputSource ? <span>Source: {String(log.raw_payload.outputSource)}</span> : null}
+              {log.raw_payload?.outputSource ? <span>Output source: {beautifyOutputSource(String(log.raw_payload.outputSource))}</span> : null}
               {log.raw_payload?.artifactName ? <span>Artifact: {String(log.raw_payload.artifactName)}</span> : null}
             </div>
           ) : null}
@@ -405,7 +416,7 @@ function AgentOutput({ outputPayload }: { outputPayload: string | Record<string,
     <div className="rounded-lg border bg-muted/40 p-4 flex flex-col gap-2">
       {outputSource ? (
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          Source: {outputSource}
+          Output source: {beautifyOutputSource(outputSource)}
         </p>
       ) : null}
       {renderMarkdown(cleaned)}
@@ -600,6 +611,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
       : "No task specified";
 
   const recurrenceLabel = humanRecurrence(event.recurrence);
+  const overviewCardClassName = "h-full flex flex-col bg-gradient-to-t from-primary/12 to-card shadow-xs";
+  const overviewCardFooterClassName = "mt-auto flex-col items-start gap-1 text-sm";
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -734,9 +747,9 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
             <div className="flex-1 overflow-y-auto px-6 py-4">
               {/* ── Overview ── */}
               <TabsContent value="overview" className="mt-0">
-                <div className="*:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-3 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
+                <div className="dark:*:data-[slot=card]:bg-card grid grid-cols-2 gap-3">
                   {/* Schedule */}
-                  <Card data-slot="card">
+                  <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Schedule</CardDescription>
                       <CardTitle className="text-lg font-semibold tabular-nums">
@@ -749,7 +762,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                    <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">{event.timezone}</div>
                       {(event.endDate || event.endTime) && (
                         <div className="text-muted-foreground text-xs">
@@ -760,7 +773,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </Card>
 
                   {/* Agent */}
-                  <Card data-slot="card">
+                  <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Agent</CardDescription>
                       <CardTitle className="text-lg font-semibold truncate">
@@ -773,7 +786,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                    <CardFooter className={overviewCardFooterClassName}>
                       {event.agentId ? (
                         <div className="text-muted-foreground text-xs truncate max-w-full">{event.agentId}</div>
                       ) : (
@@ -784,7 +797,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                   {/* Fallback Model (if set) */}
                   {event.fallbackModel && (
-                    <Card data-slot="card">
+                    <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Fallback Model</CardDescription>
                         <CardTitle className="text-lg font-semibold truncate">
@@ -797,7 +810,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <CardFooter className={overviewCardFooterClassName}>
                         <div className="text-muted-foreground text-xs">
                           Used when primary model hits rate limits
                         </div>
@@ -807,7 +820,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   )}
 
                   {/* Session Mode */}
-                  <Card data-slot="card">
+                  <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Execution mode</CardDescription>
                       <CardTitle className="text-lg font-semibold">
@@ -819,7 +832,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                    <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">
                         {event.sessionTarget === "main"
                           ? "Runs in your persistent main session — full memory and context"
@@ -829,10 +842,10 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </Card>
 
                   {/* Created At */}
-                  <Card data-slot="card">
+                  <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Created At</CardDescription>
-                      <CardTitle className="text-lg font-semibold tabular-nums">
+                      <CardTitle className="text-base font-semibold tabular-nums whitespace-nowrap">
                         {event.createdAt ? formatTime(event.createdAt) : "—"}
                       </CardTitle>
                       <CardAction>
@@ -842,7 +855,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                    <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">
                         {event.createdAt
                           ? `In ${event.timezone || "local"} timezone`
@@ -852,7 +865,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </Card>
 
                   {/* Model */}
-                  <Card data-slot="card">
+                  <Card data-slot="card" className={overviewCardClassName}>
                     <CardHeader>
                       <CardDescription>Model</CardDescription>
                       <CardTitle className="text-lg font-semibold truncate">
@@ -865,7 +878,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </CardAction>
                     </CardHeader>
-                    <CardFooter className="flex-col items-start gap-1 text-sm">
+                    <CardFooter className={overviewCardFooterClassName}>
                       <div className="text-muted-foreground text-xs">
                         {event.modelOverride
                           ? `Model override for this event`
@@ -878,13 +891,14 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   {selectedOccurrence && (
                     <Card
                       data-slot="card"
-                      className={
+                      className={[
+                        overviewCardClassName,
                         (selectedAttempt?.status ?? selectedOccurrence.status) === "failed"
                           ? "border-red-200 dark:border-red-900"
                           : (selectedAttempt?.status ?? selectedOccurrence.status) === "running"
                             ? "border-blue-200 dark:border-blue-900"
-                            : ""
-                      }
+                            : "",
+                      ].join(" ")}
                     >
                       <CardHeader>
                         <CardDescription>
@@ -908,7 +922,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1.5 text-sm">
+                      <CardFooter className="mt-auto flex-col items-start gap-1.5 text-sm">
                         {selectedAttempt?.started_at ? (
                           <div className="text-muted-foreground text-xs">
                             {formatTime(selectedAttempt.started_at, event.timezone)}
@@ -946,7 +960,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                   {/* Recurrence */}
                   {isRecurring && (
-                    <Card data-slot="card">
+                    <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Recurrence</CardDescription>
                         <CardTitle className="text-lg font-semibold">
@@ -959,7 +973,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <CardFooter className={overviewCardFooterClassName}>
                         <div className="text-muted-foreground text-xs">Repeating schedule</div>
                       </CardFooter>
                     </Card>
@@ -967,7 +981,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                   {/* Duration */}
                   {selectedAttempt?.started_at && (
-                    <Card data-slot="card">
+                    <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Duration</CardDescription>
                         <CardTitle className="text-lg font-semibold tabular-nums">
@@ -984,7 +998,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1 text-sm">
+                      <CardFooter className={overviewCardFooterClassName}>
                         <div className="text-muted-foreground text-xs">
                           Started {formatTime(selectedAttempt.started_at, event.timezone)}
                         </div>
@@ -1000,8 +1014,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                 {/* Processes (full width below cards) */}
                 {event.processNames.length > 0 && (
-                  <div className="mt-3 *:data-[slot=card]:from-primary/12 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs">
-                    <Card data-slot="card">
+                  <div className="mt-3 dark:*:data-[slot=card]:bg-card">
+                    <Card data-slot="card" className={overviewCardClassName}>
                       <CardHeader>
                         <CardDescription>Attached Processes</CardDescription>
                         <CardTitle className="text-lg font-semibold tabular-nums">
@@ -1014,7 +1028,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </Badge>
                         </CardAction>
                       </CardHeader>
-                      <CardFooter className="flex-col items-start gap-1.5 text-sm">
+                      <CardFooter className="mt-auto flex-col items-start gap-1.5 text-sm">
                         <div className="flex flex-wrap gap-1.5">
                           {event.processNames.map((name) => (
                             <Badge key={name} variant="secondary" className="text-xs">
@@ -1043,7 +1057,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   <div className="flex flex-col gap-4">
                     {selectedOccurrence?.rendered_prompt && (
                       <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Prompt sent to agent</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Request sent to agent</p>
                         <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">{selectedOccurrence.rendered_prompt}</p>
                       </div>
                     )}
@@ -1091,7 +1105,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                     const stepLabel = step.process_name
                       ? `Step ${step.step_order + 1}: ${step.step_title || step.process_name}`
-                      : "Free Prompt";
+                      : "Request";
 
                     return (
                       <Card
@@ -1159,34 +1173,12 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                           </div>
 
                           {/* Prompt / Instruction */}
-                          {(promptText || selectedOccurrence?.rendered_prompt) && (
+                          {promptText && (
                             <div className="rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 p-3">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Prompt</p>
-                              {promptText ? (
-                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}</p>
-                              ) : selectedOccurrence?.rendered_prompt ? (
-                                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{selectedOccurrence.rendered_prompt.length > 1000 ? selectedOccurrence.rendered_prompt.slice(0, 1000) + "…" : selectedOccurrence.rendered_prompt}</p>
-                              ) : null}
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Step request</p>
+                              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{promptText.length > 1000 ? promptText.slice(0, 1000) + "…" : promptText}</p>
                             </div>
                           )}
-
-                          {/* Prompt sent to agent (collapsible) */}
-                          {(() => {
-                            const raw = step.input_payload;
-                            const payload = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : (raw as Record<string, unknown> | null);
-                            const promptText = payload?.prompt as string ?? payload?.instruction as string ?? null;
-                            return promptText ? (
-                              <details className="group mt-1">
-                                <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 select-none py-1 list-none">
-                                  <svg className="size-3 transition-transform group-open:rotate-90" viewBox="0 0 12 12" fill="currentColor"><path d="M4 2l5 4-5 4V2z"/></svg>
-                                  Prompt sent to agent
-                                </summary>
-                                <div className="mt-1.5 rounded-lg bg-muted/30 border p-3 text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed max-h-[200px] overflow-y-auto">
-                                  {promptText}
-                                </div>
-                              </details>
-                            ) : null;
-                          })()}
 
                           {/* Output */}
                           {step.error_message && (
