@@ -94,24 +94,6 @@ function getOpenClawSessionsJson() {
   }
 }
 
-function loadAgentIdentity(agentId) {
-  const paths = [
-    `/home/clawdbot/.openclaw/agents/${agentId}/IDENTITY.md`,
-    `/home/clawdbot/.openclaw/workspace/agents/${agentId}/IDENTITY.md`,
-    `/home/clawdbot/.openclaw/workspace/${agentId}/IDENTITY.md`,
-  ];
-  for (const p of paths) {
-    try {
-      if (!existsSync(p)) continue;
-      const text = readFileSync(p, "utf8");
-      const name = (text.match(/^#\s*(.+)$/m)?.[1] || text.match(/^Name:\s*(.+)$/im)?.[1] || agentId).trim();
-      const emoji = (text.match(/^Emoji:\s*(.+)$/im)?.[1] || "").trim();
-      return { name, emoji };
-    } catch {}
-  }
-  return { name: agentId, emoji: "" };
-}
-
 function latestSessionForAgent(sessionJson, agentId) {
   const sessions = Array.isArray(sessionJson?.sessions) ? sessionJson.sessions : [];
   const matched = sessions.filter((row) => String(row?.agentId || "") === agentId || String(row?.key || "").startsWith(`agent:${agentId}:`));

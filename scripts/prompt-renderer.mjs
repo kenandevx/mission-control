@@ -18,7 +18,7 @@ function clean(v) {
   return String(v ?? "").trim();
 }
 
-export function renderUnifiedTaskMessage({ title, context, request, instructions, artifactDir, isMainSession }) {
+export function renderUnifiedTaskMessage({ title, context, request, instructions, artifactDir }) {
   const sections = [];
 
   const t = clean(title);

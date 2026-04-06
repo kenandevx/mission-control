@@ -21,7 +21,6 @@ export async function POST(request: Request) {
       request: requestText,
       instructions,
       artifactDir,
-      isMainSession: false,
     });
 
     return ok({ message });

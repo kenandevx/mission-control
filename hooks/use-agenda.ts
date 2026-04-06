@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { EventInput } from "@fullcalendar/core";
 
@@ -145,7 +145,6 @@ export function useAgenda() {
   const [events, setEvents] = useState<AgendaEvent[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<EventInput[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isRefetching, setIsRefetching] = useState(false);
   const [error, setError] = useState("");
   const hasLoadedOnce = useRef(false);
 
@@ -156,7 +155,6 @@ export function useAgenda() {
       setLoading(true);
       setError("");
     } else {
-      setIsRefetching(true);
       setError("");
     }
     try {
@@ -175,7 +173,6 @@ export function useAgenda() {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setLoading(false);
-      setIsRefetching(false);
     }
   }, []);
 

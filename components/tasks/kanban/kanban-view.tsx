@@ -18,8 +18,6 @@ import { type Assignee, type BoardState, type Ticket } from "@/types/tasks";
 import { KanbanColumn } from "./kanban-column";
 import { TicketCard } from "../shared/ticket-card";
 import { Card, CardContent } from "@/components/ui/card";
-import { PlusIcon } from "lucide-react";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { GhostIcon } from "lucide-react";
 
 type Props = {

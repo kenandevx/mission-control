@@ -78,17 +78,11 @@ export async function renderPromptForOccurrence(
 
   const artifactDir = getOccurrenceArtifactDir({ eventId: event.id, occurrenceId });
 
-  // Main session events get a clean prompt — no internal framework rules.
-  // The user WILL see this prompt in their Telegram chat if the session
-  // target is 'main', so keep it minimal and user-facing only.
-  const isMainSession = event.session_target === "main";
-
   return renderUnifiedTaskMessage({
     title: effectiveTitle,
     context: "",
     instructions: composedSteps,
     request: effectiveRequest,
     artifactDir,
-    isMainSession,
   });
 }

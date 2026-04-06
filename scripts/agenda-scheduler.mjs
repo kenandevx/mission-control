@@ -98,7 +98,6 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const OPENCLAW_HOME = getOpenClawHome();
 const SERVICE_NAME = "agenda-scheduler";
 const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
 const SCHEDULER_TICK_MS = Math.max(5_000, parseInt(process.env.AGENDA_SCHEDULER_TICK_MS || "15000", 10));
@@ -189,25 +188,6 @@ ${message}
   return result?.id || null;
 }
 
-/** Edit an existing cron job (e.g. update message after process version change). */
-async function editCronJob(cronJobId, { message, model }) {
-  const args = ["edit", cronJobId, "--json"];
-  if (message) args.push("--message", message);
-  if (model?.trim()) args.push("--model", model.trim());
-  else args.push("--model", ""); // clear model override if not set
-  await cronCmd(args, 15000);
-}
-
-/** Force-run a cron job immediately (for retry). */
-async function runCronJobNow(cronJobId) {
-  const env = buildCleanEnv();
-  await execFileAsync("openclaw", ["cron", "run", cronJobId], {
-    timeout: 15000,
-    env,
-    maxBuffer: 1024 * 1024,
-  });
-}
-
 /**
  * Returns a Set of cron job IDs that currently exist in the gateway.
  * Used to detect orphaned occurrences whose cron jobs were lost during restart.
@@ -229,17 +209,6 @@ async function getLiveCronJobIds() {
     return null; // null = don't sweep (gateway may be overloaded; skip this cycle)
   }
 }
-
-/** Delete a cron job. */
-async function deleteCronJob(cronJobId) {
-  const env = buildCleanEnv();
-  await execFileAsync("openclaw", ["cron", "rm", cronJobId], {
-    timeout: 15000,
-    env,
-    maxBuffer: 1024 * 1024,
-  }).catch(() => { /* already deleted is fine */ });
-}
-
 
 // ── RRULE expansion (unchanged from v1 — works well) ─────────────────────────
 function localTimeToUTC(localDateStr, localTimeStr, timezone) {
@@ -613,7 +582,6 @@ async function runCycle() {
         // ── Per-occurrence scheduling (isolated so one failure doesn't block others) ──
         // Wrapped in try/catch: if renderPromptForEvent throws, the occurrence is
         // left in 'scheduled' with no cron job — we must mark it needs_retry immediately.
-        let occScheduled = false;
         try {
           // Render the prompt with the stable, occurrence-scoped artifact path baked in.
           const rendered = await renderPromptForEvent(event, occ.id);
@@ -699,7 +667,6 @@ async function runCycle() {
           });
 
           scheduled++;
-          occScheduled = true;
           console.log(`[agenda-scheduler] Scheduled occurrence ${occ.id} → cron job ${cronJobId}`);
         } catch (err) {
           // renderPromptForEvent threw (malformed steps, missing skill, bad artifact path, etc.)

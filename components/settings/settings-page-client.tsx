@@ -144,9 +144,6 @@ export function SettingsPageClient(): React.ReactNode {
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
-  const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
-  const [uninstallConfirmText, setUninstallConfirmText] = useState("");
-  const [uninstalling, setUninstalling] = useState(false);
 
   // Notification settings
   const [notifEnabled, setNotifEnabled] = useState(true);
@@ -164,7 +161,6 @@ export function SettingsPageClient(): React.ReactNode {
 
   // Agenda settings
   // agendaConcurrency and defaultExecWindow removed in v2 — cron handles these natively
-  const [autoRetryAfterMinutes, setAutoRetryAfterMinutes] = useState(0);
   const [agendaSettingsLoading, setAgendaSettingsLoading] = useState(false);
   const [maxRetries, setMaxRetries] = useState(1);
   const [sidebarActivityCount, setSidebarActivityCount] = useState(8);
@@ -203,7 +199,6 @@ export function SettingsPageClient(): React.ReactNode {
         });
         const json = await res.json();
         if (json.ok && json.workerSettings) {
-          setAutoRetryAfterMinutes(json.workerSettings.autoRetryAfterMinutes ?? 0);
           setMaxRetries(json.workerSettings.maxRetries ?? 1);
           setSidebarActivityCount(json.workerSettings.sidebarActivityCount ?? 8);
           setInstanceName(json.workerSettings.instanceName ?? "Mission Control");

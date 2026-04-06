@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { getCachedAgents, getCachedSessions } from "@/lib/runtime/cache";
-import type { RuntimeAssignee, RuntimeSnapshot, RuntimeSnapshotMap } from "@/lib/runtime/types";
+import type { RuntimeAssignee, RuntimeSnapshotMap } from "@/lib/runtime/types";
 
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.join(os.homedir(), ".openclaw");
 const AGENT_WORKSPACES_DIR = path.join(OPENCLAW_HOME, "workspace", "agents");

@@ -50,13 +50,6 @@ async function getWorkspaceId() {
   return row?.id ?? null;
 }
 
-async function getOrCreateAgent(wid) {
-  const [row] = await sql`
-    SELECT id FROM agents WHERE workspace_id = ${wid} LIMIT 1
-  `;
-  return row?.id ?? null;
-}
-
 // ── Create a minimal test event ───────────────────────────────────────────────
 async function createTestEvent(wid) {
   const [row] = await sql`

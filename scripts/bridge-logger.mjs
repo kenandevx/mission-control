@@ -1156,7 +1156,6 @@ async function handleCronRunLine(getSql, jobId, line) {
   const occ = occurrences[0];
   const attemptNo = Number(occ.latest_attempt_no || 0) + 1;
   // succeeded depends on outputResolution which is computed below — placeholder until after resolveAgendaOutput
-  const errorText = String(run.error || "").slice(0, 2000);
   const summaryText = String(run.summary || "").slice(0, 8000);
   const startedAt = new Date(run.runAtMs || Date.now());
   const finishedAt = new Date((run.runAtMs || Date.now()) + (run.durationMs || 0));
@@ -1330,7 +1329,6 @@ async function handleCronRunLine(getSql, jobId, line) {
     notifyMainSession(occ.session_target || 'isolated', {
       title: occ.title, status: 'succeeded', summary: agentOutput,
       occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-      sessionId: run.sessionId || null,
     }).catch((err) => {
       console.error(`[bridge-logger] notifyMainSession failed for occurrence ${occ.occurrence_id}: ${err?.message || err}`);
     });
@@ -1360,10 +1358,6 @@ async function handleCronRunLine(getSql, jobId, line) {
 
   } else {
     // ── Failure path ──────────────────────────────────────────────────────────
-    // Load settings first (needed to determine targetStatus before unconditional update)
-    const [settings] = await sql`SELECT max_retries FROM worker_settings WHERE id = 1 LIMIT 1`;
-    const maxRetries = Math.max(1, Number(settings?.max_retries ?? 1));
-    const shouldTryFallback = false; // fallback model removed
     const isNoOutput = outputResolution.outputSource === 'no_output';
     const sessionErrorMsg = outputResolution.outputMeta?.sessionError ?? null;
     const failureReason = isNoOutput
@@ -1426,19 +1420,19 @@ async function handleCronRunLine(getSql, jobId, line) {
     }
 
     {
-      // Terminal failure path — notify user.
+      // Manual retry path — notify user that attention is needed.
       await emitAgendaLog(sql, {
         workspaceId: wid, agentDbId,
         agentId: occ.default_agent_id || 'main',
         occurrenceId: occ.occurrence_id, sessionKey,
-        eventType: 'agenda.failed', level: 'error',
-        message: `Agenda run permanently failed (fallback also exhausted): "${occ.title}" (attempt ${attemptNo}) — ${failureReason.slice(0, 300)}`,
+        eventType: 'agenda.needs_retry', level: 'warn',
+        message: `Agenda run needs manual retry: "${occ.title}" (attempt ${attemptNo}) — ${failureReason.slice(0, 300)}`,
         rawPayload: {
           cronJobId: jobId,
           attemptNo,
           error: failureReason.slice(0, 1000),
           durationMs: run.durationMs,
-          terminal: true,
+          requiresManualRetry: true,
           scheduledFor: occ.scheduled_for || null,
           startedAt,
           finishedAt,
@@ -1447,11 +1441,10 @@ async function handleCronRunLine(getSql, jobId, line) {
           outputSource: outputResolution.outputSource,
         },
       });
-      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} FAILED (terminal): ${failureReason.slice(0, 120)}`);
+      console.warn(`[bridge-logger] cron ${jobId} → occurrence ${occ.occurrence_id} NEEDS RETRY: ${failureReason.slice(0, 120)}`);
       notifyMainSession(occ.session_target || 'isolated', {
-        title: occ.title, status: 'failed', summary: failureReason.slice(0, 400),
+        title: occ.title, status: 'needs_retry', summary: failureReason.slice(0, 400),
         occurrenceId: occ.occurrence_id, eventId: occ.agenda_event_id,
-        sessionId: run.sessionId || null,
       }).catch(() => {});
       deleteCronJobSilently(jobId).catch(() => {});
     }
@@ -1564,7 +1557,7 @@ async function sendTelegramNotification(title, status, summary, occurrenceId, ev
  * For main session runs: only sends Telegram (output already in chat).
  * Non-fatal.
  */
-async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId, sessionId }) {
+async function notifyMainSession(sessionTarget, { title, status, summary, occurrenceId, eventId }) {
   const isIsolated = sessionTarget !== 'main';
 
   if (isIsolated) {
@@ -1596,38 +1589,6 @@ async function notifyMainSession(sessionTarget, { title, status, summary, occurr
 
   // Main session run — send summary directly to Telegram (output already lands in chat)
   await sendTelegramNotification(title, status, summary, occurrenceId, eventId);
-}
-
-async function sendTelegramAlert(getSql, title, occurrenceId, reason) {
-  try {
-    const sql = getSql();
-    const [settings] = await sql`SELECT gateway_token FROM app_settings WHERE id = 1 LIMIT 1`;
-    if (!settings?.gateway_token) return;
-    // Discover chatId from sessions.json
-    const sessionsPath = path.join(OPENCLAW_HOME, "agents", "main", "sessions", "sessions.json");
-    let chatId;
-    try {
-      const data = JSON.parse(fs.readFileSync(sessionsPath, "utf8"));
-      for (const val of Object.values(data)) {
-        if (val?.deliveryContext?.channel === "telegram" && val?.deliveryContext?.to) {
-          chatId = String(val.deliveryContext.to).replace(/^telegram:/, "");
-          break;
-        }
-      }
-    } catch { return; }
-    if (!chatId) return;
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    await execFileAsync("openclaw", [
-      "message", "send",
-      "--channel", "telegram",
-      "--target", chatId,
-      "--message", `⚠️ Agenda event "${title}" needs manual retry\n\nReason: ${String(reason || "").slice(0, 200)}\n\nOpen Mission Control to retry.`,
-    ], { timeout: 30000 });
-  } catch (err) {
-    console.warn("[bridge-logger] Telegram alert failed:", err.message);
-  }
 }
 
 /**
