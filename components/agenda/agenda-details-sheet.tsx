@@ -179,7 +179,7 @@ function beautifyOutputSource(source: string | null | undefined) {
     .replace(/\s+/g, " ")
     .trim();
   // Step 2: title-case each word
-  return s.replace(/\b([a-z])([a-z]*)\b/gi, (m, first, rest) =>
+  return s.replace(/\b([a-z])([a-z]*)\b/gi, (_match, first, rest) =>
     first.toUpperCase() + rest.toLowerCase()
   );
 }
