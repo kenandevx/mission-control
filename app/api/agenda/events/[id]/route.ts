@@ -494,6 +494,44 @@ export async function PATCH(
       where id = ${id}
     `;
 
+    // If a one-time event is edited while still pending, keep the queued occurrence
+    // in sync with the new schedule so it does not fire at the old time.
+    const touchedExecutionFields =
+      body.title !== undefined ||
+      body.freePrompt !== undefined ||
+      body.agentId !== undefined ||
+      body.startsAt !== undefined ||
+      body.timezone !== undefined ||
+      body.processVersionIds !== undefined;
+
+    if (!recurrenceRule && touchedExecutionFields) {
+      const [pendingOccurrence] = await sql`
+        select id, status, cron_job_id
+        from agenda_occurrences
+        where agenda_event_id = ${id}
+          and latest_attempt_no = 0
+          and status in ('scheduled', 'queued', 'needs_retry')
+        order by scheduled_for asc
+        limit 1
+      `;
+
+      if (pendingOccurrence) {
+        if (pendingOccurrence.status === "queued") {
+          await removeCronJob(pendingOccurrence.cron_job_id as string | null | undefined);
+        }
+
+        await sql`
+          update agenda_occurrences
+          set scheduled_for = ${effectiveStartsAt},
+              status = 'scheduled',
+              cron_job_id = null,
+              queued_at = null,
+              locked_at = null
+          where id = ${pendingOccurrence.id}
+        `;
+      }
+    }
+
     // If a one-time active event is edited into the past, mark it needs_retry immediately.
     let autoNeedsRetry = false;
     const autoNeedsRetryReason = "Start time is already in the past for an active one-time event; occurrence was auto-marked as needs_retry.";

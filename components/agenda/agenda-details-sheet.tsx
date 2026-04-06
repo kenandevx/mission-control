@@ -84,7 +84,19 @@ export type AgendaEventSummary = {
   timezone: string;
   recurrence: string;
   nextRuns: string[];
-  latestResult: "succeeded" | "failed" | "running" | "pending" | null;
+  latestResult:
+    | "pending"
+    | "scheduled"
+    | "queued"
+    | "running"
+    | "auto_retry"
+    | "stale_recovery"
+    | "succeeded"
+    | "needs_retry"
+    | "failed"
+    | "cancelled"
+    | "skipped"
+    | null;
   recurrenceRule?: string | null;
   occurrenceId?: string;
   modelOverride?: string;
@@ -370,7 +382,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
     "agenda.output_captured": {},
     "agenda.succeeded": { color: STATUS_HEX.succeeded },
     "agenda.failed": { color: STATUS_HEX.failed },
-    "agenda.fallback": { color: STATUS_HEX.needs_retry },
+    "agenda.fallback": { color: STATUS_HEX.auto_retry },
     "agenda.skipped": { color: STATUS_HEX.skipped },
     "agenda.cancelled": {},
   };

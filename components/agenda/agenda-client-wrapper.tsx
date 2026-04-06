@@ -34,6 +34,19 @@ function buildLocalISO(date: string, time: string): string {
   return `${date}T${time}:00`;
 }
 
+function ymdInTimezone(value: string | Date, timezone: string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = fmt.formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 function toRecurrenceRule(recurrence: AgendaEventFormData["recurrence"], weekdays: string[]): string | null {
   if (recurrence === "none") return null;
   if (recurrence === "daily") return "FREQ=DAILY";
@@ -304,7 +317,7 @@ export function AgendaClientWrapper() {
         const occurrences = occJson.occurrences ?? [];
         // Match by scheduled_for date in the event's timezone
         const matched = occurrences.find((o: { scheduled_for: string }) => {
-          const occDate = new Date(o.scheduled_for).toISOString().split("T")[0];
+          const occDate = ymdInTimezone(o.scheduled_for, tz);
           return occDate === newDate;
         });
         occurrenceId = matched?.id ?? null;
@@ -318,7 +331,7 @@ export function AgendaClientWrapper() {
         const occurrences = occJson.occurrences ?? [];
         // Find occurrence for the new date
         const matched = occurrences.find((o: { scheduled_for: string }) => {
-          const occDate = new Date(o.scheduled_for).toISOString().split("T")[0];
+          const occDate = ymdInTimezone(o.scheduled_for, tz);
           return occDate === newDate;
         });
         occurrenceId = matched?.id ?? null;
@@ -402,12 +415,40 @@ export function AgendaClientWrapper() {
       });
       const json = await res.json();
       if (json.ok) {
+        let autoRetried = false;
+        const shouldAutoRetry =
+          editingEvent?.latestResult === "needs_retry" &&
+          !!editingEvent?.occurrenceId &&
+          scope !== "this_and_future";
+
+        if (shouldAutoRetry) {
+          const eventIdForRetry = editingEvent?.id;
+          const occurrenceIdForRetry = editingEvent?.occurrenceId;
+          try {
+            const retryRes = await fetch(`/api/agenda/events/${eventIdForRetry}/occurrences/${occurrenceIdForRetry}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "retry", force: true }),
+            });
+            const retryJson = await retryRes.json();
+            if (retryJson.ok) {
+              autoRetried = true;
+            } else {
+              toast.warning(retryJson.error ?? "Event saved, but retry could not be started automatically");
+            }
+          } catch {
+            toast.warning("Event saved, but retry could not be started automatically");
+          }
+        }
+
         toast.success(
-          scope === "single"
-            ? "Only this occurrence updated"
-            : scope === "this_and_future"
-              ? "This and all upcoming events updated"
-              : "Event updated"
+          autoRetried
+            ? "Event updated and retry started"
+            : scope === "single"
+              ? "Only this occurrence updated"
+              : scope === "this_and_future"
+                ? "This and all upcoming events updated"
+                : "Event updated"
         );
       } else {
         toast.error(json.error ?? "Failed to update event");
