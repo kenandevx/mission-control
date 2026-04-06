@@ -534,7 +534,7 @@ function DayCell({
   isToday: boolean;
   onEventClick: (event: CalendarEvent) => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [showAllDialog, setShowAllDialog] = useState(false);
@@ -555,7 +555,8 @@ function DayCell({
           e.preventDefault();
           setDragOver(false);
           const eventId = e.dataTransfer.getData("text/event-id");
-          if (eventId && onEventDrop) onEventDrop(eventId, dateStr);
+          const sourceDate = e.dataTransfer.getData("text/event-source-date") || undefined;
+          if (eventId && onEventDrop) onEventDrop(eventId, dateStr, undefined, sourceDate);
         }}
         className={[
           "relative flex flex-col gap-1 border-r border-b min-h-[108px] p-1.5",
@@ -589,6 +590,7 @@ function DayCell({
               onDragStart={(e) => {
                 e.stopPropagation();
                 e.dataTransfer.setData("text/event-id", evt.id);
+                e.dataTransfer.setData("text/event-source-date", evt.date);
                 e.dataTransfer.effectAllowed = "move";
               }}
               onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
@@ -748,7 +750,7 @@ function WeekHourCell({
   onEventClick: (evt: CalendarEvent) => void;
   onDragEnter: () => void;
   onDragLeave: () => void;
-  onDropEvent: (eventId: string) => void;
+  onDropEvent: (eventId: string, sourceDate?: string) => void;
 }) {
   const [showMore, setShowMore] = useState(false);
 
@@ -765,7 +767,8 @@ function WeekHourCell({
         onDrop={(e) => {
           e.preventDefault();
           const id = e.dataTransfer.getData("text/event-id");
-          if (id) onDropEvent(id);
+          const sourceDate = e.dataTransfer.getData("text/event-source-date") || undefined;
+          if (id) onDropEvent(id, sourceDate);
         }}
       >
         {/* Now line — 1px, full width, spans all day columns */}
@@ -782,6 +785,7 @@ function WeekHourCell({
             onDragStart={(e) => {
               e.stopPropagation();
               e.dataTransfer.setData("text/event-id", evt.id);
+              e.dataTransfer.setData("text/event-source-date", evt.date);
               e.dataTransfer.effectAllowed = "move";
             }}
             onClick={(e) => { e.stopPropagation(); onEventClick(evt); }}
@@ -900,7 +904,7 @@ function WeekView({
   weekDays: Date[];
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => void;
   className?: string;
 }) {
   const now = useNow(60_000);
@@ -999,9 +1003,9 @@ function WeekView({
                     onEventClick={onEventClick}
                     onDragEnter={() => setDragOverCell(cellKey)}
                     onDragLeave={() => setDragOverCell((p) => p === cellKey ? null : p)}
-                    onDropEvent={(eventId) => {
+                    onDropEvent={(eventId, sourceDate) => {
                       setDragOverCell(null);
-                      if (onEventDrop) onEventDrop(eventId, dateStr, `${String(h).padStart(2, "0")}:00`);
+                      if (onEventDrop) onEventDrop(eventId, dateStr, `${String(h).padStart(2, "0")}:00`, sourceDate);
                     }}
                   />
                 );
@@ -1026,7 +1030,7 @@ function DayView({
   day: Date;
   events: CalendarEvent[];
   onEventClick: (evt: CalendarEvent) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => void;
   className?: string;
 }) {
   const now = useNow();
@@ -1092,9 +1096,10 @@ function DayView({
                   e.preventDefault();
                   setDragOverHour(null);
                   const eventId = e.dataTransfer.getData("text/event-id");
+                  const sourceDate = e.dataTransfer.getData("text/event-source-date") || undefined;
                   if (!eventId || !onEventDrop) return;
                   const timeStr = `${String(h).padStart(2, "0")}:00`;
-                  onEventDrop(eventId, dayStr, timeStr);
+                  onEventDrop(eventId, dayStr, timeStr, sourceDate);
                 }}
               >
                 <div className="w-16 shrink-0 flex items-start justify-end pr-2 pt-1">
@@ -1110,6 +1115,7 @@ function DayView({
                       onDragStart={(e) => {
                         e.stopPropagation();
                         e.dataTransfer.setData("text/event-id", evt.id);
+                        e.dataTransfer.setData("text/event-source-date", evt.date);
                         e.dataTransfer.effectAllowed = "move";
                       }}
                       onClick={() => onEventClick(evt)}
@@ -1139,7 +1145,7 @@ type Props = {
   onDateChange: (d: Date) => void;
   onEventClick: (eventId: string, occurrenceDate?: string) => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => void;
   onAddEvent?: () => void;
   failedCount?: number;
   onOpenFailed?: () => void;

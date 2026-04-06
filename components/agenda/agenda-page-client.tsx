@@ -21,7 +21,7 @@ type Props = {
   onDeleteEvent?: (eventId: string) => void;
   onAddEvent?: () => void;
   onDayClick?: (date: Date) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
+  onEventDrop?: (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => void;
   agentsForDetails?: { id: string; name: string }[];
   headerActions?: React.ReactNode;
   onInitialReady?: () => void;

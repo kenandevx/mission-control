@@ -119,6 +119,7 @@ export function AgendaClientWrapper() {
     eventId: string;
     newDate: string;
     newTime: string;
+    sourceDate?: string;
     tz: string;
     isRecurring: boolean;
   };
@@ -221,7 +222,7 @@ export function AgendaClientWrapper() {
     setEventModalOpen(true);
   }, [loadAllEventsForPicker, loadProcessOptions]);
 
-  const handleEventDrop = useCallback(async (eventId: string, newDate: string, newTime?: string) => {
+  const handleEventDrop = useCallback(async (eventId: string, newDate: string, newTime?: string, sourceDate?: string) => {
     try {
       // Fetch current event to get timezone + recurrence
       const res = await fetch(`/api/agenda/events/${eventId}`, { cache: "reload" });
@@ -249,7 +250,7 @@ export function AgendaClientWrapper() {
 
       if (isRecurring) {
         // Show dialog to ask user: move this occurrence only, or this and future
-        setPendingDrop({ eventId, newDate, newTime: timeToUse, tz, isRecurring: true });
+        setPendingDrop({ eventId, newDate, newTime: timeToUse, sourceDate, tz, isRecurring: true });
         return;
       }
 
@@ -304,7 +305,7 @@ export function AgendaClientWrapper() {
   // Handle recurring drag-drop scope selection
   const handleDropScopeSelect = async (scope: "single" | "this_and_future") => {
     if (!pendingDrop) return;
-    const { eventId, newDate, newTime, tz } = pendingDrop;
+    const { eventId, newDate, newTime, sourceDate, tz } = pendingDrop;
 
     try {
       let occurrenceId: string | null = null;
@@ -315,24 +316,25 @@ export function AgendaClientWrapper() {
         const occJson = await occRes.json();
         if (!occJson.ok) { toast.error("Failed to find occurrence"); return; }
         const occurrences = occJson.occurrences ?? [];
-        // Match by scheduled_for date in the event's timezone
+        // Match by original source date in event timezone (fallback to target date)
+        const targetDate = sourceDate || newDate;
         const matched = occurrences.find((o: { scheduled_for: string }) => {
           const occDate = ymdInTimezone(o.scheduled_for, tz);
-          return occDate === newDate;
+          return occDate === targetDate;
         });
         occurrenceId = matched?.id ?? null;
       }
 
-      // For "this_and_future", we need the occurrence ID of the target date
+      // For "this_and_future", split from the dragged source occurrence date
       if (scope === "this_and_future") {
         const occRes = await fetch(`/api/agenda/events/${eventId}`, { cache: "reload" });
         const occJson = await occRes.json();
         if (!occJson.ok) { toast.error("Failed to find occurrence"); return; }
         const occurrences = occJson.occurrences ?? [];
-        // Find occurrence for the new date
+        const targetDate = sourceDate || newDate;
         const matched = occurrences.find((o: { scheduled_for: string }) => {
           const occDate = ymdInTimezone(o.scheduled_for, tz);
-          return occDate === newDate;
+          return occDate === targetDate;
         });
         occurrenceId = matched?.id ?? null;
       }
