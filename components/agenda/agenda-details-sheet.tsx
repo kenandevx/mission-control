@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -530,9 +531,12 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
               <div className="flex flex-col gap-3">
                 <p className="text-[10px] text-muted-foreground font-medium leading-none">{file.name}</p>
                 <div className="rounded-md overflow-hidden bg-background/60">
-                  <img
+                  <Image
                     src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
                     alt={file.name}
+                    width={1200}
+                    height={900}
+                    sizes="100vw"
                     className="max-h-[300px] w-full object-contain"
                   />
                 </div>

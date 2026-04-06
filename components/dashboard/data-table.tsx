@@ -373,6 +373,8 @@ export function DataTable({
     [boardId, router],
   )
 
+  // TanStack Table intentionally exposes stateful instance methods; React Compiler skips memoization here.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,
