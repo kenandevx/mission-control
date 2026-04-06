@@ -396,13 +396,13 @@ export const AGENDA_TESTS: TestDefinition[] = [
     },
   },
 
-  // ── 9. Delete event cancels cron job ──────────────────────────────────────
+  // ── 9. Delete event removes it from list ─────────────────────────────────
   {
-    id: "delete-cancels-cron",
+    id: "delete-removes-from-list",
     name: "Delete event removes it from list",
     description: "Creates an event, deletes it (hard delete), verifies it no longer appears in the events list.",
     run: async (ctx) => {
-      const ID = "delete-cancels-cron";
+      const ID = "delete-removes-from-list";
       const NAME = "Delete event removes it from list";
       const DESC = "Creates an event, deletes it (hard delete), verifies it no longer appears in the events list.";
       const t0 = Date.now();
@@ -1128,5 +1128,4 @@ export const AGENDA_TESTS: TestDefinition[] = [
   },
 
 ];
-
 

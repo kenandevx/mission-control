@@ -537,7 +537,7 @@ export function SettingsPageClient(): React.ReactNode {
       <div className="rounded-xl border bg-card divide-y">
         <SettingRow
           label="Max retry attempts"
-          description="Number of times to retry a failed agenda run before marking it as needs_retry. Cron handles the actual retries internally. (1–5)"
+          description="Stores the retry-attempt limit in worker settings for Mission Control retry policy and diagnostics. (1–5)"
         >
           <Input
             type="number"
@@ -570,7 +570,7 @@ export function SettingsPageClient(): React.ReactNode {
         <div className="space-y-2.5">
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold shrink-0 mt-0.5">1</div>
-            <p className="text-sm text-muted-foreground">Cron retries automatically on transient failures (rate limits, overload). Runs up to <span className="font-medium text-foreground">{maxRetries} attempt{maxRetries === 1 ? "" : "s"}</span>.</p>
+            <p className="text-sm text-muted-foreground">Mission Control stores a retry-attempt limit of <span className="font-medium text-foreground">{maxRetries} attempt{maxRetries === 1 ? "" : "s"}</span> for agenda retry policy and diagnostics.</p>
           </div>
           <div className="flex items-start gap-3">
             <div className="flex items-center justify-center size-6 rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">2</div>

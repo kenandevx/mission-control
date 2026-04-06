@@ -48,7 +48,18 @@ export type CalendarEvent = {
   color?: EventColor;
   isRecurring?: boolean;
   status?: "draft" | "active";
-  latestResult?: "scheduled" | "running" | "succeeded" | "failed" | "needs_retry" | "queued" | null;
+  latestResult?:
+    | "scheduled"
+    | "queued"
+    | "running"
+    | "auto_retry"
+    | "stale_recovery"
+    | "succeeded"
+    | "needs_retry"
+    | "failed"
+    | "cancelled"
+    | "skipped"
+    | null;
   runStartedAt?: string | null;
   runFinishedAt?: string | null;
   timezone?: string;
@@ -142,9 +153,9 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
   if (!result) return null;
   const hex = statusHex(result);
 
-  if (result === 'running') {
+  if (result === 'running' || result === 'auto_retry') {
     return (
-      <span className="relative flex shrink-0" style={{ width: size, height: size }} title="Running">
+      <span className="relative flex shrink-0" style={{ width: size, height: size }} title={result === 'auto_retry' ? "Auto-retrying" : "Running"}>
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: hex }} />
         <span className="relative inline-flex rounded-full" style={{ width: size, height: size, backgroundColor: hex }} />
       </span>
@@ -173,21 +184,21 @@ function OccurrenceStatusDot({ result, size = 6 }: { result: CalendarEvent["late
   );
 }
 
-function RunningBadge() {
+function RunningBadge({ status = "running" }: { status?: "running" | "auto_retry" }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] leading-none shadow-sm ring-1"
       style={{
-        backgroundColor: `${STATUS_HEX.running}1F`,
-        color: statusText('running'),
-        boxShadow: `inset 0 0 0 1px ${STATUS_HEX.running}33`,
+        backgroundColor: `${statusHex(status)}1F`,
+        color: statusText(status),
+        boxShadow: `inset 0 0 0 1px ${statusHex(status)}33`,
       }}
     >
       <span className="relative inline-flex size-3 shrink-0 items-center justify-center">
-        <span className="absolute inset-0 rounded-full animate-ping" style={{ backgroundColor: `${STATUS_HEX.running}4D` }} />
-        <span className="size-3 rounded-full border-[2.5px] border-t-transparent animate-spin" style={{ borderColor: STATUS_HEX.running, borderTopColor: 'transparent' }} />
+        <span className="absolute inset-0 rounded-full animate-ping" style={{ backgroundColor: `${statusHex(status)}4D` }} />
+        <span className="size-3 rounded-full border-[2.5px] border-t-transparent animate-spin" style={{ borderColor: statusHex(status), borderTopColor: 'transparent' }} />
       </span>
-      <span>Running</span>
+      <span>{status === "auto_retry" ? "Retrying" : "Running"}</span>
     </span>
   );
 }
@@ -247,6 +258,10 @@ function statusRingStyle(result: CalendarEvent["latestResult"], alpha: string) {
   return { boxShadow: `inset 0 0 0 1px ${statusHex(result)}${alpha}` };
 }
 
+function isActiveRetryState(result: CalendarEvent["latestResult"]): result is "running" | "auto_retry" {
+  return result === "running" || result === "auto_retry";
+}
+
 // ── Recurring icon ─────────────────────────────────────────────────────────────
 
 function RecurringIcon({ size = 9 }: { size?: number }) {
@@ -286,7 +301,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 min-h-[30px] px-[8px] py-[4px] rounded-md overflow-hidden w-full transition-all duration-150 hover:shadow-md hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running" : "",
+        isActiveRetryState(event.latestResult) ? "agenda-running" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -296,7 +311,7 @@ function EventPill({ event }: { event: CalendarEvent }) {
         borderLeftStyle: isDraft ? "dashed" : "solid",
         borderLeftColor: dotColor,
         opacity: isDraft ? 0.65 : 1,
-        ...(event.latestResult === "running" ? statusRingStyle(event.latestResult, "33") : {}),
+        ...(isActiveRetryState(event.latestResult) ? statusRingStyle(event.latestResult, "33") : {}),
       }}
     >
       {/* Single row: left-dot · title · [TIMER · STATUS label · 8x8dot] */}
@@ -317,12 +332,13 @@ function EventPill({ event }: { event: CalendarEvent }) {
           // Shared text style — uppercase, bold, same size for timer and status
           const labelCls = "text-[8px] font-bold uppercase tracking-wider leading-none tabular-nums";
           // Timer label: running uses live duration, queued/scheduled uses countdown
-          const timerLabel = event.latestResult === "running"
+          const timerLabel = isActiveRetryState(event.latestResult)
             ? null // rendered via LiveDuration below
             : cronLabel ?? null;
-          const hasTimer = event.latestResult === "running" || !!timerLabel;
+          const hasTimer = isActiveRetryState(event.latestResult) || !!timerLabel;
           const statusWord =
             event.latestResult === "running" ? "running"
+            : event.latestResult === "auto_retry" ? "retrying"
             : event.latestResult === "succeeded" ? "done"
             : event.latestResult === "failed" ? "failed"
             : event.latestResult === "needs_retry" ? "retry"
@@ -330,13 +346,12 @@ function EventPill({ event }: { event: CalendarEvent }) {
             : event.latestResult === "scheduled" ? "sched"
             : event.latestResult === "cancelled" ? "canc"
             : event.latestResult === "skipped" ? "skip"
-            : event.latestResult === "auto_retry" ? "retry"
             : String(event.latestResult).toUpperCase();
           return (
             <span className="inline-flex flex-col items-end gap-[2px] shrink-0">
               <span className="inline-flex items-center gap-[3px]">
                 {/* Timer */}
-                {event.latestResult === "running" && (
+                {isActiveRetryState(event.latestResult) && (
                   <LiveDuration
                     startedAt={event.runStartedAt ?? event.scheduledFor ?? null}
                     finishedAt={event.runFinishedAt}
@@ -413,7 +428,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
     <div
       className={[
         "flex flex-col gap-0.5 px-[10px] py-[6px] rounded-lg overflow-visible w-full min-h-[56px] transition-all duration-150 hover:shadow-lg hover:brightness-95",
-        event.latestResult === "running" ? "agenda-running" : "",
+        isActiveRetryState(event.latestResult) ? "agenda-running" : "",
         event.latestResult === "needs_retry" ? "agenda-needs-retry" : "",
       ].join(" ")}
       style={{
@@ -423,7 +438,7 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         borderLeftStyle: isDraft ? "dashed" : "solid",
         borderLeftColor: dotColor,
         opacity: isDraft ? 0.65 : 1,
-        ...(event.latestResult === "running" ? statusRingStyle(event.latestResult, "40") : {}),
+        ...(isActiveRetryState(event.latestResult) ? statusRingStyle(event.latestResult, "40") : {}),
       }}
     >
       {/* Title row: title · [TIMER · STATUS label · 8x8dot] */}
@@ -438,10 +453,11 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
         {event.latestResult && (() => {
           const statusColor = statusHex(event.latestResult);
           const labelCls = "text-[9px] font-bold uppercase tracking-wider leading-none tabular-nums";
-          const timerLabel = event.latestResult === "running" ? null : cronLabel ?? null;
-          const hasTimer = event.latestResult === "running" || !!timerLabel;
+          const timerLabel = isActiveRetryState(event.latestResult) ? null : cronLabel ?? null;
+          const hasTimer = isActiveRetryState(event.latestResult) || !!timerLabel;
           const statusWord =
             event.latestResult === "running" ? "running"
+            : event.latestResult === "auto_retry" ? "retrying"
             : event.latestResult === "succeeded" ? "done"
             : event.latestResult === "failed" ? "failed"
             : event.latestResult === "needs_retry" ? "retry"
@@ -449,12 +465,11 @@ function TimeGridEventBlock({ event }: { event: CalendarEvent }) {
             : event.latestResult === "scheduled" ? "sched"
             : event.latestResult === "cancelled" ? "canc"
             : event.latestResult === "skipped" ? "skip"
-            : event.latestResult === "auto_retry" ? "retry"
             : String(event.latestResult).toUpperCase();
           return (
             <span className="inline-flex flex-col items-end gap-[2px] shrink-0">
               <span className="inline-flex items-center gap-[3px]">
-                {event.latestResult === "running" && (
+                {isActiveRetryState(event.latestResult) && (
                   <LiveDuration
                     startedAt={event.runStartedAt ?? event.scheduledFor ?? null}
                     finishedAt={event.runFinishedAt}
@@ -661,10 +676,10 @@ function DayCell({
                             </span>
                           )}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
-                            evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: statusBg('running') }}>
-                                <RunningBadge />
-                                <span style={{ color: statusHex('running') }}>
+                            isActiveRetryState(evt.latestResult) ? (
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: statusBg(evt.latestResult) }}>
+                                <RunningBadge status={evt.latestResult} />
+                                <span style={{ color: statusHex(evt.latestResult) }}>
                                   <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums" />
                                 </span>
                               </span>
@@ -838,10 +853,10 @@ function WeekHourCell({
                         <div className="flex items-center gap-2 mt-1">
                           {timeStr && <span className="text-[11px] text-muted-foreground font-medium">{timeStr}</span>}
                           {evt.latestResult && evt.latestResult !== "scheduled" && evt.latestResult !== "queued" && (
-                            evt.latestResult === "running" ? (
-                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: statusBg('running') }}>
-                                <RunningBadge />
-                                <span style={{ color: statusHex('running') }}>
+                            isActiveRetryState(evt.latestResult) ? (
+                              <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: statusBg(evt.latestResult) }}>
+                                <RunningBadge status={evt.latestResult} />
+                                <span style={{ color: statusHex(evt.latestResult) }}>
                                   <LiveDuration startedAt={evt.runStartedAt} finishedAt={evt.runFinishedAt} prefix="· " className="text-[10px] font-bold tabular-nums" />
                                 </span>
                               </span>
