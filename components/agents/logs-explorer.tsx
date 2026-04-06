@@ -523,8 +523,6 @@ function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso:
   const isMemory = log.eventType.startsWith("memory.");
 
   // Extract structured details from payload
-  const payloadRecord = (log.rawPayload && typeof log.rawPayload === "object") ? (log.rawPayload as Record<string, unknown>) : null;
-
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -790,7 +788,6 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                     </TableCell>
                   </TableRow>
                 ) : filtered.map((log) => {
-                  const isError = log.level === "error" || log.level === "warning";
                   return (
                     <TableRow key={log.id} className={cn(
                       "transition-colors",

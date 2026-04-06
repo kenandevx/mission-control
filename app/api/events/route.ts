@@ -67,7 +67,7 @@ export async function GET() {
           const row = rows[0] || null;
           if (!row) return;
           await send(sse({ row }, "ticket_activity"));
-        } catch (err) {
+        } catch {
           // ignore
         }
       });

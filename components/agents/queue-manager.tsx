@@ -23,7 +23,6 @@ import {
   Trash2Icon,
   PlayIcon,
   PauseIcon,
-  XIcon,
   ZapIcon,
   ClockIcon,
   ActivityIcon,

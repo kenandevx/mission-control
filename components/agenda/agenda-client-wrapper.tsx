@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -198,7 +197,7 @@ export function AgendaClientWrapper() {
       title: `${event.title} (copy)`,
     });
     setEventModalOpen(true);
-  }, [loadProcessOptions]);
+  }, [loadAllEventsForPicker, loadProcessOptions]);
 
   const handleDayClick = useCallback((date: Date) => {
     void loadProcessOptions();
@@ -207,7 +206,7 @@ export function AgendaClientWrapper() {
     setEditingEvent(null);
     setEditingFormData({ startDate: dateStr });
     setEventModalOpen(true);
-  }, [loadProcessOptions]);
+  }, [loadAllEventsForPicker, loadProcessOptions]);
 
   const handleEventDrop = useCallback(async (eventId: string, newDate: string, newTime?: string) => {
     try {

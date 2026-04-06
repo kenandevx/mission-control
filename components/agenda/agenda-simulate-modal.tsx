@@ -4,17 +4,15 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { IconPlayerPlay, IconLoader2 } from "@tabler/icons-react";
 import { ProcessSimulateModal } from "@/components/processes/process-simulate-modal";
-import type { AgendaEventFormData, AgentOption, ProcessOption } from "./agenda-event-modal";
+import type { AgendaEventFormData } from "./agenda-event-modal";
 
 type AgendaSimulateModalProps = {
   open: boolean;
   formData: AgendaEventFormData;
-  agents: AgentOption[];
-  processes: ProcessOption[];
   onClose: () => void;
 };
 
-export function AgendaSimulateModal({ open, formData, agents, processes, onClose }: AgendaSimulateModalProps) {
+export function AgendaSimulateModal({ open, formData, onClose }: AgendaSimulateModalProps) {
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [loadingSteps, setLoadingSteps] = useState(false);
   const [steps, setSteps] = useState<Array<{

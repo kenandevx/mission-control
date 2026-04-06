@@ -25,11 +25,10 @@ type LogRow = {
 
 type LogsLiveRefreshProps = {
   isFirstPage: boolean;
-  pageLimit: number;
   onLiveRow: (row: LogRow, totalCount: number) => void;
 };
 
-export function LogsLiveRefresh({ isFirstPage, pageLimit, onLiveRow }: LogsLiveRefreshProps) {
+export function LogsLiveRefresh({ isFirstPage, onLiveRow }: LogsLiveRefreshProps) {
   const [state, setState] = useState<LiveState>("connecting");
   const mountedRef = useRef(false);
 

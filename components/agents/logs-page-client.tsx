@@ -106,13 +106,13 @@ export function LogsPageClient({ initialLogs, initialAgents, initialPageInfo, in
   const titleActions = useMemo(
     () => (
       <div className="flex w-full items-center justify-between gap-2">
-        <LogsLiveRefresh isFirstPage={isFirstPage} pageLimit={pageInfo.limit} onLiveRow={handleLiveRow} />
+        <LogsLiveRefresh isFirstPage={isFirstPage} onLiveRow={handleLiveRow} />
         <div className="flex items-center gap-2">
           <ClearLogsButton />
         </div>
       </div>
     ),
-    [isFirstPage, pageInfo.limit, handleLiveRow],
+    [isFirstPage, handleLiveRow],
   );
 
   return (

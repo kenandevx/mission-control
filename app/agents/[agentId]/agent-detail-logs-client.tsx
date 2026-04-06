@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { LogsExplorer } from "@/components/agents/logs-explorer";
-import { LogsLiveRefresh } from "@/components/agents/logs-live-refresh";
 import { Badge } from "@/components/ui/badge";
 import type { AgentLog } from "@/types/agents";
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { execSync } from "node:child_process";
 
 const ROOT = "/home/clawdbot/.openclaw";

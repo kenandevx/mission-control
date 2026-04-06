@@ -380,8 +380,6 @@ export async function POST(request: Request) {
       // available if the event is later switched back to isolated mode. It is only
       // applied when the run executes as an isolated agentTurn.
       const modelOverride = rawModelOverride;
-      const dependsOnEventId = body.dependsOnEventId ? String(body.dependsOnEventId) : null;
-      const dependencyTimeoutHours = body.dependencyTimeoutHours ? Number(body.dependencyTimeoutHours) || null : null;
       const processVersionIds: string[] = Array.isArray(body.processVersionIds)
         ? body.processVersionIds.map(String)
         : [];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardAction } from "@/componen
 import {
   IconPlayerPlay,
   IconCheck,
-  IconX,
   IconLoader2,
   IconTrash,
   IconFile,
@@ -135,16 +134,7 @@ export function ProcessSimulateModal({ open, processId, processName, steps, auto
     }
   }, [open]);
 
-  useEffect(() => {
-    if (open && autoStart && !autoStartedRef.current && !running && !done) {
-      autoStartedRef.current = true;
-      // Delay slightly so the dialog renders first
-      const t = setTimeout(() => startSimulation(), 150);
-      return () => clearTimeout(t);
-    }
-  }, [open, autoStart]);
-
-  const startSimulation = async () => {
+  const startSimulation = useCallback(async () => {
     setRunning(true);
     setDone(false);
     setStepResults([]);
@@ -208,7 +198,18 @@ export function ProcessSimulateModal({ open, processId, processName, steps, auto
       setRunning(false);
       setDone(true);
     }
-  };
+  }, [processId, steps]);
+
+  useEffect(() => {
+    if (open && autoStart && !autoStartedRef.current && !running && !done) {
+      autoStartedRef.current = true;
+      // Delay slightly so the dialog renders first
+      const t = setTimeout(() => {
+        void startSimulation();
+      }, 150);
+      return () => clearTimeout(t);
+    }
+  }, [open, autoStart, running, done, startSimulation]);
 
   const hasSnapshots = sessionSnapshots.length > 0;
 

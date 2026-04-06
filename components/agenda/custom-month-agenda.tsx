@@ -621,7 +621,6 @@ function DayCell({
             </DialogHeader>
             <div className="overflow-y-auto px-6 pb-5 flex flex-col gap-2 max-h-[60vh]">
               {dayEvents.map((evt) => {
-                const resolved = resolveEventColor(evt);
                 const resolvedKey = resolveEventColorKey(evt);
                 const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
                 const timeStr = (() => {
@@ -712,7 +711,6 @@ function DayCell({
 function WeekHourCell({
   day,
   hour,
-  dateStr,
   visible,
   overflow,
   allHourEvts,
@@ -720,14 +718,12 @@ function WeekHourCell({
   isDragOver,
   nowLineAt,
   onEventClick,
-  onEventDrop,
   onDragEnter,
   onDragLeave,
   onDropEvent,
 }: {
   day: Date;
   hour: number;
-  dateStr: string;
   visible: CalendarEvent[];
   overflow: number;
   allHourEvts: CalendarEvent[];
@@ -735,7 +731,6 @@ function WeekHourCell({
   isDragOver: boolean;
   nowLineAt: number | null; // minute offset (0-59) to render now-line, or null
   onEventClick: (evt: CalendarEvent) => void;
-  onEventDrop?: (eventId: string, newDate: string, newTime?: string) => void;
   onDragEnter: () => void;
   onDragLeave: () => void;
   onDropEvent: (eventId: string) => void;
@@ -817,7 +812,6 @@ function WeekHourCell({
             </DialogHeader>
             <div className="overflow-y-auto px-4 pb-5 flex flex-col gap-2 max-h-[60vh]">
               {allHourEvts.map((evt) => {
-                const resolved = resolveEventColor(evt);
                 const resolvedKey = resolveEventColorKey(evt);
                 const dotColor = DOT_COLORS[resolvedKey] ?? "#6b7280";
                 const timeStr = (() => {
@@ -981,7 +975,6 @@ function WeekView({
                     key={cellKey}
                     day={day}
                     hour={h}
-                    dateStr={dateStr}
                     visible={visible}
                     overflow={overflow}
                     allHourEvts={hourEvts}
@@ -989,7 +982,6 @@ function WeekView({
                     isDragOver={dragOverCell === cellKey}
                     nowLineAt={h === nowHour ? nowMinute : null}
                     onEventClick={onEventClick}
-                    onEventDrop={onEventDrop}
                     onDragEnter={() => setDragOverCell(cellKey)}
                     onDragLeave={() => setDragOverCell((p) => p === cellKey ? null : p)}
                     onDropEvent={(eventId) => {

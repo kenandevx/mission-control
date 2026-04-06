@@ -1162,8 +1162,6 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
               <AgendaSimulateModal
                 open={true}
                 formData={form}
-                agents={agents}
-                processes={processes}
                 onClose={() => {}}
               />
             </div>

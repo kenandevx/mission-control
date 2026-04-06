@@ -579,11 +579,6 @@ export function FileManagerClient(): React.JSX.Element {
     | null
   >(null);
 
-  // Copy confirmation dialog
-  const [copyConfirmOpen, setCopyConfirmOpen] = useState(false);
-  const [copyConfirmIds, setCopyConfirmIds] = useState<string[]>([]);
-  const [copyConfirmTarget, setCopyConfirmTarget] = useState<string | null>(null);
-
   const mountedRef = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

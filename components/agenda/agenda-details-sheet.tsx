@@ -41,7 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IconDotsVertical } from "@tabler/icons-react";
-import { useNow, formatDuration, LiveDuration } from "@/hooks/use-now";
+import { formatDuration, LiveDuration } from "@/hooks/use-now";
 import {
   IconCalendar,
   IconCalendarClock,
@@ -54,7 +54,6 @@ import {
   IconFileText,
 
   IconPencil,
-  IconTrendingUp,
   IconDownload,
   IconPhoto,
   IconFile,
@@ -490,8 +489,6 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
       {/* File list */}
       <div className="grid grid-cols-1 gap-2">
         {files.map((file) => {
-          const isImage = file.mimeType?.startsWith("image/");
-          const isPdf = file.mimeType === "application/pdf";
           const downloadUrl = `/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`;
 
           return (
@@ -548,14 +545,6 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
   );
 }
 
-function AttemptDuration({ startedAt, finishedAt }: { startedAt: string; finishedAt: string | null }) {
-  const isLive = !!startedAt && !finishedAt;
-  const now = useNow(isLive ? 1_000 : 60_000);
-  const dur = formatDuration(startedAt, finishedAt, now.getTime());
-  if (!dur) return null;
-  return <> · {dur}</>;
-}
-
 function humanRecurrence(recurrence: string) {
   if (!recurrence || recurrence === "none") return null;
   const map: Record<string, string> = { daily: "Every day", weekly: "Every week", monthly: "Every month" };
@@ -581,7 +570,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [forceRetryDialogOpen, setForceRetryDialogOpen] = useState(false);
-  const [copyRequested, setCopyRequested] = useState(false);
   // Local override for occurrence status after retry (optimistic UI update)
   const [occStatusOverride, setOccStatusOverride] = useState<{ id: string; status: string } | null>(null);
 
@@ -591,6 +579,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   useEffect(() => {
     if (!open || !event?.id) return;
     const controller = new AbortController();
+    setSelectedOccurrenceId(null);
 
     const recurring = event.recurrence && event.recurrence !== "none";
 
@@ -610,6 +599,8 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
           } else if (!recurring && occs.length > 0) {
             // Non-recurring: safe to pick the only occurrence
             setSelectedOccurrenceId(occs[0].id);
+          } else {
+            setSelectedOccurrenceId(null);
           }
           // Recurring with no matching occurrence → leave null (no run yet for this date)
         }
@@ -617,7 +608,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
     })();
 
     return () => controller.abort();
-  }, [open, event?.id]);
+  }, [open, event?.id, event?.occurrenceId, event?.recurrence]);
 
   useEffect(() => {
     if (!selectedOccurrenceId || !event?.id) return;
