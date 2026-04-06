@@ -171,7 +171,7 @@ function beautifyOutputSource(source: string | null | undefined) {
   const raw = String(source ?? "").trim();
   if (!raw) return "";
   // Step 1: fix common typos/misspellings first (order matters — specific before general)
-  let s = raw
+  const s = raw
     .replace(/_session_/gi, " Session ")
     // Normalize any variant of "assistant" (assistan, assisant, assisstant, assistent, etc.)
     .replace(/assis[st]?[aie][n]?[st]?s?/gi, "Assistant")
@@ -312,16 +312,28 @@ type AgendaLogEntry = {
 
 function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null }) {
   const [logs, setLogs] = useState<AgendaLogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadedOccurrenceId, setLoadedOccurrenceId] = useState<string | null>(null);
+  const visibleLogs = occurrenceId ? logs : [];
+  const loading = Boolean(occurrenceId) && loadedOccurrenceId !== occurrenceId;
 
   useEffect(() => {
-    if (!occurrenceId) { setLogs([]); return; }
-    setLoading(true);
+    if (!occurrenceId) return;
+    let cancelled = false;
+
     fetch(`/api/agenda/logs?occurrenceId=${encodeURIComponent(occurrenceId)}&limit=50`)
       .then((r) => r.json())
-      .then((d) => { if (d.ok) setLogs(d.logs ?? []); })
+      .then((d) => {
+        if (cancelled) return;
+        setLogs(d.ok ? (d.logs ?? []) : []);
+      })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoadedOccurrenceId(occurrenceId);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [occurrenceId]);
 
   if (!occurrenceId) return (
@@ -334,7 +346,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
     </div>
   );
 
-  if (logs.length === 0) return (
+  if (visibleLogs.length === 0) return (
     <p className="text-xs text-muted-foreground py-4 text-center">
       No logs found for this occurrence.
     </p>
@@ -365,7 +377,7 @@ function AgendaOccurrenceLogs({ occurrenceId }: { occurrenceId: string | null })
 
   return (
     <div className="flex flex-col gap-2">
-      {logs.map((log) => (
+      {visibleLogs.map((log) => (
         <div key={log.id} className="rounded-md border bg-card p-3 text-xs">
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="font-semibold text-foreground" style={eventTone[log.event_type] ?? undefined}>
@@ -910,7 +922,7 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                       </CardHeader>
                       <CardFooter className={overviewCardFooterClassName}>
                         <div className="text-muted-foreground text-xs">
-                          Runs with this event's isolated-session model selection.
+                          Runs with this event’s isolated-session model selection.
                         </div>
                       </CardFooter>
                     </Card>

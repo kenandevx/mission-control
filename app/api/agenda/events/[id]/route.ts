@@ -435,7 +435,7 @@ export async function PATCH(
     // If within grace window, bump to now so the scheduler executes immediately.
     const PAST_GRACE_MS = 5 * 60 * 1000;
     const nowMs = Date.now();
-    let effectiveStartsAt = startsAt;
+    const effectiveStartsAt = startsAt;
     let bumpedToNow = false;
     const startsAtMs = new Date(startsAt).getTime();
     if (startsAtMs < nowMs - PAST_GRACE_MS) return fail("Cannot schedule events in the past.");

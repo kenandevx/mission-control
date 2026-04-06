@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/local-db";
 
-type Json = Record<string, any>;
+type Json = Record<string, unknown>;
 
 const ok = (data: Json = {}) => NextResponse.json({ ok: true, ...data });
 const fail = (message: string, status = 400) => NextResponse.json({ ok: false, error: message }, { status });

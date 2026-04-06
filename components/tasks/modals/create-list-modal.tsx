@@ -35,7 +35,7 @@ export function CreateListModal({
         <DialogHeader>
           <DialogTitle>Create list</DialogTitle>
           <DialogDescription>
-            Add a new list (column) to your board. For example: "Review", "Blocked", or "Done".
+            Add a new list (column) to your board. For example: {"\"Review\", \"Blocked\", or \"Done\"."}
           </DialogDescription>
         </DialogHeader>
 

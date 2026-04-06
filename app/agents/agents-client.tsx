@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ContainerLoader } from "@/components/ui/container-loader";
+import type { Agent } from "@/types/agents";
 
 type AgentEntry = {
   id: string;
@@ -67,6 +68,21 @@ function resolveAgentCardStatus(
   return Number.isFinite(lastActivityTs) && referenceTs - lastActivityTs <= 2 * 60 * 1000
     ? "running"
     : status;
+}
+
+function toDebugAgent(agent: AgentEntry): Agent {
+  return {
+    id: agent.id,
+    name: agent.name,
+    status: agent.status,
+    runtime: {
+      model: agent.model,
+      queueDepth: agent.queueDepth ?? null,
+      activeRuns: null,
+      lastHeartbeatAt: agent.lastHeartbeatAt,
+      uptimeMinutes: null,
+    },
+  };
 }
 
 // ── Loading state ────────────────────────────────────────────────────────────
@@ -201,7 +217,7 @@ function AgentsClientGrid({ showAgentDebug }: { showAgentDebug: boolean }): Reac
                         <CardTitle className="text-base group-hover:text-primary transition-colors">
                           {formatAgentName(agent.name)}
                         </CardTitle>
-                        {showAgentDebug ? <AgentDebugOverlay agent={agent as any} /> : null}
+                        {showAgentDebug ? <AgentDebugOverlay agent={toDebugAgent(agent)} /> : null}
                       </div>
                     </div>
                     <AgentStatusBadge status={cardStatus} />

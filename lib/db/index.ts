@@ -21,6 +21,92 @@ import type {
   UpdateTicketSubtaskPatch,
 } from "@/lib/db/adapter";
 
+type BoardRow = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description?: string | null;
+  created_at: string;
+};
+
+type ColumnRow = {
+  id: string;
+  board_id: string;
+  title: string;
+  color_key?: string | null;
+  is_default?: boolean | null;
+  position: number;
+  created_at: string;
+};
+
+type TicketRow = {
+  id: string;
+  board_id: string;
+  column_id: string;
+  title: string;
+  description?: string | null;
+  priority: TicketRecord["priority"];
+  due_date?: string | null;
+  tags?: string[] | null;
+  assignee_ids?: string[] | null;
+  assigned_agent_id?: string | null;
+  execution_mode?: TicketRecord["executionMode"] | null;
+  plan_text?: string | null;
+  plan_approved?: boolean | null;
+  scheduled_for?: string | null;
+  execution_state?: TicketRecord["executionState"] | null;
+  process_version_ids?: string[] | null;
+  execution_window_minutes?: number | null;
+  checklist_done?: number | null;
+  checklist_total?: number | null;
+  attachments_count?: number | null;
+  comments_count?: number | null;
+  position?: number | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TicketAttachmentRow = {
+  id: string;
+  ticket_id: string;
+  name: string;
+  url: string;
+  mime_type: string;
+  size: number;
+  path: string;
+  created_at: string;
+};
+
+type TicketSubtaskRow = {
+  id: string;
+  ticket_id: string;
+  title: string;
+  completed?: boolean | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type TicketCommentRow = {
+  id: string;
+  ticket_id: string;
+  author_id?: string | null;
+  author_name: string;
+  content: string;
+  created_at: string;
+};
+
+type TicketActivityRow = {
+  id: string;
+  ticket_id: string;
+  source: string;
+  event: string;
+  details: string;
+  level: TicketActivityRecord["level"];
+  occurred_at: string;
+};
+
 async function post(action: string, payload: Record<string, unknown> = {}) {
   const res = await fetch("/api/tasks", {
     method: "POST",
@@ -57,8 +143,8 @@ const adapter: TaskDataAdapter = {
   async listBoards() {
     const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
-    const boards = Array.isArray(data.boards) ? data.boards : [];
-    return boards.map((row: any) => ({
+    const boards = Array.isArray(data.boards) ? (data.boards as BoardRow[]) : [];
+    return boards.map((row) => ({
       id: row.id,
       workspaceId: row.workspace_id,
       name: row.name,
@@ -103,8 +189,8 @@ const adapter: TaskDataAdapter = {
   async listColumns(boardId: string) {
     const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
-    const rows = (Array.isArray(data.columns) ? data.columns : []).filter((row: any) => row.board_id === boardId);
-    return rows.map((row: any) => ({
+    const rows = (Array.isArray(data.columns) ? (data.columns as ColumnRow[]) : []).filter((row) => row.board_id === boardId);
+    return rows.map((row) => ({
       id: row.id,
       boardId: row.board_id,
       title: row.title,
@@ -133,7 +219,7 @@ const adapter: TaskDataAdapter = {
     await post("updateColumn", { columnId, ...patch });
     const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
-    const row = (Array.isArray(data.columns) ? data.columns : []).find((c: any) => c.id === columnId);
+    const row = (Array.isArray(data.columns) ? (data.columns as ColumnRow[]) : []).find((column) => column.id === columnId);
     if (!row) throw new Error("Column not found.");
     return {
       id: row.id,
@@ -157,7 +243,7 @@ const adapter: TaskDataAdapter = {
   async listTickets(boardId: string) {
     const res = await fetch("/api/tasks", { cache: "reload" });
     const data = await res.json();
-    const rows = (Array.isArray(data.tickets) ? data.tickets : []).filter((row: any) => row.board_id === boardId);
+    const rows = (Array.isArray(data.tickets) ? (data.tickets as TicketRow[]) : []).filter((row) => row.board_id === boardId);
     return rows.map(toTicketRecord);
   },
 
@@ -185,7 +271,8 @@ const adapter: TaskDataAdapter = {
 
   async listTicketAttachments(ticketId: string) {
     const data = await post("listTicketAttachments", { ticketId });
-    return (data.rows || []).map((row: any) => ({
+    const rows = Array.isArray(data.rows) ? (data.rows as TicketAttachmentRow[]) : [];
+    return rows.map((row) => ({
       id: row.id,
       ticketId: row.ticket_id,
       name: row.name,
@@ -224,7 +311,8 @@ const adapter: TaskDataAdapter = {
 
   async listTicketSubtasks(ticketId: string) {
     const data = await post("listTicketSubtasks", { ticketId });
-    return (data.rows || []).map((row: any) => ({
+    const rows = Array.isArray(data.rows) ? (data.rows as TicketSubtaskRow[]) : [];
+    return rows.map((row) => ({
       id: row.id,
       ticketId: row.ticket_id,
       title: row.title,
@@ -269,7 +357,8 @@ const adapter: TaskDataAdapter = {
 
   async listTicketComments(ticketId: string) {
     const data = await post("listTicketComments", { ticketId });
-    return (data.rows || []).map((row: any) => ({
+    const rows = Array.isArray(data.rows) ? (data.rows as TicketCommentRow[]) : [];
+    return rows.map((row) => ({
       id: row.id,
       ticketId: row.ticket_id,
       authorId: row.author_id,
@@ -298,7 +387,8 @@ const adapter: TaskDataAdapter = {
 
   async listTicketActivity(ticketId: string) {
     const data = await post("listTicketActivity", { ticketId });
-    return (data.rows || []).map((row: any) => ({
+    const rows = Array.isArray(data.rows) ? (data.rows as TicketActivityRow[]) : [];
+    return rows.map((row) => ({
       id: row.id,
       ticketId: row.ticket_id,
       source: row.source,
@@ -324,7 +414,7 @@ const adapter: TaskDataAdapter = {
   },
 };
 
-function toTicketRecord(row: any): TicketRecord {
+function toTicketRecord(row: TicketRow): TicketRecord {
   return {
     id: row.id,
     boardId: row.board_id,

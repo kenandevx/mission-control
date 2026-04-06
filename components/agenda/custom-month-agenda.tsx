@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek,
@@ -30,10 +30,9 @@ import {
 } from "@tabler/icons-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowsRotate } from "@fortawesome/free-solid-svg-icons";
-import type { AgendaEventSummary } from "@/components/agenda/agenda-details-sheet";
-import { useNow, formatDuration, LiveDuration } from "@/hooks/use-now";
+import { useNow, LiveDuration } from "@/hooks/use-now";
 import {
-  EVENT_COLORS, DOT_COLORS, STATUS_GUIDE_ENTRIES,
+  DOT_COLORS, STATUS_GUIDE_ENTRIES,
   STATUS_HEX, statusHex, statusBg, statusText,
   resolveEventColorKey, resolveEventColor,
 } from "@/lib/status-colors";
@@ -1034,7 +1033,7 @@ function DayView({
   useEffect(() => {
     const container = dayScrollRef.current;
     if (!container) return;
-    const scrollToHour = Math.max(0, now.getHours() - 1);
+    const scrollToHour = Math.max(0, new Date().getHours() - 1);
     container.scrollTop = scrollToHour * HOUR_HEIGHT;
   }, []);
 
@@ -1224,11 +1223,8 @@ export function CustomMonthAgenda({
   const gridEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const gridDays = eachDayOfInterval({ start: gridStart, end: gridEnd });
 
-  const weeks = useMemo(() => {
-    const result: Date[][] = [];
-    for (let i = 0; i < gridDays.length; i += 7) result.push(gridDays.slice(i, i + 7));
-    return result;
-  }, [gridDays]);
+  const weeks: Date[][] = [];
+  for (let i = 0; i < gridDays.length; i += 7) weeks.push(gridDays.slice(i, i + 7));
 
   const weekDays = useMemo(() => {
     return eachDayOfInterval({
@@ -1238,8 +1234,11 @@ export function CustomMonthAgenda({
   }, [currentDate]);
 
   // ── Display text (client-only to avoid SSR hydration mismatch on TZ/midnight) ─
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const badgeMonth = mounted ? format(currentDate, "MMM").toUpperCase() : "";
   const badgeDay = mounted ? format(currentDate, "d") : "";
 

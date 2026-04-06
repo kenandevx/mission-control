@@ -185,8 +185,6 @@ const STEPS = [
   { key: "review", label: "Review", icon: IconCheck },
 ] as const;
 
-type StepKey = (typeof STEPS)[number]["key"];
-
 const defaultForm: AgendaEventFormData = {
   title: "",
   request: "",
@@ -336,7 +334,6 @@ function StepIndicator({ currentStep, onStepClick, canReach }: { currentStep: nu
   return (
     <div className="flex gap-1.5 w-full">
       {STEPS.map((step, i) => {
-        const Icon = step.icon;
         const isActive = i === currentStep;
         const isDone = i < currentStep;
         const isDisabled = i > currentStep && canReach && !canReach(i);
@@ -384,7 +381,11 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   const [form, setForm] = useState<AgendaEventFormData>(initialData ? buildInitialForm(initialData) : defaultForm);
   const [error, setError] = useState("");
   const [step, setStep] = useState(0);
-  const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(15);
+  const [agendaTimeStepMinutes, setAgendaTimeStepMinutes] = useState(() => {
+    if (typeof window === "undefined") return 15;
+    const raw = Number(window.localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
+    return Number.isFinite(raw) ? Math.max(0, Math.min(60, raw)) : 15;
+  });
   const [previewInstructions, setPreviewInstructions] = useState<Array<{ title: string; instruction: string; skillKey?: string | null }>>([]);
   const models = useModels();
 
@@ -396,12 +397,6 @@ export function AgendaEventModal({ open, agents = EMPTY_AGENTS, processes = EMPT
   }, [open, initialData]);
 
   useEffect(() => {
-    const raw = Number(localStorage.getItem("mc-agenda-time-step-minutes") ?? "15");
-    const safe = Number.isFinite(raw) ? Math.max(0, Math.min(60, raw)) : 15;
-    /* eslint-disable-next-line */
-setAgendaTimeStepMinutes(safe);
-
-    // eslint-disable-next-line react-compiler/react-compiler
     const onStepChanged = (event: Event) => {
       const custom = event as CustomEvent<{ value?: number }>;
       const value = custom.detail?.value;
@@ -415,7 +410,9 @@ setAgendaTimeStepMinutes(safe);
   }, []);
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+
+    const frame = window.requestAnimationFrame(() => {
       const data = initialDataRef.current;
       setForm(
         data
@@ -429,7 +426,9 @@ setAgendaTimeStepMinutes(safe);
       setError("");
       // When editing, skip to details step since type is already set
       setStep(isEditing ? 1 : 0);
-    }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [open, isEditing, agendaTimeStepMinutes]);
 
   const updateField = <K extends keyof AgendaEventFormData>(key: K, value: AgendaEventFormData[K]) => {
@@ -442,13 +441,11 @@ setAgendaTimeStepMinutes(safe);
   };
 
   const timeOptions = buildTimeOptions(agendaTimeStepMinutes === 0 ? 15 : agendaTimeStepMinutes);
+  const effectivePreviewInstructions = form.processVersionIds.length === 0 ? [] : previewInstructions;
 
   useEffect(() => {
     if (!open) return;
-    if (form.processVersionIds.length === 0) {
-      setPreviewInstructions([]);
-      return;
-    }
+    if (form.processVersionIds.length === 0) return;
 
     let cancelled = false;
     void (async () => {
@@ -839,7 +836,7 @@ setAgendaTimeStepMinutes(safe);
       </div>
 
       {/* Dependency — only show when there are other events to pick from */}
-      {allEvents.filter((e) => !initialData?.editOccurrenceId || true).length > 0 && (
+      {allEvents.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
             <IconLink className="size-3.5 text-primary" />
@@ -1113,7 +1110,7 @@ setAgendaTimeStepMinutes(safe);
     const promptPreview = buildPromptPreview({
       title: form.title,
       request: form.request,
-      instructions: previewInstructions,
+      instructions: effectivePreviewInstructions,
     });
 
     return (
