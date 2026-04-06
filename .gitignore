@@ -43,7 +43,8 @@ next-env.d.ts
 
 # runtime state
 .runtime/
-runtime-artifacts/
+# Agent-created run outputs are local runtime data and should never be committed.
+/runtime-artifacts/
 
 # legacy removed stack
 supabase/

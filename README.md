@@ -299,6 +299,8 @@ Use `statusHex(status)`, `statusBg(status)`, `statusText(status)` helpers, or re
 
 When an agent writes files to the path embedded in the prompt (e.g. `<OPENCLAW_HOME>/runtime-artifacts/agenda/<eventId>/occurrences/<occurrenceId>/artifacts/`), bridge-logger scans that directory after run completion and persists file metadata. The Output tab in the occurrence detail sheet shows file previews and download links via `/api/agenda/artifacts/[stepId]/[filename]`. On event deletion, the entire `runtime-artifacts/agenda/<eventId>/` tree is cleaned up.
 
+> `runtime-artifacts/` is runtime-only agent output and is intentionally gitignored. Do not commit or push files from this directory.
+
 UI behavior:
 - If a run only produced artifacts and the captured text output was filtered down to empty content (for example `prompt_echo_filtered` with no remaining body), the Output tab hides the empty output block instead of rendering a blank "Output source" panel.
 - Image artifact preview cards use consistent inner padding for the filename and preview area.
