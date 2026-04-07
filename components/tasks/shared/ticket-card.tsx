@@ -24,23 +24,21 @@ type Props = {
   isDragging?: boolean;
 };
 
-const priorityStyles: Record<Ticket["priority"], string> = {
-  low: "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
-  medium: "border-amber-500/30 bg-amber-500/10 text-amber-500",
-  high: "border-orange-500/30 bg-orange-500/10 text-orange-500",
-  urgent: "border-destructive/30 bg-destructive/10 text-destructive",
+const priorityConfig: Record<Ticket["priority"], { dot: string; label: string; bar: string }> = {
+  low:    { dot: "bg-emerald-500", label: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" },
+  medium: { dot: "bg-amber-500",   label: "text-amber-600 dark:text-amber-400",   bar: "bg-amber-500"   },
+  high:   { dot: "bg-orange-500",  label: "text-orange-600 dark:text-orange-400",  bar: "bg-orange-500"  },
+  urgent: { dot: "bg-rose-600",    label: "text-rose-600 dark:text-rose-400",      bar: "bg-rose-600"    },
 };
 
-const priorityDot: Record<Ticket["priority"], string> = {
-  low: "bg-emerald-500",
-  medium: "bg-amber-500",
-  high: "bg-orange-500",
-  urgent: "bg-destructive",
+const priorityBorderAccent: Record<Ticket["priority"], string> = {
+  low:    "border-l-emerald-500/50",
+  medium: "border-l-amber-500/50",
+  high:   "border-l-orange-500/50",
+  urgent: "border-l-rose-600/70",
 };
 
-const priorityLabel = (priority: Ticket["priority"]) =>
-  priority.charAt(0).toUpperCase() + priority.slice(1);
-
+const priorityLabel = (p: Ticket["priority"]) => p.charAt(0).toUpperCase() + p.slice(1);
 
 export function TicketCard({
   ticket,
@@ -55,43 +53,43 @@ export function TicketCard({
   const visibleAssignees = ticket.assigneeIds.slice(0, 3);
   const extra = ticket.assigneeIds.length - visibleAssignees.length;
   const shortDesc = ticket.description?.trim().replace(/\s+/g, " ") ?? "";
-  const descPreview = shortDesc.length > 80 ? `${shortDesc.slice(0, 80)}…` : shortDesc;
+  const descPreview = shortDesc.length > 90 ? `${shortDesc.slice(0, 90)}…` : shortDesc;
+  const cfg = priorityConfig[ticket.priority] ?? priorityConfig.low;
+  const hasMeta = ticket.dueDate || ticket.checklistTotal > 0 || ticket.comments > 0 || ticket.attachments > 0;
 
   return (
     <Card
       className={cn(
-        "group cursor-pointer select-none border-border bg-card py-0",
-        "transition-[transform,box-shadow] duration-150",
-        "hover:-translate-y-0.5 hover:shadow-md",
-        isDragging && "opacity-50",
+        "group cursor-pointer select-none border-border/60 bg-card py-0",
+        "border-l-[3px]",
+        priorityBorderAccent[ticket.priority],
+        "transition-[transform,box-shadow,opacity] duration-150",
+        "hover:-translate-y-0.5 hover:shadow-md hover:border-border",
+        isDragging && "opacity-40 shadow-2xl rotate-1",
       )}
       onClick={onClick}
       {...dragHandleProps}
     >
-      <CardContent className={cn("flex flex-col gap-2.5", dense ? "p-3" : "p-4")}>
-        {/* Tags row + kebab */}
+      <CardContent className={cn("flex flex-col gap-2", dense ? "p-2.5" : "p-3.5")}>
+        {/* Top row: priority pill + tags + kebab */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-1">
-            {ticket.priority ? (
-              <Badge
-                variant="outline"
-                className={cn("h-5 px-1.5 py-0 text-[11px] font-medium", priorityStyles[ticket.priority])}
-              >
-                <span className={cn("mr-1 h-1.5 w-1.5 rounded-full", priorityDot[ticket.priority])} />
-                {priorityLabel(ticket.priority)}
+            {/* Priority dot + label */}
+            <span className={cn("flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide", cfg.label)}>
+              <span className={cn("size-1.5 rounded-full shrink-0", cfg.dot)} />
+              {priorityLabel(ticket.priority)}
+            </span>
+            {/* Tags */}
+            {ticket.tags.slice(0, 2).map((tag) => (
+              <Badge key={tag} variant="secondary" className="h-4 px-1.5 py-0 text-[10px] font-normal rounded-full">
+                {tag}
               </Badge>
-            ) : null}
-            {ticket.tags.length > 0
-              ? ticket.tags.slice(0, 2).map((tag) => (
-                  <Badge key={tag} variant="secondary" className="h-5 px-1.5 py-0 text-[11px] font-normal">
-                    {tag}
-                  </Badge>
-                ))
-              : null}
+            ))}
             {ticket.tags.length > 2 && (
-              <span className="text-[11px] text-muted-foreground">+{ticket.tags.length - 2}</span>
+              <span className="text-[10px] text-muted-foreground/60">+{ticket.tags.length - 2}</span>
             )}
           </div>
+
           <div
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -102,7 +100,7 @@ export function TicketCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="h-5 w-5 opacity-0 group-hover:opacity-70 hover:!opacity-100 transition-opacity"
                   aria-label="Ticket actions"
                 >
                   <KebabIcon />
@@ -110,14 +108,9 @@ export function TicketCard({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={onClick}>Open</DropdownMenuItem>
-                {onCopy && (
-                  <DropdownMenuItem onClick={onCopy}>Copy</DropdownMenuItem>
-                )}
+                {onCopy && <DropdownMenuItem onClick={onCopy}>Copy ticket</DropdownMenuItem>}
                 {onDelete && (
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={onDelete}
-                  >
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onDelete}>
                     Delete
                   </DropdownMenuItem>
                 )}
@@ -127,63 +120,72 @@ export function TicketCard({
         </div>
 
         {/* Title */}
-        <p className="text-sm font-semibold leading-snug line-clamp-2 text-foreground">
+        <p className="text-sm font-semibold leading-snug line-clamp-2 text-foreground/90">
           {ticket.title}
         </p>
 
         {/* Description preview */}
-        {descPreview && (
-          <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
+        {!dense && descPreview && (
+          <p className="text-xs leading-relaxed text-muted-foreground/70 line-clamp-2">
             {descPreview}
           </p>
         )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-2 pt-0.5">
-          {/* Assignee avatars */}
-          <div className="flex items-center -space-x-1.5">
-            {visibleAssignees.map((id) => {
-              const a = assigneeById[id];
-              if (!a) return null;
-              return (
-                <Avatar key={id} className="h-5 w-5 border border-background text-[10px]">
-                  <AvatarFallback style={{ backgroundColor: a.color }} className="text-white text-[10px]">
-                    {a.initials}
-                  </AvatarFallback>
+        {/* Footer: assignees + meta */}
+        {(visibleAssignees.length > 0 || hasMeta) && (
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            {/* Assignee avatars */}
+            <div className="flex items-center -space-x-1.5">
+              {visibleAssignees.map((id) => {
+                const a = assigneeById[id];
+                if (!a) return null;
+                return (
+                  <Avatar key={id} className="h-5 w-5 border-2 border-card text-[10px]">
+                    <AvatarFallback style={{ backgroundColor: a.color }} className="text-white text-[9px]">
+                      {a.initials}
+                    </AvatarFallback>
+                  </Avatar>
+                );
+              })}
+              {extra > 0 && (
+                <Avatar className="h-5 w-5 border-2 border-card">
+                  <AvatarFallback className="text-[9px] bg-muted text-muted-foreground">+{extra}</AvatarFallback>
                 </Avatar>
-              );
-            })}
-            {extra > 0 && (
-              <Avatar className="h-5 w-5 border border-background">
-                <AvatarFallback className="text-[10px] bg-muted text-muted-foreground">
-                  +{extra}
-                </AvatarFallback>
-              </Avatar>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* Meta */}
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            {ticket.dueDate && (
-              <span className="flex items-center gap-1">
-                <CalendarIcon className="w-3 h-3" />
-                {formatDue(ticket.dueDate)}
-              </span>
-            )}
-            {ticket.checklistTotal > 0 && (
-              <span className="flex items-center gap-1">
-                <CheckIcon className="w-3 h-3" />
-                {ticket.checklistDone}/{ticket.checklistTotal}
-              </span>
-            )}
-            {ticket.comments > 0 && (
-              <span className="flex items-center gap-1">
-                <CommentIcon className="w-3 h-3" />
-                {ticket.comments}
-              </span>
-            )}
+            {/* Meta icons */}
+            <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground/60">
+              {ticket.dueDate && (
+                <span className="flex items-center gap-0.5">
+                  <CalendarIcon className="w-3 h-3" />
+                  {formatDue(ticket.dueDate)}
+                </span>
+              )}
+              {ticket.checklistTotal > 0 && (
+                <span className={cn(
+                  "flex items-center gap-0.5",
+                  ticket.checklistDone === ticket.checklistTotal && "text-emerald-500",
+                )}>
+                  <CheckIcon className="w-3 h-3" />
+                  {ticket.checklistDone}/{ticket.checklistTotal}
+                </span>
+              )}
+              {ticket.comments > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <CommentIcon className="w-3 h-3" />
+                  {ticket.comments}
+                </span>
+              )}
+              {ticket.attachments > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <PaperclipIcon className="w-3 h-3" />
+                  {ticket.attachments}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -223,6 +225,14 @@ function CommentIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function PaperclipIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
     </svg>
   );
 }

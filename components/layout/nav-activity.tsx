@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { statusHex, statusLabel, statusMeta, statusText } from "@/lib/status-colors";
 import {
@@ -21,6 +21,8 @@ type ActivityEntry = {
   level: string;
   timestamp: string;
   targetUrl?: string;
+  ticketId?: string;
+  boardId?: string;
 };
 
 function normalizeAgendaEvent(rawEvent: string): string {
@@ -197,6 +199,7 @@ function ensureConnection() {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function NavActivity(): React.ReactElement {
+  const router = useRouter();
   const [entries, setEntries] = useState<ActivityEntry[]>(_globalEntries);
   const [connected, setConnected] = useState(_globalConnected);
 
@@ -256,11 +259,25 @@ export function NavActivity(): React.ReactElement {
               const color = labelColor(entry);
               const animated = isAnimated(entry);
 
+              const handleEntryClick = (e: React.MouseEvent) => {
+                e.preventDefault();
+                if (entry.type === "ticket" && entry.ticketId && entry.boardId) {
+                  // Navigate to the board, then dispatch a custom event to open
+                  // the ticket modal — no ?ticket= in the URL so refresh is clean
+                  router.push(`/boards?board=${encodeURIComponent(entry.boardId)}`);
+                  window.dispatchEvent(new CustomEvent("mc:open-ticket", {
+                    detail: { ticketId: entry.ticketId, boardId: entry.boardId },
+                  }));
+                } else {
+                  router.push(href);
+                }
+              };
+
               return (
-                <Link
+                <button
                   key={entry.id}
-                  href={href}
-                  className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40 group"
+                  onClick={handleEntryClick}
+                  className="flex items-start gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/40 group w-full text-left"
                   title={`${entry.title} — ${formatActivityEvent(entry)}`}
                 >
                   {/* Status dot */}
@@ -299,7 +316,7 @@ export function NavActivity(): React.ReactElement {
                       )}
                     </div>
                   </div>
-                </Link>
+                </button>
               );
             })
           )}

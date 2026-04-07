@@ -12,6 +12,8 @@ type ActivityEntry = {
   level: string;
   timestamp: string;
   targetUrl?: string;
+  ticketId?: string;
+  boardId?: string;
 };
 
 function agendaLevelFromStatus(status: string): string {
@@ -57,7 +59,8 @@ export async function GET(): Promise<Response> {
         ta.event,
         ta.level,
         ta.occurred_at,
-        t.title AS ticket_title
+        t.title AS ticket_title,
+        t.board_id::text AS board_id
       FROM ticket_activity ta
       LEFT JOIN tickets t ON t.id = ta.ticket_id
       ORDER BY ta.occurred_at DESC
@@ -101,7 +104,9 @@ export async function GET(): Promise<Response> {
         agent: row.source || "Worker",
         level: row.level || "info",
         timestamp: row.occurred_at || new Date().toISOString(),
-        targetUrl: row.ticket_id ? `/boards?ticket=${encodeURIComponent(String(row.ticket_id))}` : "/boards",
+        targetUrl: row.board_id ? `/boards?board=${encodeURIComponent(String(row.board_id))}` : "/boards",
+        ticketId: row.ticket_id ? String(row.ticket_id) : undefined,
+        boardId: row.board_id ? String(row.board_id) : undefined,
       });
     }
 

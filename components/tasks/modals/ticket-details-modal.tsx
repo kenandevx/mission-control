@@ -226,7 +226,7 @@ export function TicketDetailsModal({
           </DialogHeader>
 
           {/* Two-column Trello layout */}
-          <div className="flex overflow-hidden" style={{ maxHeight: "calc(92vh - 140px)" }}>
+          <div className="flex overflow-hidden" style={{ maxHeight: "calc(92vh - 130px)" }}>
             {/* ── Main column (left) ─────────────────────────────── */}
             <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4 min-w-0">
               {/* Title */}
@@ -472,8 +472,27 @@ export function TicketDetailsModal({
             </div>
 
             {/* ── Sidebar (right) — Trello style ─────────────────── */}
-            <div className="w-[220px] shrink-0 border-l bg-muted/10 px-4 py-4 overflow-y-auto flex flex-col gap-3">
-              <Separator />
+            <div className="w-[210px] shrink-0 border-l bg-muted/5 px-3 py-4 overflow-y-auto flex flex-col gap-4">
+
+              {/* Checklist progress bar */}
+              {isEditing && form.checklistTotal > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Progress</Label>
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      {form.checklistDone}/{form.checklistTotal}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${Math.round((form.checklistDone / form.checklistTotal) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <Separator className="my-0" />
 
               {/* List */}
               <div className="flex flex-col gap-1">
@@ -492,7 +511,20 @@ export function TicketDetailsModal({
                 <Select value={form.priority} onValueChange={(v) => onChange({ priority: v as TicketDetailsForm["priority"] })}>
                   <SelectTrigger className="h-8 text-xs w-full cursor-pointer"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {TICKET_PRIORITY_OPTIONS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}
+                    {TICKET_PRIORITY_OPTIONS.map((o) => (
+                      <SelectItem key={o.key} value={o.key}>
+                        <span className="flex items-center gap-1.5">
+                          <span className={cn(
+                            "size-1.5 rounded-full shrink-0",
+                            o.key === "low" && "bg-emerald-500",
+                            o.key === "medium" && "bg-amber-500",
+                            o.key === "high" && "bg-orange-500",
+                            o.key === "urgent" && "bg-rose-600",
+                          )} />
+                          {o.label}
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -502,7 +534,7 @@ export function TicketDetailsModal({
                 <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Due date</Label>
                 <Input
                   type="date"
-                  value={form.dueDate || form.scheduledFor}
+                  value={(form.dueDate || form.scheduledFor || "").slice(0, 10)}
                   onChange={(e) => onChange({ dueDate: e.target.value, scheduledFor: e.target.value })}
                   className="h-8 text-xs"
                 />
@@ -514,7 +546,7 @@ export function TicketDetailsModal({
                 <Input
                   value={form.tagsText}
                   onChange={(e) => onChange({ tagsText: e.target.value })}
-                  placeholder="bug, ui..."
+                  placeholder="tag1, tag2..."
                   className="h-8 text-xs"
                 />
               </div>

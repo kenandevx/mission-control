@@ -132,7 +132,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
   const searchParams = useSearchParams();
   const [boardSearch, setBoardSearch] = useState("");
   const [workspaceOpen, setWorkspaceOpen] = useState(Boolean(initialBoardId));
-  const [openedTicketFromQuery, setOpenedTicketFromQuery] = useState<string | null>(null);
   const [boardActivity, setBoardActivity] = useState<LiveLog[]>([]);
   const [boardActivityLoading, setBoardActivityLoading] = useState(false);
 
@@ -144,7 +143,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
   const [copyAndOpen, setCopyAndOpen] = useState(false);
 
   const boardParam = searchParams.get("board");
-  const ticketParam = searchParams.get("ticket");
 
   const reloadBoardsRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -260,25 +258,28 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
     setWorkspaceOpen(true);
   }, [boardParam, tasks]);
 
+  // Listen for mc:open-ticket events from the sidebar Live Activity
+  // (no ?ticket= URL param — avoids re-opening modal on refresh)
   useEffect(() => {
-    if (!workspaceOpen || !ticketParam) {
-      if (openedTicketFromQuery !== null) {
-        setOpenedTicketFromQuery(null);
+    const handler = (e: Event) => {
+      const { ticketId, boardId } = (e as CustomEvent<{ ticketId: string; boardId: string }>).detail;
+      if (!ticketId || !boardId) return;
+      // Ensure the right board is open first
+      if (tasks.board.tickets[ticketId]) {
+        tasks.openDetailsModal(ticketId);
+      } else {
+        // Board may not be loaded yet — open it then wait for next render
+        tasks.setActiveBoardId(boardId);
+        setWorkspaceOpen(true);
+        // Slight delay to let board state settle before opening modal
+        setTimeout(() => {
+          tasks.openDetailsModal(ticketId);
+        }, 200);
       }
-      return;
-    }
-
-    if (openedTicketFromQuery === ticketParam) {
-      return;
-    }
-
-    if (!tasks.board.tickets[ticketParam]) {
-      return;
-    }
-
-    tasks.openDetailsModal(ticketParam);
-    setOpenedTicketFromQuery(ticketParam);
-  }, [openedTicketFromQuery, tasks, ticketParam, workspaceOpen]);
+    };
+    window.addEventListener("mc:open-ticket", handler);
+    return () => window.removeEventListener("mc:open-ticket", handler);
+  }, [tasks]);
 
   useEffect(() => {
     if (!workspaceOpen || !tasks.activeBoardId) {
@@ -737,9 +738,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
                   loading={boardActivityLoading}
                   onTicketClick={(ticketId) => {
                     tasks.openDetailsModal(ticketId);
-                    const next = new URLSearchParams(window.location.search);
-                    next.set("ticket", ticketId);
-                    window.history.replaceState(null, "", `?${next.toString()}`);
                   }}
                 />
               </aside>
