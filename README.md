@@ -2,9 +2,9 @@
 
 **The OpenClaw native dashboard** — manage scheduled agenda tasks, multi-step processes, Kanban boards, agent logs, file browsing, and system settings from a single UI.
 
-**Version 3.1.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
+**Version 3.2.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
 
-> **Latest changes (2026-04-07):** Kanban saving fixes — `updateTicket` no longer resets execution state, proper `ticket_activity` audit rows on save/move, `moveTicket` shows real column names in audit trail, `updateColumn`/`createColumn` emit SSE notifications, and `toIsoDueDate` malformed-string guard.
+> **Latest changes (2026-04-07):** Kanban overhaul — sidebar Live Activity no longer puts `?ticket=` in the URL (custom DOM event flow), `updateTicket` preserves execution state, full `ticket_activity` audit on save/move, `createTicket` `process_version_ids` crash fixed, Kanban test panel removed, ticket card and modal UI redesigned.
 
 > **No Redis. No BullMQ.** Execution is handled natively by the OpenClaw cron engine (v2+).
 

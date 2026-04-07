@@ -2,18 +2,35 @@
 
 All notable changes to Mission Control are documented here.
 
-## [3.1.0] - 2026-04-07
+## [3.2.0] - 2026-04-07
 
 ### Fixed
+- **Sidebar Live Activity click re-opened ticket modal on refresh** — clicking a ticket entry in the Live Activity sidebar was navigating to `/boards?ticket=<id>`, which a `useEffect` in `boards-page-client` read on mount to auto-reopen the modal. Clicking now dispatches a `mc:open-ticket` custom DOM event instead — the board page listens for it and opens the modal directly with no URL modification. Refreshing the page is completely clean.
+- **`BoardActivityFeed` click was also writing `?ticket=` to the URL** — removed; clicking a ticket in the board's in-page activity feed no longer touches the URL.
+- **Notification API was building `targetUrl` with `?ticket=<id>`** — both `/api/notifications/recent` and `/api/notifications/stream` now include `board_id` in the ticket activity query and build `targetUrl` as `/boards?board=<boardId>` only. The `ticketId` and `boardId` are exposed as separate typed fields on the `ActivityEntry` so the sidebar can route correctly without encoding ticket IDs into the URL.
 - **Kanban: `updateTicket` was destroying execution state on every save** — the `updateTicket` API action hard-reset `execution_state`, `assigned_agent_id`, `execution_mode`, `plan_text`, `plan_approved`, `execution_window_minutes`, and `fallback_model` to defaults on every ticket save, regardless of which fields actually changed. Only explicitly passed fields are now updated; all other fields are preserved.
 - **Kanban: ticket `updateTicket` missing `ticket_activity` audit row** — saving a ticket via the details modal now correctly writes a per-ticket activity log entry. `logTaskAudit` previously dropped `ticketId`, so the activity tab never reflected ticket edits.
 - **Kanban: `moveTicket` activity log had no column names and no ticket_activity row** — the audit trail now shows `"Moved from {From List} to {To List}"` instead of the generic `"Moved to a new column."`, and `ticketId` is correctly passed so the entry appears on the ticket's activity tab.
 - **Kanban: `updateColumn` had no audit trail or SSE notification** — renaming a list now logs to `activity_logs` and emits a `pg_notify('ticket_activity', ...)` event so live-connected clients can react.
 - **Kanban: `createColumn` had no SSE notification** — creating a new list now emits `pg_notify('ticket_activity', 'column:created:<id>')` immediately after creation.
+- **`createTicket` INSERT referenced non-existent `process_version_ids` column** — removed from the INSERT statement. Also corrected `execution_mode` default from `'direct'` to `'auto'` to match the DB schema default.
 - **`toIsoDueDate` could produce malformed ISO strings** — if `scheduledFor` or `dueDate` already contained a `T` (already in ISO format), appending `T00:00:00.000Z` produced an invalid double-T date string. Fixed by detecting existing ISO strings and returning them as-is.
+- **Due date input showed time component** — the date input in the ticket modal now strips to `YYYY-MM-DD` only via `.slice(0, 10)` to prevent time leakage into the field value.
 
 ### Changed
-- **README**: version bumped to 3.1.0.
+- **Kanban Integration Test panel removed** — `kanban-test-panel.tsx`, `kanban-test-definitions.ts`, and `use-kanban-tests.tsx` deleted; import and render removed from `boards-page-client.tsx`.
+- **Ticket card redesigned**:
+  - Left accent border colored by priority (emerald / amber / orange / rose).
+  - Priority shown as a compact dot + uppercase label instead of a full outline badge.
+  - Tags are pill-shaped (`rounded-full`).
+  - Attachment count icon added to footer meta row.
+  - Checklist done count turns emerald green when fully complete.
+  - Drag ghost uses `rotate-1` + heavier shadow for clearer spatial feedback.
+- **Ticket details modal improved**:
+  - Checklist progress bar added to the right sidebar (visible when ticket has subtasks).
+  - Priority dropdown shows colored dots alongside option labels.
+  - Sidebar spacing tightened; separator between progress and fields.
+- **README**: version bumped to 3.2.0.
 
 ## [3.0.0] - 2026-04-05
 
