@@ -55,7 +55,6 @@ import {
   LayoutGridIcon,
 } from "lucide-react";
 import { BoardActivityFeed, type LiveLog } from "@/components/tasks/boards/board-activity-feed";
-import { KanbanTestPanel } from "@/components/tasks/boards/kanban-test-panel";
 
 // UTC date formatting to avoid hydration mismatches
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -918,7 +917,6 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         </AlertDialogContent>
       </AlertDialog>
 
-      <KanbanTestPanel />
     </SidebarProvider>
   );
 }
