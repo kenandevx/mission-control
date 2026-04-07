@@ -218,6 +218,7 @@ export async function POST(request: Request) {
       const position = Number(posRows[0]?.pos ?? 0);
       const rows = await sql`insert into columns (board_id, title, color_key, is_default, position) values (${boardId}, ${title}, ${colorKey}, ${isDefault}, ${position}) returning *`;
       await logTaskAudit(sql, wid, { event: 'List created', details: title, level: 'success' });
+      await sql`select pg_notify('ticket_activity', ${`column:created:${rows[0]?.id || ''}`})`;
       return ok({ column: rows[0] });
     }
 
@@ -225,7 +226,12 @@ export async function POST(request: Request) {
       const columnId = String(body.columnId || "");
       if (!columnId) return fail("Column id is required.");
       const rows = await sql`update columns set title=coalesce(${body.title || null}, title), color_key=coalesce(${body.colorKey || null}, color_key), is_default=coalesce(${body.isDefault ?? null}, is_default), updated_at=now() where id=${columnId} returning *`;
-      return ok({ column: rows[0] });
+      const updatedCol = rows[0];
+      if (updatedCol?.id) {
+        await logTaskAudit(sql, wid, { event: 'List updated', details: updatedCol.title || columnId, level: 'info' });
+        await sql`select pg_notify('ticket_activity', ${`column:updated:${updatedCol.id}`})`;
+      }
+      return ok({ column: updatedCol });
     }
 
     if (action === "deleteColumn") {
@@ -305,31 +311,22 @@ export async function POST(request: Request) {
           due_date = case when ${body.dueDate === undefined} then due_date else ${body.dueDate ?? null} end,
           tags = case when ${body.tags === undefined} then tags else ${sql.array(tags)} end,
           assignee_ids = case when ${body.assigneeIds === undefined} then assignee_ids else ${sql.array(assigneeIds)} end,
-          assigned_agent_id = '',
-          process_version_ids = ${sql.array([])}::uuid[],
-          execution_mode = 'direct',
-          plan_text = '',
-          plan_approved = false,
-          approved_by = null,
-          approved_at = null,
           scheduled_for = case when ${body.scheduledFor === undefined} then scheduled_for else ${scheduledIsoForUpdate} end,
-          execution_state = 'open',
           checklist_done = coalesce(${body.checklistDone ?? null}, checklist_done),
           checklist_total = coalesce(${body.checklistTotal ?? null}, checklist_total),
           comments_count = coalesce(${body.commentsCount ?? null}, comments_count),
           attachments_count = coalesce(${body.attachmentsCount ?? null}, attachments_count),
-          execution_window_minutes = 60,
-          fallback_model = '',
           updated_at = now()
         where id = ${ticketId}
         returning *
       `;
       const updated = rows[0];
-      if (updated?.id && before && before.column_id !== updated.column_id) {
+      if (updated?.id) {
         await logTaskAudit(sql, wid, {
-          event: 'Moved column',
-          details: 'Column changed.',
+          event: 'Ticket updated',
+          details: updated.title || String(body.title || '') || ticketId,
           level: 'info',
+          ticketId: updated.id,
         });
       }
       return ok({ ticket: updated });
@@ -355,8 +352,11 @@ export async function POST(request: Request) {
       if (!current) return fail("Ticket not found", 404);
 
       await sql`update tickets set column_id=${toColumnId}, updated_at=now() where id=${ticketId}`;
-      // Note: ticket_activity entry is created by the UI hook — only log to activity_logs/agent_logs here
-      await logTaskAudit(sql, wid, { event: 'Moved ticket', details: 'Moved to a new column.', level: 'info' });
+      const fromColRows = await sql`select title from columns where id=${String(current.column_id)} limit 1`;
+      const toColRows = await sql`select title from columns where id=${toColumnId} limit 1`;
+      const fromColTitle = String(fromColRows[0]?.title || 'Unknown');
+      const toColTitle = String(toColRows[0]?.title || 'Unknown');
+      await logTaskAudit(sql, wid, { event: 'Moved ticket', details: `Moved from ${fromColTitle} to ${toColTitle}.`, level: 'info', ticketId });
 
       if (beforeTicketId) {
         const beforeRows = await sql`select position from tickets where id=${beforeTicketId} limit 1`;

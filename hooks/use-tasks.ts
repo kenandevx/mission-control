@@ -235,7 +235,11 @@ const isTicketPriority = (value: string): value is TicketPriority =>
   value === "low" || value === "medium" || value === "high" || value === "urgent";
 
 const formatDueDateInput = (value: string | null) => (value ? value.slice(0, 10) : null);
-const toIsoDueDate = (value: string) => (value ? `${value}T00:00:00.000Z` : null);
+const toIsoDueDate = (value: string) => {
+  if (!value) return null;
+  if (value.includes('T')) return value; // already an ISO datetime
+  return `${value}T00:00:00.000Z`;
+};
 const toDueDateLabel = (value: string) => {
   if (!value) return "No due date";
   const date = new Date(`${value}T00:00:00`);

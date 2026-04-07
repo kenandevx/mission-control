@@ -2,6 +2,19 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.1.0] - 2026-04-07
+
+### Fixed
+- **Kanban: `updateTicket` was destroying execution state on every save** — the `updateTicket` API action hard-reset `execution_state`, `assigned_agent_id`, `execution_mode`, `plan_text`, `plan_approved`, `execution_window_minutes`, and `fallback_model` to defaults on every ticket save, regardless of which fields actually changed. Only explicitly passed fields are now updated; all other fields are preserved.
+- **Kanban: ticket `updateTicket` missing `ticket_activity` audit row** — saving a ticket via the details modal now correctly writes a per-ticket activity log entry. `logTaskAudit` previously dropped `ticketId`, so the activity tab never reflected ticket edits.
+- **Kanban: `moveTicket` activity log had no column names and no ticket_activity row** — the audit trail now shows `"Moved from {From List} to {To List}"` instead of the generic `"Moved to a new column."`, and `ticketId` is correctly passed so the entry appears on the ticket's activity tab.
+- **Kanban: `updateColumn` had no audit trail or SSE notification** — renaming a list now logs to `activity_logs` and emits a `pg_notify('ticket_activity', ...)` event so live-connected clients can react.
+- **Kanban: `createColumn` had no SSE notification** — creating a new list now emits `pg_notify('ticket_activity', 'column:created:<id>')` immediately after creation.
+- **`toIsoDueDate` could produce malformed ISO strings** — if `scheduledFor` or `dueDate` already contained a `T` (already in ISO format), appending `T00:00:00.000Z` produced an invalid double-T date string. Fixed by detecting existing ISO strings and returning them as-is.
+
+### Changed
+- **README**: version bumped to 3.1.0.
+
 ## [3.0.0] - 2026-04-05
 
 ### Fixed
