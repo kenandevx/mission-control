@@ -266,13 +266,13 @@ export async function POST(request: Request) {
       const rows = await sql`
         insert into tickets (
           workspace_id, board_id, column_id, title, description, priority, due_date,
-          tags, assignee_ids, assigned_agent_id, execution_mode, plan_text, plan_approved, scheduled_for, execution_state,
-          checklist_done, checklist_total, comments_count, attachments_count, position, telegram_chat_id, process_version_ids,
+          tags, assignee_ids, assigned_agent_id, execution_mode, plan_text, plan_approved, scheduled_for,
+          checklist_done, checklist_total, comments_count, attachments_count, position, telegram_chat_id,
           execution_window_minutes, fallback_model
         ) values (
           ${wid}, ${boardId}, ${columnId}, ${title}, ${String(body.description || "")}, ${String(body.priority || "low")}, ${body.dueDate || null},
-          ${sql.array(tags)}, ${sql.array(assigneeIds)}, '', 'direct', '', false, ${scheduled.iso}, 'open',
-          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null}, ${sql.array([])}::uuid[],
+          ${sql.array(tags)}, ${sql.array(assigneeIds)}, '', 'auto', '', false, ${scheduled.iso},
+          ${Number(body.checklistDone || 0)}, ${Number(body.checklistTotal || 0)}, ${Number(body.commentsCount || 0)}, ${Number(body.attachmentsCount || 0)}, ${position}, ${body.telegramChatId || null},
           60, ''
         )
         returning *
