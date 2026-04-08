@@ -257,6 +257,38 @@ env -u NODE_ENV npm install 2>&1 | tail -3
 step "Building production Next.js ..."
 env -u NODE_ENV NODE_ENV=production npm run build 2>&1 | tail -5
 
+# ── Verify CLI device has full gateway scopes ───────────────
+# The agenda-scheduler needs `openclaw cron` (write scope). On first install the
+# CLI device fingerprint may only have operator.read, which causes every cron
+# call to fail with "pairing required". This block triggers the scope-upgrade
+# request and auto-approves it so the scheduler works out of the box.
+step "Verifying OpenClaw CLI gateway permissions ..."
+if openclaw cron list --json >/dev/null 2>&1; then
+  info "CLI has full gateway access — OK"
+else
+  warn "CLI lacks required gateway scopes (operator.write/admin)."
+  warn "Requesting scope upgrade and auto-approving ..."
+  # The failed cron list already created a pending scope-upgrade request.
+  # Approve the latest pending request.
+  if openclaw devices approve --latest --json >/dev/null 2>&1; then
+    info "Scope upgrade approved."
+    # Verify it actually works now
+    if openclaw cron list --json >/dev/null 2>&1; then
+      info "CLI gateway access verified — OK"
+    else
+      warn "CLI still cannot access cron after approval."
+      warn "You may need to manually approve the pending device:"
+      warn "  openclaw devices list"
+      warn "  openclaw devices approve --latest"
+    fi
+  else
+    warn "Auto-approve failed. Approve the pending device manually:"
+    warn "  openclaw devices list"
+    warn "  openclaw devices approve --latest"
+  fi
+fi
+echo ""
+
 # ── mc-services: start host-level daemons ───────────────────
 step "Starting all services (gateway-sync, bridge-logger, agenda-scheduler, Next.js) ..."
 bash scripts/mc-services.sh start 2>&1 | sed 's/^/  /'

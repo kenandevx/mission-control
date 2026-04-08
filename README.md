@@ -827,6 +827,30 @@ Light/Dark/System mode toggle. Persisted to `localStorage` via `next-themes`.
 | gateway-sync shows STOPPED | Normal — it's a one-shot script, not a daemon | It runs once at startup then exits |
 | Logs tab shows no data | bridge-logger not watching the right paths | Verify `OPENCLAW_HOME`, `AGENTS_DIR`, `GATEWAY_LOG_DIR` in env match actual filesystem |
 | `no_output` on main-session runs (rare) | Agent output not yet flushed when bridge-logger scans | Fixed in v2.9 — bridge-logger now retries up to 3× with backoff (3→5→7s) |
+| **agenda-scheduler: "pairing required"** | CLI device only has `operator.read` scope — cron commands need `operator.write`/`operator.admin` | See **Gateway Device Scope Fix** below |
+
+### Gateway Device Scope Fix ("pairing required")
+
+On a fresh install the OpenClaw CLI device fingerprint may be auto-paired with only `operator.read` scope. The agenda-scheduler calls `openclaw cron list/add`, which requires write/admin scopes. The gateway rejects these calls with **"pairing required"** (actually a scope-upgrade request).
+
+The `install.sh` script (v3.2.1+) auto-detects and fixes this. If you hit this on an older install:
+
+```bash
+# 1. Trigger the scope-upgrade request (will fail — that's expected)
+openclaw cron list --json 2>/dev/null || true
+
+# 2. Approve the pending scope upgrade
+openclaw devices approve --latest
+
+# 3. Verify it works
+openclaw cron list --json
+
+# 4. Restart the scheduler to pick up the fix
+cd ~/.openclaw/workspace/mission-control
+bash scripts/mc-services.sh restart agenda-scheduler
+```
+
+**Root cause:** `~/.openclaw/devices/paired.json` stores per-device scopes. The CLI device (`clientMode: "cli"`) needs scopes `operator.admin`, `operator.write`, `operator.read` (at minimum) for full cron engine access.
 
 ---
 
