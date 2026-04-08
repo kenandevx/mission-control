@@ -303,6 +303,8 @@ create table if not exists agenda_events (
   ends_at timestamptz,
   recurrence_rule text,
   recurrence_until timestamptz,
+  depends_on_event_id uuid references agenda_events(id),
+  dependency_timeout_hours integer not null default 24,
   status text not null default 'draft' check (status in ('draft', 'active')),
   created_by text,
   created_at timestamptz not null default now(),
@@ -333,6 +335,7 @@ create table if not exists agenda_occurrences (
   queued_at timestamptz,
   retry_requested_at timestamptz,
   last_retry_reason text,
+  skip_reason text,
   created_at timestamptz not null default now(),
   unique (agenda_event_id, scheduled_for)
 );
