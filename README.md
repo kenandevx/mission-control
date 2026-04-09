@@ -126,6 +126,7 @@ mission-control/
 ├── scripts/
 │   ├── mc-services.sh               # Service supervisor (start/stop/restart/status/watch)
 │   ├── agenda-scheduler.mjs         # RRULE expansion → cron job creation
+│   ├── gateway-rpc.mjs              # Direct gateway RPC (imports OpenClaw callGateway)
 │   ├── bridge-logger.mjs            # File watcher → agent_logs DB ingestion
 │   ├── gateway-sync.mjs             # One-shot: imports agents + sessions from gateway
 │   ├── prompt-renderer.mjs          # Renders unified task message from event + process
@@ -176,9 +177,9 @@ mission-control/
           │  (host process)  │  │  (host process)  │  │  (one-shot, exits) │
           └──────────┬───────┘  └─────────┬────────┘  └────────────────────┘
                      │                    │
-          openclaw cron engine       session .jsonl files
-          (inside OpenClaw gateway)   gateway .log (daily rotated)
-          ~/.openclaw/cron/runs/*.jsonl  ← cron run result files
+          openclaw gateway RPC       session .jsonl files
+          (direct WS import via      gateway .log (daily rotated)
+           gateway-rpc.mjs)          ~/.openclaw/cron/runs/*.jsonl  ← cron run result files
 ```
 
 ### Services (all managed by `scripts/mc-services.sh`)
@@ -325,14 +326,25 @@ The **Live Activity** section in the sidebar shows recent agenda and ticket acti
 
 - **Lookahead**: 14 days (`AGENDA_LOOKAHEAD_DAYS` env var)
 - **Cycle interval**: ~15s (`SCHEDULER_TICK_MS`)
-- **Cron creation**: 
-  - Isolated sessions: `openclaw cron add --at <ISO> --session isolated --message "<prompt>" --agent <id> --model <model> --delete-after-run --no-deliver --json`
-  - Main sessions: same but `--session main --system-event "<prompt>"` (no `--no-deliver`)
-- **Past timestamps**: if scheduled time is already past, uses `--at 1s` so cron fires immediately
+- **Gateway communication**: Direct RPC via `gateway-rpc.mjs` — imports OpenClaw's `callGateway()` from the dist bundle instead of spawning CLI subprocesses. Cold call ~1.5s (module load), warm calls ~9ms. See **Gateway RPC** section below.
+- **Cron creation**: calls `cron.add` RPC with params:
+  - Isolated sessions: `{ kind: "agentTurn", sessionTarget: "isolated", delivery: { mode: "none" } }`
+  - Main sessions: `{ kind: "systemEvent", sessionTarget: "main" }`
+- **Past timestamps**: if scheduled time is already past, schedules 1s from now so cron fires immediately
 - **Session isolation**: agenda tasks run in `isolated` sessions by default (no Telegram noise); `session_target` can be set to `main`
 - **Result sync**: scheduler does NOT read cron run results — bridge-logger handles that via `~/.openclaw/cron/runs/*.jsonl` watching
 - **Fallback trigger**: listens for `pg_notify('agenda_change')` signals emitted by bridge-logger after failed runs
-- **Orphan detection**: each cycle compares live cron job IDs against DB, recovering queued occurrences that lost their cron job and marking running orphans as `needs_retry`
+- **Orphan detection**: each cycle calls `cron.list` RPC and compares live cron job IDs against DB, recovering queued occurrences that lost their cron job and marking running orphans as `needs_retry`
+
+### Gateway RPC (`gateway-rpc.mjs`)
+
+Thin wrapper around OpenClaw's internal `callGateway()` function, imported directly from the dist bundle (`/usr/lib/node_modules/openclaw/dist/call-Iw4xDZUX.js`). This avoids spawning `openclaw cron ...` CLI subprocesses, which each incurred ~10s of CPU time for a full Node.js cold boot + module loading + WS handshake + device auth.
+
+- **Cold call**: ~1.5s (one-time module import + WS connect + device identity handshake)
+- **Warm calls**: ~9ms (modules cached in memory, fresh ephemeral WS per call)
+- **Auth**: automatically uses OpenClaw's device identity (`~/.openclaw/state/`) — no manual token/scope management needed
+- **Used by**: `agenda-scheduler.mjs` for `cron.list`, `cron.add`, and `cron.status` calls
+- **Note**: `bridge-logger.mjs` still uses CLI subprocesses for infrequent operations (cron rm, fallback add) — acceptable since those are event-driven, not on a tight loop
 
 ### Bridge-Logger Details (`bridge-logger.mjs`)
 
