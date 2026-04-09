@@ -247,7 +247,10 @@ start_watchdog() {
     echo "  watchdog — already running (pid $(cat "$WATCHDOG_PID_FILE"))"
     return 0
   fi
-  nohup bash -c "$(declare -f run_watchdog pid_running kill_port); run_watchdog" >> "$WATCHDOG_LOG" 2>&1 < /dev/null &
+  nohup bash -c "
+$(declare -p SERVICES SERVICE_CMDS SERVICE_LOG_FILES SERVICE_PIDS WATCHDOG_INTERVAL WATCHDOG_LOG WATCHDOG_SKIP PROJECT_ROOT PID_DIR LOG_DIR NEXTJS_MODE NEXTJS_DEV_CMD NEXTJS_PROD_CMD 2>/dev/null)
+$(declare -f run_watchdog pid_running kill_port)
+run_watchdog" >> "$WATCHDOG_LOG" 2>&1 < /dev/null &
   local wpid=$!
   echo "$wpid" > "$WATCHDOG_PID_FILE"
   echo "  watchdog — started (pid $wpid, checking every ${WATCHDOG_INTERVAL}s)"
