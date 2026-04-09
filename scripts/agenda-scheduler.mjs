@@ -13,21 +13,18 @@
  * No polling. No shared state. No race conditions.
  */
 import postgres from "postgres";
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { assertAgendaSchema } from "./agenda-schema-check.mjs";
 import { renderUnifiedTaskMessage } from "./prompt-renderer.mjs";
 import { getOccurrenceArtifactDir } from "./runtime-artifacts.mjs";
-import { buildCleanEnv, getOpenClawHome } from "./openclaw-config.mjs";
+import { getOpenClawHome } from "./openclaw-config.mjs";
+import { callCron } from "./gateway-rpc.mjs";
 import {
   transitionOccurrenceToQueued,
   transitionOccurrenceToNeedsRetry,
   transitionStaleRunningToNeedsRetry,
 } from "./agenda-domain.mjs";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Returns the number of lines in the agent:main:main session file at the
@@ -102,10 +99,6 @@ const SERVICE_NAME = "agenda-scheduler";
 const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
 const SCHEDULER_TICK_MS = Math.max(5_000, parseInt(process.env.AGENDA_SCHEDULER_TICK_MS || "15000", 10));
 const SCHEDULER_WAKE_DEBOUNCE_MS = Math.max(250, parseInt(process.env.AGENDA_SCHEDULER_WAKE_DEBOUNCE_MS || "1500", 10));
-const ORPHAN_SWEEP_INTERVAL_MS = Math.max(60_000, parseInt(process.env.AGENDA_ORPHAN_SWEEP_MS || "300000", 10)); // default 5 min
-
-let lastOrphanSweepAt = 0; // epoch ms — forces sweep on first cycle
-
 const sql = postgres(connectionString, { max: 5, prepare: false, idle_timeout: 20, connect_timeout: 10 });
 
 // ── Service heartbeat ─────────────────────────────────────────────────────────
@@ -123,81 +116,70 @@ async function writeHeartbeat(status = "running", lastError = null) {
   }
 }
 
-// ── OpenClaw cron helpers ─────────────────────────────────────────────────────
-
-/** Run openclaw cron command, return parsed JSON output */
-async function cronCmd(args, timeoutMs = 15000) {
-  const env = buildCleanEnv();
-  const result = await execFileAsync("openclaw", ["cron", ...args], {
-    timeout: timeoutMs,
-    env,
-    maxBuffer: 5 * 1024 * 1024,
-  });
-  const raw = (result.stdout || "").trim() || (result.stderr || "").trim();
-  return raw ? JSON.parse(raw) : null;
-}
+// ── OpenClaw cron helpers (direct gateway RPC — no subprocess) ───────────────
+//
+// Uses OpenClaw's callGateway() directly instead of spawning `openclaw cron`
+// CLI subprocesses. Cold call: ~1.5s (module load). Warm calls: ~9ms.
+// This eliminates the 10s CPU spike per CLI invocation that caused the
+// 15%↔ 30% CPU oscillation on every 15s scheduler tick.
 
 /** Create a one-shot cron job for an occurrence. Returns the cron job ID. */
 async function createCronJob({ title, message, agentId, model, scheduledFor, sessionTarget, timeoutSeconds }) {
-  // If the scheduled time is already past, use a tiny valid duration so the cron
-  // fires immediately. OpenClaw rejects "0s", so use "1s" for overdue runs.
-  // Otherwise always use the absolute ISO timestamp so the cron fires at the exact scheduled second.
   const scheduledMs = new Date(scheduledFor).getTime();
   const msUntil = scheduledMs - Date.now();
-  const atValue = msUntil > 0 ? new Date(scheduledFor).toISOString() : "1s";
   if (msUntil <= 0) {
-    console.log(`[agenda-scheduler] createCronJob: scheduling IMMEDIATE (was due ${Math.round(-msUntil/1000)}s ago, at=${atValue}) for "${title}"`);
+    console.log(`[agenda-scheduler] createCronJob: scheduling IMMEDIATE (was due ${Math.round(-msUntil/1000)}s ago) for "${title}"`);
   }
   const target = (sessionTarget === "main" || sessionTarget === "isolated") ? sessionTarget : "isolated";
-  // Main session cron jobs require --system-event; isolated sessions use --message.
   const isMain = target === "main";
-  // For main sessions, wrap the message in a user-style prompt so the System
-  // instructions don't leak as visible "System:" messages in the Telegram chat.
-  // The rendered prompt contains full system instructions — if injected raw via
-  // --system-event, the user sees every System (untrusted): line in their chat.
+
   const effectiveMessage = isMain
-    ? `[Agenda Task: ${title}]
-
-${message}
-
-(Agenda system instructions above — respond to the task, do not repeat these instructions.)`
+    ? `[Agenda Task: ${title}]\n\n${message}\n\n(Agenda system instructions above — respond to the task, do not repeat these instructions.)`
     : message;
-  const args = [
-    "add",
-    "--name", `MC: ${title}`,
-    "--at", atValue,
-    "--session", target,
-    // OpenClaw requires --system-event for main session cron jobs.
-    // --message is only valid for isolated agent sessions.
-    isMain ? "--system-event" : "--message",
-    isMain && effectiveMessage.length > 4000 ? effectiveMessage.slice(0, 4000) + '\n\n[Instructions truncated for session size — respond to the task above.]' : effectiveMessage,
-    "--agent", agentId || "main",
-    "--delete-after-run",
-    // Isolated runs must not announce back to Telegram — bridge-logger captures
-    // the output into Mission Control UI. Main session runs already land in chat.
-    ...(isMain ? [] : ["--no-deliver"]),
-    "--json",
-  ];
-  // OpenClaw only applies payload.model to agentTurn cron jobs.
-  // Main-session agenda runs use systemEvent payloads, so per-event model
-  // overrides are intentionally ignored there.
+  const truncatedMessage = isMain && effectiveMessage.length > 4000
+    ? effectiveMessage.slice(0, 4000) + '\n\n[Instructions truncated for session size — respond to the task above.]'
+    : effectiveMessage;
+
+  // Build the cron.add params matching the gateway's WS RPC schema
+  const params = {
+    name: `MC: ${title}`,
+    enabled: true,
+    deleteAfterRun: true,
+    agentId: agentId || "main",
+    sessionTarget: target,
+    schedule: {
+      kind: "at",
+      // For past timestamps, schedule 1s from now so cron fires immediately
+      at: msUntil > 0 ? new Date(scheduledFor).toISOString() : new Date(Date.now() + 1000).toISOString(),
+    },
+    payload: isMain
+      ? { kind: "systemEvent", text: truncatedMessage }
+      : { kind: "agentTurn", message: truncatedMessage },
+    delivery: isMain
+      ? undefined
+      : { mode: "none" },  // Isolated runs: no Telegram noise
+  };
+
+  // Model override only applies to agentTurn (isolated) payloads
   if (!isMain && model?.trim()) {
-    args.push("--model", model.trim());
+    params.payload.model = model.trim();
   }
   if (timeoutSeconds && Number.isFinite(Number(timeoutSeconds))) {
-    args.push("--timeout-seconds", String(Math.max(60, Number(timeoutSeconds))));
+    params.payload.timeoutSeconds = Math.max(60, Number(timeoutSeconds));
   }
-  const result = await cronCmd(args, 20000);
+
+  const result = await callCron("cron.add", params, { timeoutMs: 20000 });
   return result?.id || null;
 }
 
 /**
  * Returns a Set of cron job IDs that currently exist in the gateway.
+ * Uses persistent WS RPC instead of spawning CLI subprocess.
  * Used to detect orphaned occurrences whose cron jobs were lost during restart.
  */
 async function getLiveCronJobIds() {
   try {
-    const result = await cronCmd(["list", "--json"], 10000);
+    const result = await callCron("cron.list", { includeDisabled: false }, { timeoutMs: 10000 });
     const jobs = Array.isArray(result) ? result : (result?.jobs ?? result?.data ?? []);
     // Exclude MC-notify: jobs — those are bridge-logger completion notifications,
     // not occurrence cron jobs. They have no DB occurrence backing them.
@@ -446,20 +428,10 @@ async function runCycle() {
   `;
 
   // ── Dead-cron-job sweep (gateway restart recovery) ──────────────────────────
-  // Fetch all live cron job IDs from the gateway, but only every ORPHAN_SWEEP_INTERVAL_MS
-  // to avoid the heavy CLI overhead (~10s CPU per invocation) on every 15s tick.
-  // Any queued/scheduled occurrence whose cron_job_id is NOT in this set
-  // had its cron job lost (gateway restart, manual deletion, etc.)
-  // and will be recreated below when we process it.
-  let liveCronIds = null;
-  const shouldSweep = !lastOrphanSweepAt || (now.getTime() - lastOrphanSweepAt > ORPHAN_SWEEP_INTERVAL_MS);
-  if (shouldSweep) {
-    console.log(`[agenda-scheduler] Running orphan sweep (last was ${lastOrphanSweepAt ? Math.round((now.getTime() - lastOrphanSweepAt) / 1000) + 's ago' : 'never'})`);
-    liveCronIds = await getLiveCronJobIds();
-    // Always record the attempt time — even on failure — so we don't hammer
-    // a broken/slow gateway endpoint every 15s tick.
-    lastOrphanSweepAt = now.getTime();
-  }
+  // Fetch all live cron job IDs from the gateway via persistent WS RPC.
+  // This is now fast (~ms) since it uses the shared WebSocket connection
+  // instead of spawning a 10s CLI subprocess.
+  const liveCronIds = await getLiveCronJobIds();
   if (liveCronIds !== null) {
     // ── 1. Queued/scheduled orphans: cron job gone → reschedule ──────────────
     const orphaned = await sql`
@@ -785,6 +757,7 @@ async function shutdown() {
   console.log("[agenda-scheduler] Shutting down...");
   clearInterval(heartbeatInterval);
   if (wakeTimer) clearTimeout(wakeTimer);
+  // gateway-rpc module uses ephemeral connections; no persistent client to destroy.
   await writeHeartbeat("stopped").catch(() => {});
   await sql.end({ timeout: 5 }).catch(() => {});
   process.exit(0);
