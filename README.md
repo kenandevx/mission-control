@@ -2,9 +2,11 @@
 
 **The OpenClaw native dashboard** — manage scheduled agenda tasks, multi-step processes, Kanban boards, agent logs, file browsing, and system settings from a single UI.
 
-**Version 3.2.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
+**Version 3.3.0** · Next.js 16 (App Router, TypeScript) · OpenClaw native cron engine · PostgreSQL
 
-> **Latest changes (2026-04-07):** Kanban overhaul — sidebar Live Activity no longer puts `?ticket=` in the URL (custom DOM event flow), `updateTicket` preserves execution state, full `ticket_activity` audit on save/move, `createTicket` `process_version_ids` crash fixed, Kanban test panel removed, ticket card and modal UI redesigned.
+> **Latest changes (2026-04-09):** CPU audit — watchdog bash spin fixed (variables now serialized via `declare -p`), `cache.ts` rewritten to read local files instead of spawning CLI subprocesses (~10s → 22ms), agenda-scheduler orphan sweep throttled from every 15s to every 5min. Total MC CPU: ~30% → ~3.5%.
+
+> **Previous (2026-04-07):** Kanban overhaul — sidebar Live Activity no longer puts `?ticket=` in the URL (custom DOM event flow), `updateTicket` preserves execution state, full `ticket_activity` audit on save/move, `createTicket` `process_version_ids` crash fixed, Kanban test panel removed, ticket card and modal UI redesigned.
 
 > **No Redis. No BullMQ.** Execution is handled natively by the OpenClaw cron engine (v2+).
 
@@ -334,7 +336,7 @@ The **Live Activity** section in the sidebar shows recent agenda and ticket acti
 - **Session isolation**: agenda tasks run in `isolated` sessions by default (no Telegram noise); `session_target` can be set to `main`
 - **Result sync**: scheduler does NOT read cron run results — bridge-logger handles that via `~/.openclaw/cron/runs/*.jsonl` watching
 - **Fallback trigger**: listens for `pg_notify('agenda_change')` signals emitted by bridge-logger after failed runs
-- **Orphan detection**: each cycle calls `cron.list` RPC and compares live cron job IDs against DB, recovering queued occurrences that lost their cron job and marking running orphans as `needs_retry`
+- **Orphan detection**: calls `cron.list` RPC every 5 minutes (configurable via `AGENDA_ORPHAN_SWEEP_MS` env var, default 300000ms) and compares live cron job IDs against DB, recovering queued occurrences that lost their cron job and marking running orphans as `needs_retry`. Previously ran every 15s tick causing ~10s CPU spikes per invocation.
 
 ### Gateway RPC (`gateway-rpc.mjs`)
 
@@ -571,13 +573,16 @@ Session .jsonl files                  Gateway .log                   Cron runs .
 - **Live log stream** (`/api/agent/logs/stream` SSE) — real-time updates as bridge-logger ingests session data
 - Session history from `agent_sessions` table
 
-### How Agents Are Discovered (gateway-sync)
+### How Agents Are Discovered
 
-On every Mission Control startup, `gateway-sync.mjs` runs once and:
-1. Calls `GET /v1/agents` on the OpenClaw gateway
-2. Upserts rows into `agents` table (`openclaw_agent_id` as unique key)
-3. Calls `GET /v1/sessions` for each agent → upserts into `agent_sessions`
-4. Exits (it is NOT a persistent service)
+**Runtime cache** (`lib/runtime/cache.ts`): reads agent data directly from local OpenClaw files:
+- Agent list: `~/.openclaw/openclaw.json` → `agents.list[]`
+- Agent identity names: `~/.openclaw/workspace/agents/<id>/IDENTITY.md`
+- Session activity/status: `~/.openclaw/agents/<id>/sessions/sessions.json`
+
+This replaced the previous approach of spawning `openclaw agents list --json` and `openclaw sessions --all-agents --json` as CLI subprocesses, which each took ~10s of CPU due to Node.js cold boot + gateway WS handshake.
+
+**gateway-sync** (`gateway-sync.mjs`): runs once on startup to import agents + sessions from the OpenClaw gateway into the PostgreSQL DB. Exits after completion (NOT a persistent service).
 
 Agents are also created on-demand by `bridge-logger.mjs` and `agenda-scheduler.mjs` when emitting agenda logs (ensures `agent_id` FK always exists).
 
@@ -955,6 +960,7 @@ Change your accent in **Settings → Appearance → Main color → Change**.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `AGENDA_LOOKAHEAD_DAYS` | No | `14` | How many days ahead to expand RRULE |
+| `AGENDA_ORPHAN_SWEEP_MS` | No | `300000` | How often (ms) the scheduler runs orphan detection via `cron.list` |
 | `WATCHDOG_INTERVAL` | No | `30` | Watchdog check interval in seconds |
 
 ---
