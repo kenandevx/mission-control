@@ -102,6 +102,9 @@ const SERVICE_NAME = "agenda-scheduler";
 const LOOKAHEAD_DAYS = parseInt(process.env.AGENDA_LOOKAHEAD_DAYS || "14", 10);
 const SCHEDULER_TICK_MS = Math.max(5_000, parseInt(process.env.AGENDA_SCHEDULER_TICK_MS || "15000", 10));
 const SCHEDULER_WAKE_DEBOUNCE_MS = Math.max(250, parseInt(process.env.AGENDA_SCHEDULER_WAKE_DEBOUNCE_MS || "1500", 10));
+const ORPHAN_SWEEP_INTERVAL_MS = Math.max(60_000, parseInt(process.env.AGENDA_ORPHAN_SWEEP_MS || "300000", 10)); // default 5 min
+
+let lastOrphanSweepAt = 0; // epoch ms — forces sweep on first cycle
 
 const sql = postgres(connectionString, { max: 5, prepare: false, idle_timeout: 20, connect_timeout: 10 });
 
@@ -443,11 +446,20 @@ async function runCycle() {
   `;
 
   // ── Dead-cron-job sweep (gateway restart recovery) ──────────────────────────
-  // Fetch all live cron job IDs from the gateway once per cycle.
+  // Fetch all live cron job IDs from the gateway, but only every ORPHAN_SWEEP_INTERVAL_MS
+  // to avoid the heavy CLI overhead (~10s CPU per invocation) on every 15s tick.
   // Any queued/scheduled occurrence whose cron_job_id is NOT in this set
   // had its cron job lost (gateway restart, manual deletion, etc.)
   // and will be recreated below when we process it.
-  const liveCronIds = await getLiveCronJobIds();
+  let liveCronIds = null;
+  const shouldSweep = !lastOrphanSweepAt || (now.getTime() - lastOrphanSweepAt > ORPHAN_SWEEP_INTERVAL_MS);
+  if (shouldSweep) {
+    console.log(`[agenda-scheduler] Running orphan sweep (last was ${lastOrphanSweepAt ? Math.round((now.getTime() - lastOrphanSweepAt) / 1000) + 's ago' : 'never'})`);
+    liveCronIds = await getLiveCronJobIds();
+    // Always record the attempt time — even on failure — so we don't hammer
+    // a broken/slow gateway endpoint every 15s tick.
+    lastOrphanSweepAt = now.getTime();
+  }
   if (liveCronIds !== null) {
     // ── 1. Queued/scheduled orphans: cron job gone → reschedule ──────────────
     const orphaned = await sql`
