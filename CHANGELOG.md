@@ -2,6 +2,26 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.3.0] - 2026-04-09
+
+### Fixed
+- **Watchdog bash CPU spin (16.7% CPU → 0.0%)** — `start_watchdog` in `mc-services.sh` serialized function definitions via `declare -f` but not the variables they reference (`WATCHDOG_INTERVAL`, `SERVICES`, `SERVICE_CMDS`, etc.). The spawned bash subprocess had empty variables, so `sleep "$WATCHDOG_INTERVAL"` became `sleep ""` → instant failure → tight infinite loop consuming 16.7% CPU. Fixed by adding `declare -p` for all required variables alongside `declare -f`.
+- **`cache.ts` CLI subprocess CPU spikes (~30% per page load → negligible)** — `lib/runtime/cache.ts` spawned `openclaw agents list --json` and `openclaw sessions --all-agents --json` as child processes with a 30s TTL cache. Each CLI invocation took ~10 seconds of CPU time (Node.js cold boot + gateway WS handshake). Every `/agents` or `/agenda` page load that missed the cache triggered this. Rewritten to read directly from local files (`openclaw.json`, `IDENTITY.md`, `sessions.json`) — response time dropped from ~10s to 22ms.
+- **Agenda-scheduler orphan sweep CPU spikes** — `getLiveCronJobIds()` called `openclaw cron list --json` on every 15-second tick. Each invocation took ~10s of CPU. Throttled to run every 5 minutes instead (configurable via `AGENDA_ORPHAN_SWEEP_MS` env var, default 300000ms). On failure, the sweep timestamp is still recorded to avoid hammering a broken endpoint.
+
+### Changed
+- **Agent discovery** now reads from local OpenClaw files instead of CLI subprocesses: agent list from `openclaw.json`, identity names from workspace `IDENTITY.md` files, session activity from `sessions.json` per agent.
+- **New env var**: `AGENDA_ORPHAN_SWEEP_MS` — controls how often the scheduler runs orphan detection (default: 5 minutes).
+- **Version bump** to 3.3.0.
+
+### Performance
+- Total Mission Control CPU at steady state: **~30% → ~3.5%**
+  - Watchdog: 16.7% → 0.0%
+  - Agenda-scheduler: ~15% (oscillating) → 0.2%
+  - Bridge-logger: 0.1% (unchanged)
+  - Next.js: 0.5–1% (unchanged)
+  - `/api/agents` response time: ~10s → 22ms
+
 ## [3.2.0] - 2026-04-07
 
 ### Fixed
