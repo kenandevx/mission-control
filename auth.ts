@@ -6,7 +6,8 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
     MicrosoftEntraID({
       clientId: process.env.AZURE_AD_CLIENT_ID ?? "",
       clientSecret: "",
-      tenantId: process.env.AZURE_AD_TENANT_ID,
+      // beta.30 dropped tenantId — tenant is specified via the OIDC issuer URL
+      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID ?? "common"}/v2.0`,
     }),
   ],
   pages: {
