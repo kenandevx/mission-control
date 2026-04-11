@@ -6,8 +6,9 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
     MicrosoftEntraID({
       clientId: process.env.AZURE_AD_CLIENT_ID!,
       tenantId: process.env.AZURE_AD_TENANT_ID!,
-      // No clientSecret — public client using PKCE.
-      // Azure portal: App Registration → Authentication → enable "Allow public client flows"
+      // Empty string = public client (PKCE). Azure ignores client_secret when
+      // "Allow public client flows" is enabled in the App Registration.
+      clientSecret: "",
     }),
   ],
   pages: {
