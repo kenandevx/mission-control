@@ -132,8 +132,8 @@ DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_c
 OPENCLAW_DATABASE_URL=postgresql://openclaw:${POSTGRES_PASSWORD}@localhost:5432/mission_control
 
 # Microsoft Entra ID — login authentication (fill in after install)
-NEXT_PUBLIC_AZURE_AD_CLIENT_ID=
-NEXT_PUBLIC_AZURE_AD_TENANT_ID=
+AZURE_AD_CLIENT_ID=
+AZURE_AD_TENANT_ID=
 
 # Session signing key (auto-generated — do not share or commit)
 AUTH_SECRET=${AUTH_SECRET}
@@ -333,8 +333,8 @@ echo ""
 echo -e "  ${CYAN}nano $INSTALL_DIR/.env${NC}"
 echo ""
 echo "  Add your values to these two lines:"
-echo "    NEXT_PUBLIC_AZURE_AD_CLIENT_ID=<your Application (client) ID>"
-echo "    NEXT_PUBLIC_AZURE_AD_TENANT_ID=<your Directory (tenant) ID>"
+echo "    AZURE_AD_CLIENT_ID=<your Application (client) ID>"
+echo "    AZURE_AD_TENANT_ID=<your Directory (tenant) ID>"
 echo ""
 echo "  Azure portal setup (one-time — no client secret needed):"
 echo "    1. portal.azure.com → Azure Active Directory → App registrations"

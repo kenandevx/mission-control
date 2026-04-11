@@ -6,7 +6,7 @@ import { createSession, getSession, sessionCookieAttrs, SESSION_DURATION_SECONDS
 let _jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 function getJWKS() {
-  const tenantId = process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID;
+  const tenantId = process.env.AZURE_AD_TENANT_ID;
   if (!tenantId) throw new Error("NEXT_PUBLIC_AZURE_AD_TENANT_ID is not set");
   if (!_jwks) {
     _jwks = createRemoteJWKSet(
@@ -23,8 +23,8 @@ function getJWKS() {
  */
 export async function POST(request: Request) {
   try {
-    const tenantId = process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID;
-    const clientId = process.env.NEXT_PUBLIC_AZURE_AD_CLIENT_ID;
+    const tenantId = process.env.AZURE_AD_TENANT_ID;
+    const clientId = process.env.AZURE_AD_CLIENT_ID;
     if (!tenantId || !clientId) {
       return NextResponse.json(
         { ok: false, error: "Auth not configured" },

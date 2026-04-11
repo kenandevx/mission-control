@@ -15,12 +15,27 @@ export default function LoginPage() {
   useEffect(() => {
     // MSAL uses browser APIs — must run client-side only
     void (async () => {
+      // Fetch Azure AD config from the server at runtime (not baked in at build time)
+      let clientId: string;
+      let tenantId: string;
+      try {
+        const cfgRes = await fetch("/api/auth/config");
+        if (!cfgRes.ok) throw new Error("Auth not configured");
+        const cfg = await cfgRes.json() as { clientId: string; tenantId: string };
+        clientId = cfg.clientId;
+        tenantId = cfg.tenantId;
+      } catch {
+        setError("Authentication is not configured. Contact your administrator.");
+        setStatus("ready");
+        return;
+      }
+
       const { PublicClientApplication } = await import("@azure/msal-browser");
 
       const msal = new PublicClientApplication({
         auth: {
-          clientId: process.env.NEXT_PUBLIC_AZURE_AD_CLIENT_ID!,
-          authority: `https://login.microsoftonline.com/${process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID}`,
+          clientId,
+          authority: `https://login.microsoftonline.com/${tenantId}`,
           redirectUri: `${window.location.origin}/login`,
         },
         cache: {
