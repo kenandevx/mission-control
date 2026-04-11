@@ -56,9 +56,6 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 step "Pulling latest (branch: $CURRENT_BRANCH) ..."
 git pull origin "$CURRENT_BRANCH" 2>&1 | tail -3
 
-# ── Sync .env.local ──────────────────────────────────────────
-[ -f .env ] && cp .env .env.local
-
 # ── Runtime dirs ─────────────────────────────────────────────
 mkdir -p .runtime/bridge-logger .runtime/pids .runtime/logs
 touch .runtime/bridge-logger/bridge-logger.lock .runtime/bridge-logger/offsets.json

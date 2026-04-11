@@ -149,8 +149,6 @@ else
   info ".env already present — skipping"
 fi
 
-cp .env .env.local 2>/dev/null || true
-
 # shellcheck disable=SC1091
 set -a
 source .env
