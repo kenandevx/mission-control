@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
+import { useSession, signOut as nextAuthSignOut } from "next-auth/react"
 import {
   IconDashboard,
   IconInnerShadowTop,
@@ -58,10 +59,27 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 
 export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSidebarProps) {
   const router = useRouter()
-  const [user, setUser] = React.useState<SidebarUser | null>(initialUser)
+  const { data: session } = useSession()
+
+  // Prefer live session data; fall back to server-rendered initialUser
+  const sessionUser: SidebarUser | null = session?.user
+    ? {
+        name: session.user.name ?? "User",
+        email: session.user.email ?? "",
+        avatar: session.user.image ?? "",
+      }
+    : initialUser
+
+  const [user, setUser] = React.useState<SidebarUser | null>(sessionUser)
   const [instanceName, setInstanceName] = React.useState("")
   const [appVersion, setAppVersion] = React.useState("")
   const adapter = React.useMemo(() => getDataAdapter(), [])
+
+  // Keep displayed user in sync with live session
+  React.useEffect(() => {
+    setUser(sessionUser)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
 
   React.useEffect(() => {
     setAppVersion(APP_VERSION)
@@ -101,7 +119,7 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
 
   const handleLogout = async () => {
     try {
-      await adapter.signOut()
+      await nextAuthSignOut({ redirect: false })
       setUser(null)
       router.replace("/login")
       router.refresh()

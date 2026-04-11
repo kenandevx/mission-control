@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { SessionProvider } from "next-auth/react";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { NotificationProvider } from "@/components/providers/notification-provider";
 
@@ -40,10 +41,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const disableGlobalRealtime = pathname?.startsWith("/processes") ?? false;
 
   return (
-    <ThemeProvider>
-      {!disableGlobalRealtime ? <StartupEventHook /> : null}
-      {!disableGlobalRealtime ? <NotificationProvider /> : null}
-      {children}
-    </ThemeProvider>
+    <SessionProvider>
+      <ThemeProvider>
+        {!disableGlobalRealtime ? <StartupEventHook /> : null}
+        {!disableGlobalRealtime ? <NotificationProvider /> : null}
+        {children}
+      </ThemeProvider>
+    </SessionProvider>
   );
 }
