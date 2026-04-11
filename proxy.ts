@@ -1,37 +1,49 @@
-import { auth } from "@/auth";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  verifySession,
+  createSession,
+  sessionCookieAttrs,
+  SESSION_DURATION_SECONDS,
+  SESSION_REFRESH_THRESHOLD,
+} from "@/lib/auth/session";
 
-// Paths that never require authentication
 const PUBLIC_PATHS = new Set(["/login", "/health"]);
 const PUBLIC_API_PREFIX = "/api/auth";
 
-export default auth((req) => {
-  const { nextUrl } = req;
-  const isAuthenticated = !!req.auth;
-  const pathname = nextUrl.pathname;
+export default async function proxy(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
 
-  // Always allow public paths and NextAuth's own API routes
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
   if (pathname.startsWith(PUBLIC_API_PREFIX)) return NextResponse.next();
 
-  if (!isAuthenticated) {
-    // API calls → return 401 JSON so fetch clients get a proper error
+  const session = await verifySession(req);
+
+  if (!session) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json(
         { ok: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
-    // Page routes → redirect to login, preserve intended destination
-    const loginUrl = new URL("/login", nextUrl.origin);
+    const loginUrl = new URL("/login", req.nextUrl.origin);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  return NextResponse.next();
-});
+  const res = NextResponse.next();
+
+  // Sliding window: if the session has less than SESSION_REFRESH_THRESHOLD seconds
+  // left, silently re-issue a fresh 24h cookie so active users are never logged out.
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (session.exp !== undefined && session.exp - nowSec < SESSION_REFRESH_THRESHOLD) {
+    const { exp: _exp, ...userFields } = session;
+    const refreshed = await createSession(userFields);
+    res.cookies.set({ ...sessionCookieAttrs(SESSION_DURATION_SECONDS), value: refreshed });
+  }
+
+  return res;
+}
 
 export const config = {
-  // Run on every request except Next.js internals and static files
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
