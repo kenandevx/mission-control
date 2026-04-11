@@ -2,21 +2,19 @@ import { NextResponse } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { createSession, getSession, sessionCookieAttrs, SESSION_DURATION_SECONDS } from "@/lib/auth/session";
 
-const TENANT_ID = process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID;
-const CLIENT_ID = process.env.NEXT_PUBLIC_AZURE_AD_CLIENT_ID;
+// Lazily initialised — not evaluated at build time, only on first request.
+let _jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
-if (!TENANT_ID || !CLIENT_ID) {
-  throw new Error(
-    "NEXT_PUBLIC_AZURE_AD_TENANT_ID and NEXT_PUBLIC_AZURE_AD_CLIENT_ID must be set in .env"
-  );
+function getJWKS() {
+  const tenantId = process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID;
+  if (!tenantId) throw new Error("NEXT_PUBLIC_AZURE_AD_TENANT_ID is not set");
+  if (!_jwks) {
+    _jwks = createRemoteJWKSet(
+      new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`)
+    );
+  }
+  return _jwks;
 }
-
-// Microsoft's public signing keys — jose caches this automatically
-const JWKS = createRemoteJWKSet(
-  new URL(
-    `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`
-  )
-);
 
 /**
  * POST /api/auth/session
@@ -25,15 +23,24 @@ const JWKS = createRemoteJWKSet(
  */
 export async function POST(request: Request) {
   try {
+    const tenantId = process.env.NEXT_PUBLIC_AZURE_AD_TENANT_ID;
+    const clientId = process.env.NEXT_PUBLIC_AZURE_AD_CLIENT_ID;
+    if (!tenantId || !clientId) {
+      return NextResponse.json(
+        { ok: false, error: "Auth not configured" },
+        { status: 503 }
+      );
+    }
+
     const { idToken } = (await request.json()) as { idToken?: string };
     if (!idToken) {
       return NextResponse.json({ ok: false, error: "Missing idToken" }, { status: 400 });
     }
 
     // Verify signature, issuer and audience against Microsoft's JWKS
-    const { payload } = await jwtVerify(idToken, JWKS, {
-      issuer: `https://login.microsoftonline.com/${TENANT_ID}/v2.0`,
-      audience: CLIENT_ID,
+    const { payload } = await jwtVerify(idToken, getJWKS(), {
+      issuer: `https://login.microsoftonline.com/${tenantId}/v2.0`,
+      audience: clientId,
     });
 
     const sessionToken = await createSession({

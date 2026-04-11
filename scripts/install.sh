@@ -143,9 +143,7 @@ AUTH_SECRET=${AUTH_SECRET}
 EOF
 
   chmod 600 .env
-  warn ".env created — credentials:"
-  echo "  POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
-  echo "  AUTH_SECRET=(auto-generated)"
+  warn ".env created with auto-generated credentials (chmod 600)."
   echo ""
 else
   info ".env already present — skipping"
