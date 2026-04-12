@@ -7,22 +7,22 @@ import {
   SESSION_REFRESH_THRESHOLD,
 } from "@/lib/auth/session";
 
-const PUBLIC_PATHS = new Set(["/login", "/health"]);
 const PUBLIC_API_PREFIX = "/api/auth";
 
 export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (pathname.startsWith(PUBLIC_API_PREFIX)) return NextResponse.next();
+  if (pathname === "/health") return NextResponse.next();
 
   const session = await verifySession(req);
 
-  // Already authenticated — redirect away from /login to avoid confusion
-  if (session && pathname === "/login") {
-    return NextResponse.redirect(new URL("/dashboard", req.nextUrl.origin));
+  if (pathname === "/login") {
+    // Already authenticated — redirect away to avoid confusion
+    if (session) return NextResponse.redirect(new URL("/dashboard", req.nextUrl.origin));
+    // Not authenticated — let them through to the login page
+    return NextResponse.next();
   }
-
-  if (pathname === "/health") return NextResponse.next();
 
   if (!session) {
     if (pathname.startsWith("/api/")) {
