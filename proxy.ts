@@ -13,10 +13,16 @@ const PUBLIC_API_PREFIX = "/api/auth";
 export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
-  if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
   if (pathname.startsWith(PUBLIC_API_PREFIX)) return NextResponse.next();
 
   const session = await verifySession(req);
+
+  // Already authenticated — redirect away from /login to avoid confusion
+  if (session && pathname === "/login") {
+    return NextResponse.redirect(new URL("/dashboard", req.nextUrl.origin));
+  }
+
+  if (pathname === "/health") return NextResponse.next();
 
   if (!session) {
     if (pathname.startsWith("/api/")) {

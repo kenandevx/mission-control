@@ -79,7 +79,13 @@ export async function POST(
     const wid = await workspaceId(sql);
     if (!wid) return fail("Workspace not found", 500);
 
-    // ── Test-only helpers ─────────────────────────────────────────────────────
+    // ── Test-only helpers — blocked in production ────────────────────────────
+    if (typeof action === "string" && action.startsWith("testOnly")) {
+      if (process.env.NODE_ENV === "production") {
+        return fail("Not available in production", 403);
+      }
+    }
+
     if (action === "testOnlySetNeedsRetry") {
       const [occ] = await sql`
         select ao.id from agenda_occurrences ao

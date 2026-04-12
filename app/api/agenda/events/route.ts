@@ -485,6 +485,13 @@ export async function POST(request: Request) {
       });
     }
 
+    // ── Test-only actions — blocked in production ────────────────────────────
+    if (typeof action === "string" && action.startsWith("testOnly")) {
+      if (process.env.NODE_ENV === "production") {
+        return fail("Not available in production", 403);
+      }
+    }
+
     // ── Test-only: directly create a needs_retry occurrence ─────────────────
     // Used by automated tests to create a needs_retry occurrence without needing
     // the scheduler to run, or without triggering the full failure/cleanup cycle.

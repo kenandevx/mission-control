@@ -115,6 +115,10 @@ export function AppSidebar({ initialUser, showActivity = true, ...props }: AppSi
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/session", { method: "DELETE" })
+      // Clear MSAL token cache so Microsoft SSO doesn't silently re-authenticate
+      Object.keys(sessionStorage)
+        .filter(k => k.startsWith("msal."))
+        .forEach(k => sessionStorage.removeItem(k))
       setUser(null)
       router.replace("/login")
       router.refresh()
