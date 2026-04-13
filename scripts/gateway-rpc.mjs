@@ -41,9 +41,16 @@ async function getCallGateway() {
       throw new Error(`No call-*.js chunk found in ${OPENCLAW_DIST} — is openclaw installed?`);
     }
     const mod = await import(join(OPENCLAW_DIST, chunkFile));
-    _callGateway = mod.r;
+    // Try known export names first, then fall back to scanning all exports
+    // for a single-argument async function (the gateway caller).
+    _callGateway =
+      (typeof mod.r === "function" && mod.r) ||
+      (typeof mod.callGateway === "function" && mod.callGateway) ||
+      Object.values(mod).find((v) => typeof v === "function");
     if (typeof _callGateway !== "function") {
-      throw new Error(`callGateway export (mod.r) is not a function in ${chunkFile}`);
+      throw new Error(
+        `No callable export found in ${chunkFile}. Exports: ${Object.keys(mod).join(", ")}`
+      );
     }
   }
   return _callGateway;
