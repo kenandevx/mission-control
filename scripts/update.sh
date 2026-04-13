@@ -44,8 +44,12 @@ CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
 STASH_CREATED=false
 if ! git diff --quiet || ! git diff --cached --quiet; then
   step "Stashing local changes before pull ..."
-  git stash push --include-untracked -m "update-script-auto-stash" 2>/dev/null || true
-  STASH_CREATED=true
+  if git stash push -m "update-script-auto-stash"; then
+    STASH_CREATED=true
+  else
+    warn "git stash failed — discarding local tracked-file changes to allow pull."
+    git checkout -- .
+  fi
 fi
 
 step "Pulling latest changes (branch: $CURRENT_BRANCH) ..."
@@ -57,7 +61,7 @@ fi
 # Restore stashed changes; if they conflict with the incoming version, keep theirs
 if [ "$STASH_CREATED" = true ]; then
   step "Restoring local changes ..."
-  if ! git stash pop 2>/dev/null; then
+  if ! git stash pop; then
     warn "Stash pop had conflicts — keeping upstream version and dropping local stash."
     git checkout -- . 2>/dev/null || true
     git stash drop 2>/dev/null || true
