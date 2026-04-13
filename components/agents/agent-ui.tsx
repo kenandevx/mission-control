@@ -121,7 +121,7 @@ const channelLabel: Record<AgentLogChannelType, string> = {
   internal: "Internal",
   telegram: "Telegram",
   gateway: "Gateway",
-  qdrant: "Qdrant",
+  qdrant: "Memory",
 };
 
 const directionLabel: Record<AgentLogDirection, string> = {
@@ -135,7 +135,7 @@ const memorySourceLabel: Record<Exclude<AgentLogMemorySource, "">, string> = {
   daily_file: "Daily File",
   long_term_file: "Long-term File",
   episodic_file: "Episodic File",
-  qdrant_vector: "Qdrant Vector",
+  qdrant_vector: "Vector Memory",
 };
 
 const memorySourceHelpText: Record<Exclude<AgentLogMemorySource, "">, string> = {
@@ -143,7 +143,7 @@ const memorySourceHelpText: Record<Exclude<AgentLogMemorySource, "">, string> = 
   daily_file: "Persisted in workspace daily memory markdown files under ~/.openclaw/workspace/memory/*.md.",
   long_term_file: "Persisted in long-term markdown memory files (MEMORY.md / shared memory docs).",
   episodic_file: "Persisted in episodic memory files under ~/.openclaw/workspace/memory/episodes/.",
-  qdrant_vector: "Persisted in Qdrant vector store for semantic retrieval.",
+  qdrant_vector: "Persisted in vector memory store for semantic retrieval.",
 };
 
 const statusHelpText: Record<AgentStatus, string> = {

@@ -721,7 +721,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                 <SelectItem value="all">All groups</SelectItem>
                 <SelectItem value="chat">Chat</SelectItem>
                 <SelectItem value="tool">Tools</SelectItem>
-                <SelectItem value="memory">Memory / Qdrant</SelectItem>
+                <SelectItem value="memory">Memory</SelectItem>
                 <SelectItem value="system">System / Heartbeat</SelectItem>
                 <SelectItem value="agenda">Agenda</SelectItem>
                 <SelectItem value="worker">Worker / Cron</SelectItem>
@@ -747,7 +747,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                 <SelectItem value="internal">Internal</SelectItem>
                 <SelectItem value="telegram">Telegram</SelectItem>
                 <SelectItem value="gateway">Gateway</SelectItem>
-                <SelectItem value="qdrant">Qdrant</SelectItem>
+                <SelectItem value="qdrant">Memory</SelectItem>
               </SelectContent>
             </Select>
 
