@@ -64,6 +64,13 @@ const channelClasses: Record<string, string> = {
   qdrant: "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300",
 };
 
+const channelLabel: Record<string, string> = {
+  telegram: "Telegram",
+  gateway: "Gateway",
+  internal: "Internal",
+  qdrant: "Memory",
+};
+
 function safeString(value: unknown): string {
   if (typeof value === "string") return value;
   if (value instanceof Date) return value.toISOString();
@@ -564,7 +571,7 @@ function LogDetails({ log, initialNowIso }: { log: NormalizedLog; initialNowIso:
               </div>
               <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Channel</span>
-                <Badge variant="outline" className={cn("w-fit capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge>
+                <Badge variant="outline" className={cn("w-fit capitalize", channelClasses[log.channelType] ?? channelClasses.internal)}>{channelLabel[log.channelType] ?? log.channelType ?? "internal"}</Badge>
               </div>
               <div className="flex flex-col gap-1 rounded-lg border bg-muted/10 p-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Direction</span>
@@ -800,7 +807,7 @@ export function LogsExplorer({ logs = [], agents = [], page, pageCount, totalCou
                         <div className="font-semibold text-[13px] leading-tight">{eventLabel(log.eventType || log.type)}</div>
                         <div className="text-[10px] text-muted-foreground/60 font-mono mt-0.5">{log.eventType || log.type}</div>
                       </TableCell>
-                      <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", channelClasses[log.channelType] ?? channelClasses.internal)}>{log.channelType || "internal"}</Badge></TableCell>
+                      <TableCell><Badge variant="outline" className={cn("capitalize text-[10px]", channelClasses[log.channelType] ?? channelClasses.internal)}>{channelLabel[log.channelType] ?? log.channelType ?? "internal"}</Badge></TableCell>
                       <TableCell className="text-sm font-medium">{log.agentName}</TableCell>
                       <TableCell className="max-w-[180px]">
                         {log.eventTitle ? (
