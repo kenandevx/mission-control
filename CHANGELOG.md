@@ -2,6 +2,30 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.4.0] - 2026-04-14
+
+### Fixed
+- **Gateway RPC fails after openclaw update** — `gateway-rpc.mjs` hardcoded a content-hashed chunk filename (`call-Iw4xDZUX.js`) that changes on every openclaw release. Script now dynamically discovers the `call-*.js` chunk in `/usr/lib/node_modules/openclaw/dist/` at runtime so agenda event creation survives openclaw updates without manual intervention.
+- **Production build: `Cannot find module 'typescript'`** — TypeScript was in `devDependencies` but `next build` under `NODE_ENV=production` skips devDeps. Converted `next.config.ts` → `next.config.mjs` to remove the TypeScript transpilation requirement entirely.
+- **Production build: `Cannot find module 'postgres'`** — duplicate `postgres` entry in both `dependencies` and `devDependencies` removed; added `serverExternalPackages: ["postgres"]` to `next.config.mjs` so Turbopack treats it as a Node.js runtime module instead of bundling it.
+- **Production build: `Cannot find module '@tailwindcss/postcss'`** — `@tailwindcss/postcss`, `tailwindcss`, and `tw-animate-css` moved from `devDependencies` to `dependencies` (all three are consumed by the CSS build pipeline, not just type-checking).
+- **Production build: `Can't resolve 'shadcn/tailwind.css'`** — removed `@import "shadcn/tailwind.css"` from `globals.css`; `shadcn` is a CLI scaffolding tool whose CSS export duplicated variables already defined inline.
+- **Update script blocked by local changes** — `scripts/update.sh` now stashes any dirty working tree before `git pull --ff-only`, then pops the stash afterwards. On stash-pop conflict the upstream version wins and the stash is dropped cleanly.
+- **Folder "Date modified" shows creation time instead of latest change** — folders in the file manager now display the newest `mtime` found anywhere in their subtree (up to depth 6, 800 entries), matching Windows Explorer behaviour where a folder's modified date reflects the most-recently-changed nested file.
+
+### Added
+- **File manager — zip upload modal** — uploading a `.zip` file now shows a choice dialog: *Upload as zip* (stores the archive as-is) or *Extract here* (unzips contents directly into the current folder using `adm-zip` with path-traversal protection). Multiple zips in a single drop are handled together. Non-zip files in the same batch upload immediately without interruption.
+- **File manager — forward navigation** — back `←` and forward `→` history buttons with a full `navHistory` stack. Backspace still navigates to the parent folder.
+- **File manager — arrow key navigation** — `↑`/`↓` moves a focus ring through the file list; `Enter` opens the focused item; auto-scrolls into view.
+- **File manager — sort persistence** — sort field and direction saved to `localStorage`; survive page reload and folder navigation.
+- **File manager — intra-app drag-and-drop** — drag any file or folder onto another folder row/card to move it; dragging selected items moves all of them; drop target highlighted; conflict dialog fires if needed.
+- **File manager — F2 / Ctrl+C / Ctrl+V shortcuts** — F2 renames the hovered or focused item; Ctrl+C copies hovered/selected items to an in-memory clipboard; Ctrl+V opens the Move/Copy dialog pre-loaded with clipboard contents.
+- **File manager — global search location in grid view** — search results in grid mode show a clickable parent-path badge under each item name, matching the existing list-view behaviour.
+
+### Changed
+- **Repository URL** updated from `kenandevx/mission-control` to `openclaw-milolabs/mission-control` in `README.md` and `scripts/install.sh`.
+- **Version bump** to 3.4.0.
+
 ## [3.3.0] - 2026-04-09
 
 ### Fixed
