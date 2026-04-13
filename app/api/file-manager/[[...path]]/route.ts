@@ -129,12 +129,16 @@ type FileItem = {
 function toItem(filePath: string, id: string): FileItem | null {
   try {
     const stat = fs.statSync(filePath);
+    const isDir = stat.isDirectory();
+    const effectiveMtime = isDir
+      ? getEffectiveMtime(filePath, 0, { n: 0 })
+      : stat.mtime;
     return {
       id,
       name: path.basename(filePath),
-      type: stat.isDirectory() ? "folder" : "file",
+      type: isDir ? "folder" : "file",
       size: stat.isFile() ? stat.size : 0,
-      modified: stat.mtime.toISOString(),
+      modified: effectiveMtime.toISOString(),
       created: stat.birthtime.toISOString(),
       accessed: stat.atime.toISOString(),
       permissions: "0" + (stat.mode & 0o777).toString(8),
@@ -241,6 +245,54 @@ function calcDirSize(dir: string, depth: number, result: DirSizeResult): void {
       }
     }
   }
+}
+
+// ─── Effective mtime (Windows-style bubble-up) ───────────────────────────────
+
+const EFFECTIVE_MTIME_MAX_DEPTH = 6;
+const EFFECTIVE_MTIME_MAX_ENTRIES = 800;
+
+/**
+ * Returns the newest mtime found anywhere inside a directory tree (up to depth/
+ * entry limits). Mirrors Windows Explorer behaviour where a folder's "Date
+ * modified" reflects the most-recently-changed file inside it rather than the
+ * raw directory mtime.
+ */
+function getEffectiveMtime(dirPath: string, depth: number, counter: { n: number }): Date {
+  let newest: Date;
+  try {
+    newest = fs.statSync(dirPath).mtime;
+  } catch {
+    return new Date(0);
+  }
+
+  if (depth >= EFFECTIVE_MTIME_MAX_DEPTH || counter.n >= EFFECTIVE_MTIME_MAX_ENTRIES) {
+    return newest;
+  }
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return newest;
+  }
+
+  for (const entry of entries) {
+    if (counter.n >= EFFECTIVE_MTIME_MAX_ENTRIES) break;
+    counter.n++;
+    const entryPath = path.join(dirPath, entry.name);
+    try {
+      const stat = fs.statSync(entryPath);
+      if (stat.mtime > newest) newest = stat.mtime;
+      if (entry.isDirectory()) {
+        const sub = getEffectiveMtime(entryPath, depth + 1, counter);
+        if (sub > newest) newest = sub;
+      }
+    } catch {
+      // inaccessible entry — skip
+    }
+  }
+  return newest;
 }
 
 function sortItems(items: FileItem[]): FileItem[] {
