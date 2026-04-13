@@ -39,8 +39,30 @@ if [ ! -f package.json ]; then
 fi
 
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+
+# Stash any local modifications so the pull can proceed cleanly
+STASH_CREATED=false
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  step "Stashing local changes before pull ..."
+  git stash push --include-untracked -m "update-script-auto-stash" 2>/dev/null || true
+  STASH_CREATED=true
+fi
+
 step "Pulling latest changes (branch: $CURRENT_BRANCH) ..."
-git pull --ff-only origin "$CURRENT_BRANCH"
+if ! git pull --ff-only origin "$CURRENT_BRANCH"; then
+  err "git pull failed. The remote may have diverged. Restore your stash with: git stash pop"
+  exit 1
+fi
+
+# Restore stashed changes; if they conflict with the incoming version, keep theirs
+if [ "$STASH_CREATED" = true ]; then
+  step "Restoring local changes ..."
+  if ! git stash pop 2>/dev/null; then
+    warn "Stash pop had conflicts — keeping upstream version and dropping local stash."
+    git checkout -- . 2>/dev/null || true
+    git stash drop 2>/dev/null || true
+  fi
+fi
 
 if [ -f .env ]; then
   set -a
