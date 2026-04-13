@@ -98,6 +98,8 @@ import {
   Save,
   ArrowLeft,
   ArrowRight,
+  Archive,
+  FolderDown,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -330,6 +332,17 @@ async function apiUpload(
   }
   if (!data.ok) throw new Error(data.error ?? "Upload failed");
   return { ok: true };
+}
+
+async function apiExtractZip(parentId: string, files: globalThis.File[]): Promise<{ extracted: number }> {
+  const form = new FormData();
+  form.set("parentId", parentId);
+  form.set("mode", "extract");
+  for (const file of files) form.append("files", file);
+  const res = await fetch("/api/file-manager", { method: "POST", body: form });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error ?? "Extraction failed");
+  return { extracted: data.extracted ?? 0 };
 }
 
 async function apiSearch(query: string): Promise<FileItem[]> {
@@ -593,6 +606,12 @@ export function FileManagerClient(): React.JSX.Element {
   const [moveCopyAction, setMoveCopyAction] = useState<"move" | "copy">("move");
   const [moveCopyIds, setMoveCopyIds] = useState<string[]>([]);
   const [moveCopyTarget, setMoveCopyTarget] = useState<string | null>(null);
+
+  // Zip upload modal
+  const [zipModalOpen, setZipModalOpen] = useState(false);
+  const [pendingZipFiles, setPendingZipFiles] = useState<globalThis.File[]>([]);
+  const [pendingNonZipFiles, setPendingNonZipFiles] = useState<globalThis.File[]>([]);
+  const [zipExtracting, setZipExtracting] = useState(false);
 
   // Conflict resolution dialog
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
@@ -1058,13 +1077,11 @@ export function FileManagerClient(): React.JSX.Element {
 
   // ─── Upload (real file content) ────────────────────────────────────────────
 
-  const handleUpload = useCallback(async (fileList: FileList | globalThis.File[] | null) => {
-    if (!fileList || (fileList instanceof FileList && fileList.length === 0)) return;
-    const files = Array.from(fileList);
+  const uploadFiles = useCallback(async (files: globalThis.File[]) => {
+    if (files.length === 0) return;
     try {
       const result = await apiUpload(currentPath, files);
       if (!result.ok && "conflicts" in result) {
-        // Conflicts detected — show resolution dialog
         setConflictFiles(result.conflicts);
         setConflictContext({ type: "upload", parentId: currentPath, files });
         setConflictDialogOpen(true);
@@ -1076,6 +1093,44 @@ export function FileManagerClient(): React.JSX.Element {
       toast.error(e instanceof Error ? e.message : "Upload failed");
     }
   }, [currentPath, refresh]);
+
+  const handleUpload = useCallback((fileList: FileList | globalThis.File[] | null) => {
+    if (!fileList || (fileList instanceof FileList && fileList.length === 0)) return;
+    const all = Array.from(fileList) as globalThis.File[];
+    const zips = all.filter((f) => f.name.toLowerCase().endsWith(".zip"));
+    const nonZips = all.filter((f) => !f.name.toLowerCase().endsWith(".zip"));
+
+    // Upload non-zips immediately
+    if (nonZips.length > 0) uploadFiles(nonZips);
+
+    // Show modal for zips
+    if (zips.length > 0) {
+      setPendingZipFiles(zips);
+      setPendingNonZipFiles(nonZips);
+      setZipModalOpen(true);
+    }
+  }, [uploadFiles]);
+
+  const handleZipUploadAsZip = useCallback(async () => {
+    setZipModalOpen(false);
+    await uploadFiles(pendingZipFiles);
+    setPendingZipFiles([]);
+  }, [pendingZipFiles, uploadFiles]);
+
+  const handleZipExtract = useCallback(async () => {
+    setZipExtracting(true);
+    try {
+      const { extracted } = await apiExtractZip(currentPath, pendingZipFiles);
+      setZipModalOpen(false);
+      setPendingZipFiles([]);
+      toast.success(`Extracted ${extracted} file${extracted !== 1 ? "s" : ""} to ${currentPath === "/" ? "/" : currentPath.split("/").pop()}`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Extraction failed");
+    } finally {
+      setZipExtracting(false);
+    }
+  }, [currentPath, pendingZipFiles, refresh]);
 
   // ─── External drag-and-drop (file upload from desktop) ───────────────────
 
@@ -2256,6 +2311,76 @@ export function FileManagerClient(): React.JSX.Element {
             <Button onClick={handleMoveCopy} disabled={!moveCopyTarget || mutating}>
               {mutating && <Loader2 className="h-4 w-4 animate-spin" />}
               {moveCopyAction === "move" ? "Move here" : "Copy here"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Zip Upload Modal */}
+      <Dialog open={zipModalOpen} onOpenChange={(open) => { if (!open) { setZipModalOpen(false); setPendingZipFiles([]); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5 text-primary" />
+              {pendingZipFiles.length === 1 ? "Zip file detected" : `${pendingZipFiles.length} zip files detected`}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingZipFiles.length === 1
+                ? <><span className="font-mono text-xs text-foreground">{pendingZipFiles[0]?.name}</span> — what would you like to do?</>
+                : <>What would you like to do with these zip files?</>}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3 py-2">
+            {/* Option A: Upload as zip */}
+            <button
+              type="button"
+              disabled={zipExtracting}
+              onClick={handleZipUploadAsZip}
+              className="flex items-start gap-4 rounded-lg border p-4 text-left hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <Archive className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Upload as zip</p>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                  Place the zip {pendingZipFiles.length > 1 ? "files" : "file"} as-is into{" "}
+                  <span className="font-mono">{currentPath === "/" ? "/" : `…/${currentPath.split("/").pop()}`}</span>
+                </p>
+              </div>
+            </button>
+
+            {/* Option B: Extract here */}
+            <button
+              type="button"
+              disabled={zipExtracting}
+              onClick={handleZipExtract}
+              className="flex items-start gap-4 rounded-lg border p-4 text-left hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                {zipExtracting
+                  ? <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                  : <FolderDown className="h-5 w-5 text-primary" />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Extract here</p>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                  Unzip contents directly into{" "}
+                  <span className="font-mono">{currentPath === "/" ? "/" : `…/${currentPath.split("/").pop()}`}</span>
+                </p>
+              </div>
+            </button>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={zipExtracting}
+              onClick={() => { setZipModalOpen(false); setPendingZipFiles([]); }}
+            >
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>

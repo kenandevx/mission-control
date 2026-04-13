@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
+import AdmZip from "adm-zip";
 
 const ROOT = "/home/clawdbot/.openclaw";
 
@@ -481,12 +482,52 @@ export async function POST(
   try {
     const contentType = request.headers.get("content-type") ?? "";
 
-    // Multipart upload
+    // Multipart upload (and zip extraction)
     if (contentType.includes("multipart/form-data")) {
       const formData = await request.formData();
       const parentId = (formData.get("parentId") as string) || "/";
+      const mode = (formData.get("mode") as string) || "upload";
       const onConflict = (formData.get("onConflict") as string) || "";
       const files = formData.getAll("files");
+
+      // ── Zip extraction mode ─────────────────────────────────────────────────
+      if (mode === "extract") {
+        const parentPath = resolveSafe(parentId);
+        if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
+          return err("Parent is not a directory");
+        }
+
+        let extractedCount = 0;
+        for (const file of files) {
+          if (!(file instanceof globalThis.File)) continue;
+          if (!file.name.toLowerCase().endsWith(".zip")) continue;
+          if (file.size > MAX_UPLOAD_BYTES) return err("Zip file too large (max 50 MB)");
+
+          const buf = Buffer.from(await file.arrayBuffer());
+          const zip = new AdmZip(buf);
+          const entries = zip.getEntries();
+
+          for (const entry of entries) {
+            // Sanitise: resolve against parentPath and reject traversal
+            const entryName = entry.entryName.replace(/\\/g, "/");
+            const destPath = path.resolve(parentPath, entryName);
+            if (!destPath.startsWith(parentPath + path.sep) && destPath !== parentPath) continue;
+            if (!destPath.startsWith(ROOT)) continue;
+
+            if (entry.isDirectory) {
+              fs.mkdirSync(destPath, { recursive: true });
+              ensureOwnership(destPath);
+            } else {
+              fs.mkdirSync(path.dirname(destPath), { recursive: true });
+              fs.writeFileSync(destPath, entry.getData());
+              ensureOwnership(destPath);
+              extractedCount++;
+            }
+          }
+        }
+
+        return ok({ extracted: extractedCount });
+      }
 
       if (files.length === 0) return err("No files provided");
 
