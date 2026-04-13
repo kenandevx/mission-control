@@ -97,6 +97,7 @@ import {
   Info,
   Save,
   ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -548,6 +549,22 @@ export function FileManagerClient(): React.JSX.Element {
   const [dirSizeInfo, setDirSizeInfo] = useState<DirSizeInfo | null>(null);
   const [dirSizeLoading, setDirSizeLoading] = useState(false);
 
+  // Navigation history (for back/forward buttons)
+  const [navHistory, setNavHistory] = useState<string[]>(["/"]);
+  const [navHistoryIdx, setNavHistoryIdx] = useState(0);
+
+  // Keyboard-focused row index (arrow key navigation)
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+
+  // Hovered item id (for F2/Ctrl+C/Ctrl+V targeting)
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  // Clipboard for Ctrl+C / Ctrl+V
+  const [clipboard, setClipboard] = useState<string[]>([]);
+
+  // Intra-app drag-and-drop
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
   // View mode state — initialize as null (SSR-safe), read from localStorage after mount
   const [viewMode, setViewMode] = useState<ViewMode | null>(null);
 
@@ -555,6 +572,13 @@ export function FileManagerClient(): React.JSX.Element {
   useEffect(() => {
     const saved = localStorage.getItem("fm-view-mode") as ViewMode | null;
     setViewMode(saved || "grid");
+  }, []);
+
+  useEffect(() => {
+    const field = localStorage.getItem("fm-sort-field") as SortField | null;
+    const dir = localStorage.getItem("fm-sort-dir") as SortDir | null;
+    if (field && ["name", "size", "modified"].includes(field)) setSortField(field);
+    if (dir && ["asc", "desc"].includes(dir)) setSortDir(dir);
   }, []);
 
 
@@ -583,6 +607,8 @@ export function FileManagerClient(): React.JSX.Element {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
+  const isInternalDragRef = useRef(false);
+  const internalDragIdsRef = useRef<string[]>([]);
 
   // ─── Derived ─────────────────────────────────────────────────────────────
 
@@ -625,6 +651,9 @@ export function FileManagerClient(): React.JSX.Element {
 
   const navigateTo = useCallback((p: string) => {
     setCurrentPath(p);
+    setNavHistory((prev) => [...prev.slice(0, navHistoryIdx + 1), p]);
+    setNavHistoryIdx(navHistoryIdx + 1);
+    setFocusedIdx(null);
     setRenamingId(null);
     setPreviewItem(null);
     setIsEditing(false);
@@ -632,7 +661,40 @@ export function FileManagerClient(): React.JSX.Element {
     setGlobalResults(null);
     setGlobalSearch(false);
     fetchDir(p);
-  }, [fetchDir]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchDir, navHistoryIdx]);
+
+  const goBack = useCallback(() => {
+    if (navHistoryIdx <= 0) return;
+    const newIdx = navHistoryIdx - 1;
+    const p = navHistory[newIdx];
+    setNavHistoryIdx(newIdx);
+    setCurrentPath(p);
+    setFocusedIdx(null);
+    setRenamingId(null);
+    setPreviewItem(null);
+    setIsEditing(false);
+    setSearchQuery("");
+    setGlobalResults(null);
+    setGlobalSearch(false);
+    fetchDir(p);
+  }, [navHistory, navHistoryIdx, fetchDir]);
+
+  const goForward = useCallback(() => {
+    if (navHistoryIdx >= navHistory.length - 1) return;
+    const newIdx = navHistoryIdx + 1;
+    const p = navHistory[newIdx];
+    setNavHistoryIdx(newIdx);
+    setCurrentPath(p);
+    setFocusedIdx(null);
+    setRenamingId(null);
+    setPreviewItem(null);
+    setIsEditing(false);
+    setSearchQuery("");
+    setGlobalResults(null);
+    setGlobalSearch(false);
+    fetchDir(p);
+  }, [navHistory, navHistoryIdx, fetchDir]);
 
   // Debounced global search
   const runGlobalSearch = useCallback((query: string) => {
@@ -675,6 +737,17 @@ export function FileManagerClient(): React.JSX.Element {
     fetchDir(currentPath);
   }, [currentPath, fetchDir]);
 
+  // Reset keyboard focus when directory or search changes
+  useEffect(() => {
+    setFocusedIdx(null);
+  }, [currentPath, searchQuery, globalSearch]);
+
+  // Scroll focused row into view
+  useEffect(() => {
+    if (focusedIdx === null) return;
+    document.querySelector(`[data-fm-idx="${focusedIdx}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [focusedIdx]);
+
   // ─── View mode ─────────────────────────────────────────────────────────────
 
   const toggleViewMode = useCallback(() => {
@@ -709,10 +782,16 @@ export function FileManagerClient(): React.JSX.Element {
   const handleSort = useCallback((field: SortField) => {
     setSortField((prev) => {
       if (prev === field) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        setSortDir((d) => {
+          const next = d === "asc" ? "desc" : "asc";
+          localStorage.setItem("fm-sort-dir", next);
+          return next;
+        });
         return prev;
       }
       setSortDir("asc");
+      localStorage.setItem("fm-sort-field", field);
+      localStorage.setItem("fm-sort-dir", "asc");
       return field;
     });
   }, []);
@@ -998,11 +1077,12 @@ export function FileManagerClient(): React.JSX.Element {
     }
   }, [currentPath, refresh]);
 
-  // ─── Drag and drop ────────────────────────────────────────────────────────
+  // ─── External drag-and-drop (file upload from desktop) ───────────────────
 
   const handleDragEnter = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isInternalDragRef.current) return; // item is being dragged within the file manager
     dragCounterRef.current++;
     if (dragCounterRef.current === 1) setDragging(true);
   }, []);
@@ -1015,6 +1095,7 @@ export function FileManagerClient(): React.JSX.Element {
   const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isInternalDragRef.current) return;
     dragCounterRef.current--;
     if (dragCounterRef.current === 0) setDragging(false);
   }, []);
@@ -1024,10 +1105,73 @@ export function FileManagerClient(): React.JSX.Element {
     e.stopPropagation();
     dragCounterRef.current = 0;
     setDragging(false);
+    if (isInternalDragRef.current) return; // handled by folder drop targets
     if (e.dataTransfer.files.length > 0) {
       handleUpload(e.dataTransfer.files);
     }
   }, [handleUpload]);
+
+  // ─── Intra-app drag-and-drop (move items between folders) ─────────────────
+
+  const handleItemDragStart = useCallback((e: React.DragEvent, item: FileItem) => {
+    const ids = selected.has(item.id) ? Array.from(selected) : [item.id];
+    e.dataTransfer.setData("application/x-fm-item-ids", JSON.stringify(ids));
+    e.dataTransfer.effectAllowed = "move";
+    isInternalDragRef.current = true;
+    internalDragIdsRef.current = ids;
+  }, [selected]);
+
+  const handleItemDragEnd = useCallback(() => {
+    isInternalDragRef.current = false;
+    internalDragIdsRef.current = [];
+    setDropTargetId(null);
+  }, []);
+
+  const handleFolderDragOver = useCallback((e: React.DragEvent, folderId: string) => {
+    if (!e.dataTransfer.types.includes("application/x-fm-item-ids")) return;
+    if (internalDragIdsRef.current.includes(folderId)) return; // can't drop on self
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    setDropTargetId(folderId);
+  }, []);
+
+  const handleFolderDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDropTargetId(null);
+    }
+  }, []);
+
+  const handleFolderDrop = useCallback(async (e: React.DragEvent, folderId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTargetId(null);
+    isInternalDragRef.current = false;
+
+    const raw = e.dataTransfer.getData("application/x-fm-item-ids");
+    if (!raw) return;
+    let ids: string[];
+    try { ids = JSON.parse(raw); } catch { return; }
+    if (ids.includes(folderId)) return;
+
+    setMutating(true);
+    try {
+      const result = await apiMoveOrCopy("move", ids, folderId);
+      if (!result.ok && "conflicts" in result) {
+        setConflictFiles(result.conflicts);
+        setConflictContext({ type: "movecopy", action: "move", ids, targetId: folderId });
+        setConflictDialogOpen(true);
+      } else {
+        toast.success(`Moved ${ids.length} item${ids.length > 1 ? "s" : ""}`);
+        refresh();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Move failed");
+    } finally {
+      setMutating(false);
+      internalDragIdsRef.current = [];
+    }
+  }, [refresh]);
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -1051,25 +1195,68 @@ export function FileManagerClient(): React.JSX.Element {
         e.preventDefault();
         openDeleteDialog(Array.from(selected));
       }
-      if (e.key === "F2" && selected.size === 1) {
+      if (e.key === "F2") {
         e.preventDefault();
-        const item = items.find((i) => i.id === Array.from(selected)[0]);
-        if (item) startRename(item);
+        // Prefer hovered item, then focused item, then single selection
+        const targetId = hoveredId
+          ?? (focusedIdx !== null ? filteredItems[focusedIdx]?.id : null)
+          ?? (selected.size === 1 ? Array.from(selected)[0] : null);
+        if (targetId) {
+          const item = items.find((i) => i.id === targetId);
+          if (item) startRename(item);
+        }
+      }
+      if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
+        // Copy hovered item(s) to clipboard — don't prevent default so browser text copy still works
+        const ids = hoveredId
+          ? (selected.has(hoveredId) ? Array.from(selected) : [hoveredId])
+          : selected.size > 0 ? Array.from(selected) : [];
+        if (ids.length > 0) {
+          e.preventDefault();
+          setClipboard(ids);
+          toast.success(`${ids.length} item${ids.length > 1 ? "s" : ""} copied`);
+        }
+      }
+      if (e.key === "v" && (e.ctrlKey || e.metaKey) && clipboard.length > 0) {
+        e.preventDefault();
+        openMoveCopy("copy", clipboard);
       }
       if (e.key === "F5") {
         e.preventDefault();
         refresh();
       }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIdx((prev) => {
+          const max = filteredItems.length - 1;
+          if (max < 0) return null;
+          return prev === null ? 0 : Math.min(prev + 1, max);
+        });
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIdx((prev) => {
+          if (prev === null || prev === 0) return 0;
+          return prev - 1;
+        });
+      }
+      if (e.key === "Enter" && focusedIdx !== null) {
+        e.preventDefault();
+        const item = filteredItems[focusedIdx];
+        if (item) handleRowClick(item);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentPath, navigateTo, toggleSelectAll, selected, openDeleteDialog, anyDialogOpen, items, startRename, refresh]);
+  }, [currentPath, navigateTo, toggleSelectAll, selected, openDeleteDialog, anyDialogOpen, items, startRename, refresh, filteredItems, focusedIdx, handleRowClick, hoveredId, clipboard, openMoveCopy]);
 
   // ─── Breadcrumbs ───────────────────────────────────────────────────────────
 
   const segments = useMemo(() => pathSegments(currentPath), [currentPath]);
   const selectedCount = selected.size;
   const totalCount = filteredItems.length;
+  const canGoBack = navHistoryIdx > 0;
+  const canGoForward = navHistoryIdx < navHistory.length - 1;
 
   // ─── Item icon helper ──────────────────────────────────────────────────────
 
@@ -1152,17 +1339,26 @@ export function FileManagerClient(): React.JSX.Element {
       <div className="flex flex-wrap items-center gap-2">
         {/* Breadcrumb */}
         <div className="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
-          {currentPath !== "/" && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 h-8 w-8"
-              onClick={() => navigateTo(parentPath(currentPath))}
-              title="Go back (Backspace)"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 h-8 w-8"
+            onClick={goBack}
+            disabled={!canGoBack}
+            title="Back"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 h-8 w-8"
+            onClick={goForward}
+            disabled={!canGoForward}
+            title="Forward"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -1351,12 +1547,25 @@ export function FileManagerClient(): React.JSX.Element {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredItems.map((item) => (
+                {filteredItems.map((item, idx) => (
                   <TableRow
                     key={item.id}
+                    data-fm-idx={idx}
+                    draggable={renamingId !== item.id}
+                    onDragStart={(e) => handleItemDragStart(e, item)}
+                    onDragEnd={handleItemDragEnd}
+                    {...(item.type === "folder" ? {
+                      onDragOver: (e: React.DragEvent) => handleFolderDragOver(e, item.id),
+                      onDragLeave: handleFolderDragLeave,
+                      onDrop: (e: React.DragEvent) => handleFolderDrop(e, item.id),
+                    } : {})}
+                    onMouseEnter={() => setHoveredId(item.id)}
+                    onMouseLeave={() => setHoveredId(null)}
                     className={cn(
                       "cursor-pointer hover:bg-accent transition-colors",
                       selected.has(item.id) && "bg-accent/50",
+                      focusedIdx === idx && "ring-2 ring-inset ring-primary/50",
+                      dropTargetId === item.id && "bg-primary/10 ring-2 ring-inset ring-primary",
                     )}
                   >
                     <TableCell
@@ -1460,12 +1669,25 @@ export function FileManagerClient(): React.JSX.Element {
           <>
             <div className="p-4">
               <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-                {filteredItems.map((item) => (
+                {filteredItems.map((item, idx) => (
                   <div
                     key={item.id}
+                    data-fm-idx={idx}
+                    draggable
+                    onDragStart={(e) => handleItemDragStart(e, item)}
+                    onDragEnd={handleItemDragEnd}
+                    {...(item.type === "folder" ? {
+                      onDragOver: (e: React.DragEvent) => handleFolderDragOver(e, item.id),
+                      onDragLeave: handleFolderDragLeave,
+                      onDrop: (e: React.DragEvent) => handleFolderDrop(e, item.id),
+                    } : {})}
+                    onMouseEnter={() => setHoveredId(item.id)}
+                    onMouseLeave={() => setHoveredId(null)}
                     className={cn(
                       "bg-card rounded-lg border p-3 cursor-pointer hover:bg-accent/50 transition-colors relative group",
                       selected.has(item.id) && "ring-2 ring-primary bg-accent/30",
+                      focusedIdx === idx && "ring-2 ring-primary/50",
+                      dropTargetId === item.id && "bg-primary/10 ring-2 ring-primary",
                     )}
                     onClick={() => handleRowClick(item)}
                   >
@@ -1523,6 +1745,16 @@ export function FileManagerClient(): React.JSX.Element {
                     <p className="text-[10px] text-muted-foreground text-center mt-0.5">
                       {item.type === "file" ? formatSize(item.size) : "Folder"}
                     </p>
+                    {globalSearch && globalResults !== null && (
+                      <button
+                        type="button"
+                        className="text-[10px] text-muted-foreground/70 hover:text-primary hover:underline truncate text-center w-full mt-0.5 block"
+                        title={`Go to ${parentFolder(item.id)}`}
+                        onClick={(e) => { e.stopPropagation(); navigateTo(parentFolder(item.id)); }}
+                      >
+                        {parentFolder(item.id) === "/" ? "/" : parentFolder(item.id).split("/").slice(-2).join("/")}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
