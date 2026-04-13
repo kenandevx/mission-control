@@ -16,7 +16,7 @@
 
 ```bash
 # One-command bootstrap — clone, env, DB, npm, build, start
-curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/openclaw-milolabs/mission-control/main/scripts/install.sh | bash
 ```
 
 Open **http://localhost:3000** — setup wizard will guide you through gateway pairing.
@@ -968,7 +968,7 @@ Change your accent in **Settings → Appearance → Main color → Change**.
 ## 🌱 Bootstrap (Fresh Machine)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/openclaw-milolabs/mission-control/main/scripts/install.sh | bash
 ```
 
 This runs:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # OpenClaw Mission Control — Bootstrap Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/kenandevx/mission-control/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/openclaw-milolabs/mission-control/main/scripts/install.sh | bash
 #
 # Default install location: ~/.openclaw/workspace/mission-control
 # (inside the OpenClaw workspace — matches openclaw setup layout)
@@ -11,8 +11,8 @@
 set -euo pipefail
 
 # ── Constants ───────────────────────────────────────────────
-GIT_REPO_SSH="git@github.com:kenandevx/mission-control.git"
-GIT_REPO_HTTPS="https://github.com/kenandevx/mission-control.git"
+GIT_REPO_SSH="git@github.com:openclaw-milolabs/mission-control.git"
+GIT_REPO_HTTPS="https://github.com/openclaw-milolabs/mission-control.git"
 GIT_REPO="$GIT_REPO_SSH"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 DEFAULT_DIR="$HOME/.openclaw/workspace/mission-control"
