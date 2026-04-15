@@ -166,17 +166,20 @@ export type TicketSubtaskRecord = {
   title: string;
   completed: boolean;
   position: number;
+  checklistName: string;
   createdAt: string;
   updatedAt: string;
 };
 
 export type CreateTicketSubtaskPayload = {
   title: string;
+  checklistName?: string;
 };
 
 export type UpdateTicketSubtaskPatch = {
   title?: string;
   completed?: boolean;
+  checklistName?: string;
 };
 
 export type TicketCommentRecord = {
@@ -236,6 +239,8 @@ export type TaskDataAdapter = {
   createTicketSubtask(ticketId: string, payload: CreateTicketSubtaskPayload): Promise<TicketSubtaskRecord>;
   updateTicketSubtask(subtaskId: string, patch: UpdateTicketSubtaskPatch): Promise<TicketSubtaskRecord>;
   deleteTicketSubtask(subtaskId: string): Promise<void>;
+  renameTicketChecklist(ticketId: string, oldName: string, newName: string): Promise<void>;
+  deleteTicketChecklist(ticketId: string, checklistName: string): Promise<void>;
   listTicketComments(ticketId: string): Promise<TicketCommentRecord[]>;
   createTicketComment(ticketId: string, content: string): Promise<TicketCommentRecord>;
   deleteTicketComment(commentId: string): Promise<void>;

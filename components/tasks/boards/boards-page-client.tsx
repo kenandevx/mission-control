@@ -756,11 +756,11 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         attachmentsUploading={false}
         subtasks={[]}
         subtasksLoading={false}
-        subtaskDraft=""
-        onSubtaskDraftChange={() => {}}
         onAddSubtask={() => {}}
         onToggleSubtask={() => {}}
         onDeleteSubtask={() => {}}
+        onRenameChecklist={() => {}}
+        onDeleteChecklist={() => {}}
         comments={[]}
         commentsLoading={false}
         commentDraft=""
@@ -784,7 +784,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
         }
         onUploadAttachments={() => {}}
         onDeleteAttachment={() => {}}
-        onSave={(files) => void tasks.handleCreateTicket(files ?? [])}
+        onSave={(files, draftSubtasks) => void tasks.handleCreateTicket(files ?? [], draftSubtasks ?? [])}
         onCopy={() => {}}
         onDelete={() => {}}
         onClose={tasks.closeCreateModal}
@@ -836,13 +836,13 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               attachmentsUploading={tasks.detailsAttachmentsUploading}
               subtasks={tasks.detailsSubtasks}
               subtasksLoading={tasks.detailsSubtasksLoading}
-              subtaskDraft={tasks.subtaskDraft}
-              onSubtaskDraftChange={tasks.setSubtaskDraft}
-              onAddSubtask={() => void tasks.addDetailsSubtask()}
+              onAddSubtask={(title, checklistName) => void tasks.addDetailsSubtask(checklistName, title)}
               onToggleSubtask={(subtaskId, completed) =>
                 void tasks.toggleDetailsSubtask(subtaskId, completed)
               }
               onDeleteSubtask={(subtaskId) => void tasks.deleteDetailsSubtask(subtaskId)}
+              onRenameChecklist={(oldName, newName) => void tasks.renameDetailsChecklist(oldName, newName)}
+              onDeleteChecklist={(name) => void tasks.deleteDetailsChecklist(name)}
               comments={tasks.detailsComments}
               commentsLoading={tasks.detailsCommentsLoading}
               commentDraft={tasks.commentDraft}
@@ -856,7 +856,7 @@ export function BoardsPageClient({ initialBoardId, initialBoards, initialAssigne
               }
               onUploadAttachments={(files) => void tasks.uploadDetailsAttachments(files)}
               onDeleteAttachment={(attachmentId) => void tasks.deleteDetailsAttachment(attachmentId)}
-              onSave={tasks.handleSaveDetails}
+              onSave={() => tasks.handleSaveDetails()}
               onCopy={() => void tasks.handleCopyTicket(detailsForm.id)}
               onDelete={() => void tasks.handleDeleteTicket(detailsForm.id)}
               onClose={tasks.closeDetailsModal}

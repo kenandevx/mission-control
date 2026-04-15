@@ -65,6 +65,13 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+type LocalChecklistItem = {
+  id: string;
+  title: string;
+  completed: boolean;
+  checklistName: string;
+};
+
 type Props = {
   mode?: "create" | "edit";
   open: boolean;
@@ -75,11 +82,11 @@ type Props = {
   attachmentsUploading: boolean;
   subtasks: TicketSubtask[];
   subtasksLoading: boolean;
-  subtaskDraft: string;
-  onSubtaskDraftChange: (value: string) => void;
-  onAddSubtask: () => void;
+  onAddSubtask: (title: string, checklistName: string) => void;
   onToggleSubtask: (subtaskId: string, completed: boolean) => void;
   onDeleteSubtask: (subtaskId: string) => void;
+  onRenameChecklist: (oldName: string, newName: string) => void;
+  onDeleteChecklist: (checklistName: string) => void;
   comments: TicketComment[];
   commentsLoading: boolean;
   commentDraft: string;
@@ -91,7 +98,7 @@ type Props = {
   onChange: (patch: Partial<TicketDetailsForm>) => void;
   onUploadAttachments: (files: FileList | File[] | null) => void;
   onDeleteAttachment: (attachmentId: string) => void;
-  onSave: (files?: File[]) => void;
+  onSave: (files?: File[], draftSubtasks?: { checklistName: string; title: string }[]) => void;
   onCopy: () => void;
   onDelete: () => void;
   onClose: () => void;
@@ -141,7 +148,6 @@ function renderActivityInline(text: string): React.ReactNode {
 }
 
 function ActivityMarkdown({ text }: { text: string }) {
-  // Strip agent footer line
   const cleaned = text.replace(/\n*>\s*`Agent:.*`$/, "").trim();
   const lines = cleaned.split("\n");
   return (
@@ -177,7 +183,9 @@ function ActivityMarkdown({ text }: { text: string }) {
 export function TicketDetailsModal({
   mode = "edit", open, form, board,
   attachments,
-  subtasks, subtaskDraft, onSubtaskDraftChange, onAddSubtask, onToggleSubtask, onDeleteSubtask,
+  subtasks,
+  onAddSubtask, onToggleSubtask, onDeleteSubtask,
+  onRenameChecklist, onDeleteChecklist,
   comments, commentDraft, onCommentDraftChange, onAddComment, onDeleteComment,
   activity, onChange, onUploadAttachments, onDeleteAttachment,
   onSave,
@@ -186,10 +194,86 @@ export function TicketDetailsModal({
   const isEditing = mode === "edit";
   const [createFiles, setCreateFiles] = useState<File[]>([]);
   const [previewAtt, setPreviewAtt] = useState<TicketAttachment | null>(null);
-  // Auto-open activity when there are agent responses
   const hasAgentOutput = activity.some((e) => e.event === "Agent response" || e.event === "Plan generated");
   const [showActivity, setShowActivity] = useState(hasAgentOutput);
   const attachRef = useRef<HTMLInputElement | null>(null);
+
+  // ── Checklist local state ──────────────────────────────────────────────────
+  // In create mode: localItems is the source of truth
+  // In edit mode: subtasks prop is the source of truth; localItems unused
+  const [localItems, setLocalItems] = useState<LocalChecklistItem[]>([]);
+  const [draftsByChecklist, setDraftsByChecklist] = useState<Record<string, string>>({});
+  const [checklistNamesState, setChecklistNamesState] = useState<string[]>(["Checklist"]);
+  const [editingChecklistName, setEditingChecklistName] = useState<string | null>(null);
+  const [checklistNameDraft, setChecklistNameDraft] = useState("");
+  const [newChecklistInput, setNewChecklistInput] = useState("");
+  const [showAddChecklist, setShowAddChecklist] = useState(false);
+
+  // Unified items and names for rendering
+  const activeItems: LocalChecklistItem[] = isEditing
+    ? subtasks.map((s) => ({ id: s.id, title: s.title, completed: s.completed, checklistName: s.checklistName }))
+    : localItems;
+
+  const checklistNames: string[] = isEditing
+    ? Array.from(
+        new Set([
+          ...subtasks.map((s) => s.checklistName),
+          ...checklistNamesState.filter((n) => !subtasks.some((s) => s.checklistName === n)),
+        ]),
+      )
+    : checklistNamesState;
+
+  const handleFinishRename = (clName: string) => {
+    const newName = checklistNameDraft.trim();
+    if (newName && newName !== clName) {
+      if (isEditing) {
+        onRenameChecklist(clName, newName);
+      } else {
+        setLocalItems((prev) =>
+          prev.map((item) => item.checklistName === clName ? { ...item, checklistName: newName } : item),
+        );
+        setChecklistNamesState((prev) => prev.map((n) => (n === clName ? newName : n)));
+        setDraftsByChecklist((prev) => {
+          if (!(clName in prev)) return prev;
+          const { [clName]: d, ...rest } = prev;
+          return { ...rest, [newName]: d };
+        });
+      }
+    }
+    setEditingChecklistName(null);
+  };
+
+  const handleAddItem = (clName: string) => {
+    const draft = (draftsByChecklist[clName] ?? "").trim();
+    if (!draft) return;
+    if (isEditing) {
+      onAddSubtask(draft, clName);
+    } else {
+      setLocalItems((prev) => [
+        ...prev,
+        { id: `local-${Date.now()}-${Math.random()}`, title: draft, completed: false, checklistName: clName },
+      ]);
+    }
+    setDraftsByChecklist((prev) => ({ ...prev, [clName]: "" }));
+  };
+
+  const handleDeleteChecklist = (clName: string) => {
+    if (isEditing) {
+      onDeleteChecklist(clName);
+    } else {
+      setLocalItems((prev) => prev.filter((i) => i.checklistName !== clName));
+      setChecklistNamesState((prev) => prev.filter((n) => n !== clName));
+    }
+  };
+
+  const handleAddChecklist = () => {
+    const name = newChecklistInput.trim() || `Checklist ${checklistNames.length + 1}`;
+    if (!checklistNames.includes(name)) {
+      setChecklistNamesState((prev) => [...prev, name]);
+    }
+    setNewChecklistInput("");
+    setShowAddChecklist(false);
+  };
 
   return (
     <>
@@ -204,7 +288,7 @@ export function TicketDetailsModal({
               <div className="min-w-0 flex-1">
                 <DialogTitle className="text-base">{isEditing ? "Edit ticket" : "New ticket"}</DialogTitle>
                 <DialogDescription className="text-[11px]">
-                  {isEditing ? "Update details, checklist, and attachments" : "Create a new ticket"}
+                  {isEditing ? "Update details, checklists, and attachments" : "Create a new ticket"}
                 </DialogDescription>
               </div>
               {isEditing && (
@@ -225,7 +309,7 @@ export function TicketDetailsModal({
             </div>
           </DialogHeader>
 
-          {/* Two-column Trello layout */}
+          {/* Two-column layout */}
           <div className="flex overflow-hidden" style={{ maxHeight: "calc(92vh - 130px)" }}>
             {/* ── Main column (left) ─────────────────────────────── */}
             <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4 min-w-0">
@@ -255,41 +339,163 @@ export function TicketDetailsModal({
                 />
               </div>
 
-              {/* Checklist (Subtasks) */}
-              <div className="flex flex-col gap-2">
-                <Label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                  <CheckSquareIcon className="size-3" /> Checklist
-                  {subtasks.length > 0 && (
-                    <span className="text-[10px] tabular-nums">
-                      ({subtasks.filter((s) => s.completed).length}/{subtasks.length})
-                    </span>
-                  )}
-                </Label>
+              {/* Checklists */}
+              <div className="flex flex-col gap-4">
+                {checklistNames.map((clName) => {
+                  const clItems = activeItems.filter((i) => i.checklistName === clName);
+                  const done = clItems.filter((i) => i.completed).length;
+                  const total = clItems.length;
+                  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                  const draft = draftsByChecklist[clName] ?? "";
+                  const isEditingName = editingChecklistName === clName;
 
-                {subtasks.length > 0 && (
-                  <div className="rounded-lg border divide-y">
-                    {subtasks.map((st) => (
-                      <div key={st.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors">
-                        <Checkbox checked={st.completed} onCheckedChange={(c) => onToggleSubtask(st.id, Boolean(c))} />
-                        <span className={cn("flex-1 text-sm", st.completed && "line-through text-muted-foreground")}>{st.title}</span>
-                        <Button variant="ghost" size="icon-sm" onClick={() => onDeleteSubtask(st.id)} className="size-6 cursor-pointer opacity-0 group-hover:opacity-100">
+                  return (
+                    <div key={clName} className="flex flex-col gap-2">
+                      {/* Checklist header */}
+                      <div className="flex items-center gap-2">
+                        <CheckSquareIcon className="size-3.5 text-muted-foreground shrink-0" />
+                        {isEditingName ? (
+                          <Input
+                            autoFocus
+                            value={checklistNameDraft}
+                            onChange={(e) => setChecklistNameDraft(e.target.value)}
+                            className="h-6 text-xs font-semibold flex-1 px-1"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); handleFinishRename(clName); }
+                              if (e.key === "Escape") setEditingChecklistName(null);
+                            }}
+                            onBlur={() => handleFinishRename(clName)}
+                          />
+                        ) : (
+                          <button
+                            className="text-xs font-semibold text-foreground flex-1 text-left hover:text-primary transition-colors cursor-pointer"
+                            onClick={() => { setEditingChecklistName(clName); setChecklistNameDraft(clName); }}
+                          >
+                            {clName}
+                          </button>
+                        )}
+                        <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+                          {done}/{total}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="size-5 cursor-pointer shrink-0"
+                          onClick={() => handleDeleteChecklist(clName)}
+                        >
                           <XIcon className="size-3 text-muted-foreground" />
                         </Button>
                       </div>
-                    ))}
-                  </div>
-                )}
 
-                <div className="flex gap-2">
-                  <Input
-                    value={subtaskDraft}
-                    onChange={(e) => onSubtaskDraftChange(e.target.value)}
-                    placeholder="Add item..."
-                    className="h-8 text-sm flex-1"
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAddSubtask(); } }}
-                  />
-                  <Button size="sm" variant="secondary" onClick={onAddSubtask} className="h-8 cursor-pointer">Add</Button>
-                </div>
+                      {/* Progress bar */}
+                      {total > 0 && (
+                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Items */}
+                      {clItems.length > 0 && (
+                        <div className="rounded-lg border divide-y">
+                          {clItems.map((item) => (
+                            <div key={item.id} className="group flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors">
+                              <Checkbox
+                                checked={item.completed}
+                                onCheckedChange={(c) => {
+                                  if (isEditing) {
+                                    onToggleSubtask(item.id, Boolean(c));
+                                  } else {
+                                    setLocalItems((prev) =>
+                                      prev.map((i) => i.id === item.id ? { ...i, completed: Boolean(c) } : i),
+                                    );
+                                  }
+                                }}
+                              />
+                              <span className={cn("flex-1 text-sm", item.completed && "line-through text-muted-foreground")}>
+                                {item.title}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="size-6 cursor-pointer opacity-0 group-hover:opacity-100"
+                                onClick={() => {
+                                  if (isEditing) {
+                                    onDeleteSubtask(item.id);
+                                  } else {
+                                    setLocalItems((prev) => prev.filter((i) => i.id !== item.id));
+                                  }
+                                }}
+                              >
+                                <XIcon className="size-3 text-muted-foreground" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Per-checklist add item */}
+                      <div className="flex gap-2">
+                        <Input
+                          value={draft}
+                          onChange={(e) => setDraftsByChecklist((prev) => ({ ...prev, [clName]: e.target.value }))}
+                          placeholder="Add item..."
+                          className="h-8 text-sm flex-1"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && draft.trim()) {
+                              e.preventDefault();
+                              handleAddItem(clName);
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 cursor-pointer"
+                          onClick={() => handleAddItem(clName)}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Add checklist */}
+                {showAddChecklist ? (
+                  <div className="flex gap-2">
+                    <Input
+                      autoFocus
+                      value={newChecklistInput}
+                      onChange={(e) => setNewChecklistInput(e.target.value)}
+                      placeholder="Checklist name..."
+                      className="h-8 text-sm flex-1"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); handleAddChecklist(); }
+                        if (e.key === "Escape") { setNewChecklistInput(""); setShowAddChecklist(false); }
+                      }}
+                    />
+                    <Button size="sm" variant="secondary" className="h-8 cursor-pointer" onClick={handleAddChecklist}>
+                      Add
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8 cursor-pointer"
+                      onClick={() => { setNewChecklistInput(""); setShowAddChecklist(false); }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs cursor-pointer self-start"
+                    onClick={() => setShowAddChecklist(true)}
+                  >
+                    <PlusIcon className="size-3 mr-1" /> Add checklist
+                  </Button>
+                )}
               </div>
 
               {/* Attachments */}
@@ -326,7 +532,6 @@ export function TicketDetailsModal({
                       const isPdf = mime === "application/pdf";
                       const isPreviewable = isImage || isPdf;
                       const isDataUrl = url.startsWith("data:");
-                      // For file-served URLs, download link forces attachment
                       const downloadUrl = isDataUrl
                         ? url
                         : url.includes("/api/files?")
@@ -431,7 +636,6 @@ export function TicketDetailsModal({
                                 levelBorder,
                               )}
                             >
-                              {/* Header row */}
                               <div className="flex items-center justify-between gap-2 mb-1">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   {isAgentOutput && <BotIcon className="size-3 text-primary shrink-0" />}
@@ -451,7 +655,6 @@ export function TicketDetailsModal({
                                 <span className="text-[9px] text-muted-foreground shrink-0">{formatDate(e.occurredAt)}</span>
                               </div>
 
-                              {/* Details / Agent output */}
                               {hasDetails && (isAgentOutput || isPlan) ? (
                                 <div className="rounded-md bg-card border p-3 mt-1.5">
                                   <ActivityMarkdown text={e.details} />
@@ -473,24 +676,6 @@ export function TicketDetailsModal({
 
             {/* ── Sidebar (right) — Trello style ─────────────────── */}
             <div className="w-[210px] shrink-0 border-l bg-muted/5 px-3 py-4 overflow-y-auto flex flex-col gap-4">
-
-              {/* Checklist progress bar */}
-              {isEditing && form.checklistTotal > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Progress</Label>
-                    <span className="text-[10px] tabular-nums text-muted-foreground">
-                      {form.checklistDone}/{form.checklistTotal}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                      style={{ width: `${Math.round((form.checklistDone / form.checklistTotal) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
 
               <Separator className="my-0" />
 
@@ -557,7 +742,16 @@ export function TicketDetailsModal({
           {/* Footer */}
           <DialogFooter className="px-6 py-3 border-t">
             <Button variant="ghost" onClick={onClose} className="cursor-pointer">Cancel</Button>
-            <Button onClick={() => onSave(mode === "create" ? createFiles : undefined)} className="gap-1.5 cursor-pointer">
+            <Button
+              onClick={() => {
+                if (mode === "create") {
+                  onSave(createFiles, localItems.map((i) => ({ checklistName: i.checklistName, title: i.title })));
+                } else {
+                  onSave();
+                }
+              }}
+              className="gap-1.5 cursor-pointer"
+            >
               <ClipboardListIcon className="size-3.5" />
               {isEditing ? "Save" : "Create"}
             </Button>

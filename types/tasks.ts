@@ -80,6 +80,7 @@ export type TicketSubtask = {
   title: string;
   completed: boolean;
   position: number;
+  checklistName: string;
   createdAt: string;
   updatedAt: string;
 };

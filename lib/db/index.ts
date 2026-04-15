@@ -84,6 +84,7 @@ type TicketSubtaskRow = {
   title: string;
   completed?: boolean | null;
   position: number;
+  checklist_name: string;
   created_at: string;
   updated_at: string;
 };
@@ -318,6 +319,7 @@ const adapter: TaskDataAdapter = {
       title: row.title,
       completed: Boolean(row.completed),
       position: row.position,
+      checklistName: row.checklist_name ?? "Checklist",
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     })) as TicketSubtaskRecord[];
@@ -332,6 +334,7 @@ const adapter: TaskDataAdapter = {
       title: row.title,
       completed: Boolean(row.completed),
       position: row.position,
+      checklistName: row.checklist_name ?? "Checklist",
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     } as TicketSubtaskRecord;
@@ -346,6 +349,7 @@ const adapter: TaskDataAdapter = {
       title: row.title,
       completed: Boolean(row.completed),
       position: row.position,
+      checklistName: row.checklist_name ?? "Checklist",
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     } as TicketSubtaskRecord;
@@ -353,6 +357,14 @@ const adapter: TaskDataAdapter = {
 
   async deleteTicketSubtask(subtaskId: string) {
     await post("deleteSubtask", { subtaskId });
+  },
+
+  async renameTicketChecklist(ticketId: string, oldName: string, newName: string) {
+    await post("renameChecklistItems", { ticketId, oldName, newName });
+  },
+
+  async deleteTicketChecklist(ticketId: string, checklistName: string) {
+    await post("deleteChecklistItems", { ticketId, checklistName });
   },
 
   async listTicketComments(ticketId: string) {

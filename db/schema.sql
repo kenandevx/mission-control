@@ -124,6 +124,7 @@ create table if not exists ticket_subtasks (
   title text not null,
   completed boolean not null default false,
   position integer not null default 0,
+  checklist_name text not null default 'Checklist',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

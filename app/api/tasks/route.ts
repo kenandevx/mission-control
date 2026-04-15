@@ -158,6 +158,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const sql = getSql();
+    // Boot migration: add checklist_name if not present
+    await sql`ALTER TABLE ticket_subtasks ADD COLUMN IF NOT EXISTS checklist_name text NOT NULL DEFAULT 'Checklist'`;
     const contentType = request.headers.get("content-type") || "";
     const isMultipart = contentType.includes("multipart/form-data");
 
@@ -465,21 +467,40 @@ export async function POST(request: Request) {
     if (action === "createSubtask") {
       const ticketId = String(body.ticketId || "");
       const title = String(body.title || "").trim();
+      const checklistName = String(body.checklistName || "Checklist").trim() || "Checklist";
       if (!ticketId || !title) return fail("Ticket and title are required.");
-      const posRows = await sql`select coalesce(max(position), -1) + 1 as pos from ticket_subtasks where ticket_id=${ticketId}`;
-      const rows = await sql`insert into ticket_subtasks (ticket_id, title, position) values (${ticketId}, ${title}, ${Number(posRows[0]?.pos ?? 0)}) returning *`;
+      const posRows = await sql`select coalesce(max(position), -1) + 1 as pos from ticket_subtasks where ticket_id=${ticketId} and checklist_name=${checklistName}`;
+      const rows = await sql`insert into ticket_subtasks (ticket_id, title, position, checklist_name) values (${ticketId}, ${title}, ${Number(posRows[0]?.pos ?? 0)}, ${checklistName}) returning *`;
       return ok({ subtask: rows[0] });
     }
 
     if (action === "updateSubtask") {
       const subtaskId = String(body.subtaskId || "");
-      const rows = await sql`update ticket_subtasks set title=coalesce(${body.title || null}, title), completed=coalesce(${body.completed ?? null}, completed), updated_at=now() where id=${subtaskId} returning *`;
+      const checklistName = body.checklistName != null ? String(body.checklistName).trim() || null : null;
+      const rows = await sql`update ticket_subtasks set title=coalesce(${body.title || null}, title), completed=coalesce(${body.completed ?? null}, completed), checklist_name=coalesce(${checklistName}, checklist_name), updated_at=now() where id=${subtaskId} returning *`;
       return ok({ subtask: rows[0] });
     }
 
     if (action === "deleteSubtask") {
       const subtaskId = String(body.subtaskId || "");
       await sql`delete from ticket_subtasks where id=${subtaskId}`;
+      return ok();
+    }
+
+    if (action === "renameChecklistItems") {
+      const ticketId = String(body.ticketId || "");
+      const oldName = String(body.oldName || "").trim();
+      const newName = String(body.newName || "").trim();
+      if (!ticketId || !oldName || !newName) return fail("ticketId, oldName, and newName are required.");
+      await sql`update ticket_subtasks set checklist_name=${newName}, updated_at=now() where ticket_id=${ticketId} and checklist_name=${oldName}`;
+      return ok();
+    }
+
+    if (action === "deleteChecklistItems") {
+      const ticketId = String(body.ticketId || "");
+      const checklistName = String(body.checklistName || "").trim();
+      if (!ticketId || !checklistName) return fail("ticketId and checklistName are required.");
+      await sql`delete from ticket_subtasks where ticket_id=${ticketId} and checklist_name=${checklistName}`;
       return ok();
     }
 

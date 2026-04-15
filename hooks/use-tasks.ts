@@ -285,6 +285,7 @@ const toTicketSubtask = (row: TicketSubtaskRecord): TicketSubtask => ({
   title: row.title,
   completed: row.completed,
   position: row.position,
+  checklistName: row.checklistName,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
@@ -390,7 +391,10 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
   const [loadingCommentsTicketId, setLoadingCommentsTicketId] = useState<string | null>(null);
   const [activityByTicketId, setActivityByTicketId] = useState<Record<string, TicketActivity[]>>({});
   const [loadingActivityTicketId, setLoadingActivityTicketId] = useState<string | null>(null);
-  const [subtaskDraft, setSubtaskDraft] = useState("");
+  const [subtaskDraftsByChecklist, setSubtaskDraftsByChecklist] = useState<Record<string, string>>({});
+  const setSubtaskDraftForChecklist = useCallback((checklistName: string, value: string) => {
+    setSubtaskDraftsByChecklist((prev) => ({ ...prev, [checklistName]: value }));
+  }, []);
   const [commentDraft, setCommentDraft] = useState("");
   const [createError, setCreateError] = useState("");
 
@@ -646,7 +650,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     };
     setDetailsForm(form);
     setDetailsSnapshot(form);
-    setSubtaskDraft("");
+    setSubtaskDraftsByChecklist({});
     setCommentDraft("");
     setModal("details");
     void loadTicketAttachments(ticket.id);
@@ -872,16 +876,14 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     }
   };
 
-  const addDetailsSubtask = async () => {
+  const addDetailsSubtask = async (checklistName: string, title?: string) => {
     const ticketId = detailsForm?.id;
-    const title = subtaskDraft.trim();
-    if (!ticketId || !title) {
-      return;
-    }
+    const resolvedTitle = (title ?? subtaskDraftsByChecklist[checklistName] ?? "").trim();
+    if (!ticketId || !resolvedTitle) return;
 
-    setSubtaskDraft("");
+    setSubtaskDraftsByChecklist((prev) => ({ ...prev, [checklistName]: "" }));
     try {
-      const created = await adapter.createTicketSubtask(ticketId, { title });
+      const created = await adapter.createTicketSubtask(ticketId, { title: resolvedTitle, checklistName });
       setSubtasksByTicketId((prev) => {
         const next = [...(prev[ticketId] ?? []), toTicketSubtask(created)].sort(
           (a, b) => a.position - b.position,
@@ -891,15 +893,12 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
           next.filter((item) => item.completed).length,
           next.length,
         );
-        return {
-          ...prev,
-          [ticketId]: next,
-        };
+        return { ...prev, [ticketId]: next };
       });
       toast.success("Task added");
-      await createTicketActivity(ticketId, "Task added", `Added subtask "${title}".`, "success");
+      await createTicketActivity(ticketId, "Task added", `Added subtask "${resolvedTitle}".`, "success");
     } catch (error) {
-      setSubtaskDraft(title);
+      setSubtaskDraftsByChecklist((prev) => ({ ...prev, [checklistName]: resolvedTitle }));
       const message = error instanceof Error ? error.message : "Failed to add task.";
       toast.error(message);
     }
@@ -996,6 +995,72 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         previous.length,
       );
       const message = error instanceof Error ? error.message : "Failed to remove task.";
+      toast.error(message);
+    }
+  };
+
+  const renameDetailsChecklist = async (oldName: string, newName: string) => {
+    const ticketId = detailsForm?.id;
+    if (!ticketId || !oldName || !newName || oldName === newName) return;
+
+    setSubtasksByTicketId((prev) => {
+      const next = (prev[ticketId] ?? []).map((item) =>
+        item.checklistName === oldName ? { ...item, checklistName: newName } : item,
+      );
+      return { ...prev, [ticketId]: next };
+    });
+    setSubtaskDraftsByChecklist((prev) => {
+      if (!(oldName in prev)) return prev;
+      const { [oldName]: draft, ...rest } = prev;
+      return { ...rest, [newName]: draft };
+    });
+
+    try {
+      await adapter.renameTicketChecklist(ticketId, oldName, newName);
+    } catch (error) {
+      setSubtasksByTicketId((prev) => {
+        const next = (prev[ticketId] ?? []).map((item) =>
+          item.checklistName === newName ? { ...item, checklistName: oldName } : item,
+        );
+        return { ...prev, [ticketId]: next };
+      });
+      const message = error instanceof Error ? error.message : "Failed to rename checklist.";
+      toast.error(message);
+    }
+  };
+
+  const deleteDetailsChecklist = async (checklistName: string) => {
+    const ticketId = detailsForm?.id;
+    if (!ticketId) return;
+
+    let previous: TicketSubtask[] = [];
+    setSubtasksByTicketId((prev) => {
+      previous = prev[ticketId] ?? [];
+      const next = previous.filter((item) => item.checklistName !== checklistName);
+      setTicketChecklistCounts(
+        ticketId,
+        next.filter((item) => item.completed).length,
+        next.length,
+      );
+      return { ...prev, [ticketId]: next };
+    });
+    setSubtaskDraftsByChecklist((prev) => {
+      const { [checklistName]: _removed, ...rest } = prev;
+      return rest;
+    });
+
+    try {
+      await adapter.deleteTicketChecklist(ticketId, checklistName);
+      toast.success("Checklist removed");
+      await createTicketActivity(ticketId, "Checklist removed", `Removed checklist "${checklistName}".`, "warning");
+    } catch (error) {
+      setSubtasksByTicketId((prev) => ({ ...prev, [ticketId]: previous }));
+      setTicketChecklistCounts(
+        ticketId,
+        previous.filter((item) => item.completed).length,
+        previous.length,
+      );
+      const message = error instanceof Error ? error.message : "Failed to delete checklist.";
       toast.error(message);
     }
   };
@@ -1191,7 +1256,7 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
       setModal("discard");
       return;
     }
-    setSubtaskDraft("");
+    setSubtaskDraftsByChecklist({});
     setCommentDraft("");
     setModal(null);
     restoreFocus();
@@ -1430,7 +1495,10 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     }
   };
 
-  const handleCreateTicket = async (files: File[] = []) => {
+  const handleCreateTicket = async (
+    files: File[] = [],
+    draftSubtasks: { checklistName: string; title: string }[] = [],
+  ) => {
     const title = createForm.title.trim();
     if (!title) {
       setCreateError("Title is required.");
@@ -1568,6 +1636,43 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
         detailParts.push(`Uploaded ${uploadedCount} attachment${uploadedCount === 1 ? "" : "s"}.`);
       }
       await createTicketActivity(created.id, "Ticket created", detailParts.join(" "), "success");
+
+      // Create any draft subtasks from create mode
+      if (draftSubtasks.length > 0) {
+        const createdSubtasks: TicketSubtask[] = [];
+        for (const ds of draftSubtasks) {
+          try {
+            const sub = await adapter.createTicketSubtask(created.id, {
+              title: ds.title,
+              checklistName: ds.checklistName,
+            });
+            createdSubtasks.push(toTicketSubtask(sub));
+          } catch {
+            // non-fatal; ticket was created, subtask can be added manually
+          }
+        }
+        if (createdSubtasks.length > 0) {
+          setSubtasksByTicketId((prev) => ({
+            ...prev,
+            [created.id]: createdSubtasks,
+          }));
+          updateActiveBoard((prev) => {
+            const ticket = prev.tickets[created.id];
+            if (!ticket) return prev;
+            return {
+              ...prev,
+              tickets: {
+                ...prev.tickets,
+                [created.id]: {
+                  ...ticket,
+                  checklistTotal: createdSubtasks.length,
+                  checklistDone: createdSubtasks.filter((s) => s.completed).length,
+                },
+              },
+            };
+          });
+        }
+      }
 
       toast.success(
         uploadedCount > 0 ? `Ticket created with ${uploadedCount} attachment(s)` : "Ticket created",
@@ -2231,8 +2336,8 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     detailsCommentsLoading,
     detailsActivity,
     detailsActivityLoading,
-    subtaskDraft,
-    setSubtaskDraft,
+    subtaskDraftsByChecklist,
+    setSubtaskDraftForChecklist,
     commentDraft,
     setCommentDraft,
     uploadDetailsAttachments,
@@ -2240,6 +2345,8 @@ export function useTasks({ initialBoardId, initialBoards, initialAssignees }: Us
     addDetailsSubtask,
     toggleDetailsSubtask,
     deleteDetailsSubtask,
+    renameDetailsChecklist,
+    deleteDetailsChecklist,
     addDetailsComment,
     deleteDetailsComment,
     assignees,
