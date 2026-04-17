@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
+import Link from "next/link";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ import {
   IconPhoto,
   IconFile,
   IconFolder,
+  IconFolderOpen,
   IconHash,
   IconLock,
   IconCopy,
@@ -1169,36 +1171,44 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                   </Card>
 
                   {/* Output folder — path where this occurrence's artifacts are saved on disk */}
-                  {outputFolder && (
-                    <Card data-slot="card" className={overviewCardClassName}>
-                      <CardHeader>
-                        <CardDescription>Output folder</CardDescription>
-                        <CardTitle className="text-sm font-semibold truncate" title={outputFolder}>
-                          {outputFolder.split(/[\\/]/).pop() || outputFolder}
-                        </CardTitle>
-                        <CardAction>
-                          <Badge variant="outline">
-                            <IconFolder className="size-3" />
-                            Artifacts
-                          </Badge>
-                        </CardAction>
-                      </CardHeader>
-                      <CardFooter className="mt-auto flex-col items-start gap-2 text-sm">
-                        <code className="w-full truncate text-[11px] font-mono text-muted-foreground" title={outputFolder}>
-                          {outputFolder}
-                        </code>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 h-7 text-xs cursor-pointer"
-                          onClick={() => copyToClipboard(outputFolder, "Folder path")}
-                        >
-                          <IconCopy className="size-3" />
-                          Copy path
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  )}
+                  {outputFolder && (() => {
+                    const rel = outputFolder
+                      .replace(/\\/g, "/")
+                      .replace(/^\/?runtime-artifacts\/?/, "");
+                    const fmHref = `/file-manager?root=artifacts&path=${encodeURIComponent("/" + rel)}`;
+                    return (
+                      <Card data-slot="card" className={overviewCardClassName}>
+                        <CardHeader>
+                          <CardDescription>Output folder</CardDescription>
+                          <CardTitle className="text-sm font-semibold truncate" title={outputFolder}>
+                            {outputFolder.split(/[\\/]/).pop() || outputFolder}
+                          </CardTitle>
+                          <CardAction>
+                            <Badge variant="outline">
+                              <IconFolder className="size-3" />
+                              Artifacts
+                            </Badge>
+                          </CardAction>
+                        </CardHeader>
+                        <CardFooter className="mt-auto flex-col items-start gap-2 text-sm">
+                          <code className="w-full truncate text-[11px] font-mono text-muted-foreground" title={outputFolder}>
+                            {outputFolder}
+                          </code>
+                          <Button
+                            asChild
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 h-7 text-xs cursor-pointer"
+                          >
+                            <Link href={fmHref}>
+                              <IconFolderOpen className="size-3" />
+                              Open in file manager
+                            </Link>
+                          </Button>
+                        </CardFooter>
+                      </Card>
+                    );
+                  })()}
                 </div>
               </TabsContent>
 

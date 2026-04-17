@@ -8,6 +8,7 @@ import {
   useMemo,
 } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, DragEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -233,25 +234,38 @@ function pathSegments(p: string): { label: string; path: string }[] {
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
 
-async function apiFetch(currentPath: string): Promise<FileItem[]> {
-  const url = currentPath === "/"
+type FsRoot = "home" | "artifacts";
+
+function rootQuery(root: FsRoot): string {
+  return root === "artifacts" ? "root=artifacts" : "";
+}
+
+function urlWithRoot(base: string, root: FsRoot): string {
+  const rq = rootQuery(root);
+  if (!rq) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}${rq}`;
+}
+
+async function apiFetch(currentPath: string, root: FsRoot): Promise<FileItem[]> {
+  const base = currentPath === "/"
     ? "/api/file-manager"
     : `/api/file-manager${currentPath}`;
-  const res = await fetch(url, { cache: "no-cache" });
+  const res = await fetch(urlWithRoot(base, root), { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to fetch");
   return data.items ?? [];
 }
 
-async function apiPreview(id: string): Promise<string> {
-  const res = await fetch(`/api/file-manager?preview=true&id=${encodeURIComponent(id)}`, { cache: "no-cache" });
+async function apiPreview(id: string, root: FsRoot): Promise<string> {
+  const res = await fetch(urlWithRoot(`/api/file-manager?preview=true&id=${encodeURIComponent(id)}`, root), { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to preview");
   return data.content ?? "";
 }
 
-async function apiSave(id: string, content: string): Promise<void> {
-  const res = await fetch("/api/file-manager", {
+async function apiSave(id: string, content: string, root: FsRoot): Promise<void> {
+  const res = await fetch(urlWithRoot("/api/file-manager", root), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save", id, content }),
@@ -260,8 +274,8 @@ async function apiSave(id: string, content: string): Promise<void> {
   if (!data.ok) throw new Error(data.error ?? "Failed to save");
 }
 
-async function apiCreate(parentId: string, name: string, type: "file" | "folder"): Promise<void> {
-  const res = await fetch("/api/file-manager", {
+async function apiCreate(parentId: string, name: string, type: "file" | "folder", root: FsRoot): Promise<void> {
+  const res = await fetch(urlWithRoot("/api/file-manager", root), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "create", parentId, name, type }),
@@ -270,8 +284,8 @@ async function apiCreate(parentId: string, name: string, type: "file" | "folder"
   if (!data.ok) throw new Error(data.error ?? "Failed to create");
 }
 
-async function apiRename(id: string, newName: string): Promise<void> {
-  const res = await fetch("/api/file-manager", {
+async function apiRename(id: string, newName: string, root: FsRoot): Promise<void> {
+  const res = await fetch(urlWithRoot("/api/file-manager", root), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "rename", id, newName }),
@@ -280,8 +294,8 @@ async function apiRename(id: string, newName: string): Promise<void> {
   if (!data.ok) throw new Error(data.error ?? "Failed to rename");
 }
 
-async function apiDelete(ids: string[]): Promise<void> {
-  const res = await fetch("/api/file-manager", {
+async function apiDelete(ids: string[], root: FsRoot): Promise<void> {
+  const res = await fetch(urlWithRoot("/api/file-manager", root), {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
@@ -297,9 +311,10 @@ async function apiMoveOrCopy(
   action: "move" | "copy",
   ids: string[],
   targetId: string,
+  root: FsRoot,
   onConflict?: "replace" | "keep-both" | "skip",
 ): Promise<MoveOrCopyResult> {
-  const res = await fetch("/api/file-manager", {
+  const res = await fetch(urlWithRoot("/api/file-manager", root), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, ids, targetId, onConflict }),
@@ -317,6 +332,7 @@ type UploadResult = { ok: true } | ConflictResult;
 async function apiUpload(
   parentId: string,
   files: globalThis.File[],
+  root: FsRoot,
   onConflict?: "replace" | "keep-both" | "skip",
 ): Promise<UploadResult> {
   const form = new FormData();
@@ -325,7 +341,7 @@ async function apiUpload(
   for (const file of files) {
     form.append("files", file);
   }
-  const res = await fetch("/api/file-manager", { method: "POST", body: form });
+  const res = await fetch(urlWithRoot("/api/file-manager", root), { method: "POST", body: form });
   const data = await res.json();
   if (res.status === 409 && data.conflicts) {
     return data as ConflictResult;
@@ -334,33 +350,33 @@ async function apiUpload(
   return { ok: true };
 }
 
-async function apiExtractZip(parentId: string, files: globalThis.File[]): Promise<{ extracted: number }> {
+async function apiExtractZip(parentId: string, files: globalThis.File[], root: FsRoot): Promise<{ extracted: number }> {
   const form = new FormData();
   form.set("parentId", parentId);
   form.set("mode", "extract");
   for (const file of files) form.append("files", file);
-  const res = await fetch("/api/file-manager", { method: "POST", body: form });
+  const res = await fetch(urlWithRoot("/api/file-manager", root), { method: "POST", body: form });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Extraction failed");
   return { extracted: data.extracted ?? 0 };
 }
 
-async function apiSearch(query: string): Promise<FileItem[]> {
-  const res = await fetch(`/api/file-manager?search=${encodeURIComponent(query)}`, { cache: "no-cache" });
+async function apiSearch(query: string, root: FsRoot): Promise<FileItem[]> {
+  const res = await fetch(urlWithRoot(`/api/file-manager?search=${encodeURIComponent(query)}`, root), { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Search failed");
   return data.items ?? [];
 }
 
-async function apiFetchFolders(dirPath: string): Promise<FolderNode[]> {
-  const items = await apiFetch(dirPath);
+async function apiFetchFolders(dirPath: string, root: FsRoot): Promise<FolderNode[]> {
+  const items = await apiFetch(dirPath, root);
   return items
     .filter((i) => i.type === "folder")
     .map((i) => ({ id: i.id, name: i.name, children: null, loading: false }));
 }
 
-async function apiDirSize(id: string): Promise<DirSizeInfo> {
-  const res = await fetch(`/api/file-manager?dirsize=true&id=${encodeURIComponent(id)}`, { cache: "no-cache" });
+async function apiDirSize(id: string, root: FsRoot): Promise<DirSizeInfo> {
+  const res = await fetch(urlWithRoot(`/api/file-manager?dirsize=true&id=${encodeURIComponent(id)}`, root), { cache: "no-cache" });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error ?? "Failed to get dir size");
   return { size: data.size, fileCount: data.fileCount, folderCount: data.folderCount };
@@ -453,9 +469,11 @@ function FolderTreeNode({
 function FolderPicker({
   selectedId,
   onSelect,
+  fsRoot,
 }: {
   selectedId: string | null;
   onSelect: (id: string) => void;
+  fsRoot: FsRoot;
 }): React.JSX.Element {
   const [tree, setTree] = useState<FolderNode[]>([]);
   const mountedRef = useRef(false);
@@ -463,9 +481,9 @@ function FolderPicker({
   useEffect(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
-    apiFetchFolders("/").then(setTree).catch(() => {});
+    apiFetchFolders("/", fsRoot).then(setTree).catch(() => {});
     return () => { mountedRef.current = false; };
-  }, []);
+  }, [fsRoot]);
 
   const handleExpand = useCallback((node: FolderNode) => {
     if (node.children !== null) return;
@@ -490,12 +508,12 @@ function FolderPicker({
 
     setTree((prev) => setLoading(prev, node.id, true));
 
-    apiFetchFolders(node.id).then((children) => {
+    apiFetchFolders(node.id, fsRoot).then((children) => {
       setTree((prev) => setChildren(prev, node.id, children));
     }).catch(() => {
       setTree((prev) => setChildren(prev, node.id, []));
     });
-  }, []);
+  }, [fsRoot]);
 
   return (
     <ScrollArea className="h-60 rounded-md border">
@@ -529,7 +547,16 @@ function FolderPicker({
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function FileManagerClient(): React.JSX.Element {
-  const [currentPath, setCurrentPath] = useState("/");
+  const searchParams = useSearchParams();
+  const initialRoot: FsRoot = searchParams.get("root") === "artifacts" ? "artifacts" : "home";
+  const initialPath = (() => {
+    const raw = searchParams.get("path");
+    if (!raw) return "/";
+    const normalized = raw.startsWith("/") ? raw : `/${raw}`;
+    return normalized.replace(/\\/g, "/");
+  })();
+  const [fsRoot] = useState<FsRoot>(initialRoot);
+  const [currentPath, setCurrentPath] = useState(initialPath);
   const [items, setItems] = useState<FileItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -564,7 +591,7 @@ export function FileManagerClient(): React.JSX.Element {
   const [dirSizeLoading, setDirSizeLoading] = useState(false);
 
   // Navigation history (for back/forward buttons)
-  const [navHistory, setNavHistory] = useState<string[]>(["/"]);
+  const [navHistory, setNavHistory] = useState<string[]>([initialPath]);
   const [navHistoryIdx, setNavHistoryIdx] = useState(0);
 
   // Keyboard-focused row index (arrow key navigation)
@@ -652,14 +679,14 @@ export function FileManagerClient(): React.JSX.Element {
     setLoading(true);
     setError(null);
     setSelected(new Set());
-    apiFetch(dirPath)
+    apiFetch(dirPath, fsRoot)
       .then((data) => { setItems(data); })
       .catch((e) => {
         setItems([]);
         setError(e instanceof Error ? e.message : "Failed to load directory");
       })
       .finally(() => { setLoading(false); });
-  }, []);
+  }, [fsRoot]);
 
   useEffect(() => {
     if (mountedRef.current) return;
@@ -726,12 +753,12 @@ export function FileManagerClient(): React.JSX.Element {
     }
     setSearchLoading(true);
     searchTimerRef.current = setTimeout(() => {
-      apiSearch(query.trim())
+      apiSearch(query.trim(), fsRoot)
         .then((results) => { setGlobalResults(results); })
         .catch(() => { setGlobalResults([]); })
         .finally(() => { setSearchLoading(false); });
     }, 300);
-  }, []);
+  }, [fsRoot]);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
@@ -837,7 +864,7 @@ export function FileManagerClient(): React.JSX.Element {
     if (item.type === "folder") {
       // Load dir size
       setDirSizeLoading(true);
-      apiDirSize(item.id)
+      apiDirSize(item.id, fsRoot)
         .then((info) => { setDirSizeInfo(info); })
         .catch(() => { setDirSizeInfo(null); })
         .finally(() => { setDirSizeLoading(false); });
@@ -845,14 +872,14 @@ export function FileManagerClient(): React.JSX.Element {
     } else if (isTextFile(item.name)) {
       setPreviewLoading(true);
       setPreviewContent(null);
-      apiPreview(item.id)
+      apiPreview(item.id, fsRoot)
         .then((content) => { setPreviewContent(content); })
         .catch(() => { setPreviewContent("Error loading file"); })
         .finally(() => { setPreviewLoading(false); });
     } else {
       setPreviewContent(null);
     }
-  }, []);
+  }, [fsRoot]);
 
   const hasUnsavedChanges = isEditing && editContent !== editOriginalContent;
 
@@ -902,7 +929,7 @@ export function FileManagerClient(): React.JSX.Element {
     if (!previewItem) return;
     setSavingFile(true);
     try {
-      await apiSave(previewItem.id, editContent);
+      await apiSave(previewItem.id, editContent, fsRoot);
       toast.success("File saved");
       setIsEditing(false);
       setPreviewContent(editContent);
@@ -924,19 +951,19 @@ export function FileManagerClient(): React.JSX.Element {
   }, []);
 
   const handleCopyPath = useCallback((id: string) => {
-    const fullPath = `~/.openclaw${id}`;
+    const fullPath = fsRoot === "artifacts" ? `runtime-artifacts${id}` : `~/.openclaw${id}`;
     navigator.clipboard.writeText(fullPath).then(() => {
       toast.success("Path copied");
     }).catch(() => {
       toast.error("Failed to copy path");
     });
-  }, []);
+  }, [fsRoot]);
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim()) return;
     setMutating(true);
     try {
-      await apiCreate(currentPath, createName.trim(), createType);
+      await apiCreate(currentPath, createName.trim(), createType, fsRoot);
       setCreateDialogOpen(false);
       toast.success(`${createType === "folder" ? "Folder" : "File"} created`);
       refresh();
@@ -945,7 +972,7 @@ export function FileManagerClient(): React.JSX.Element {
     } finally {
       setMutating(false);
     }
-  }, [createName, createType, currentPath, refresh]);
+  }, [createName, createType, currentPath, fsRoot, refresh]);
 
   // ─── Rename ────────────────────────────────────────────────────────────────
 
@@ -968,7 +995,7 @@ export function FileManagerClient(): React.JSX.Element {
     }
     renamingRef.current = true;
     try {
-      await apiRename(renamingId, renameValue.trim());
+      await apiRename(renamingId, renameValue.trim(), fsRoot);
       toast.success("Renamed");
       setRenamingId(null);
       refresh();
@@ -978,7 +1005,7 @@ export function FileManagerClient(): React.JSX.Element {
     } finally {
       renamingRef.current = false;
     }
-  }, [renamingId, renameValue, renameOriginal, refresh]);
+  }, [renamingId, renameValue, renameOriginal, fsRoot, refresh]);
 
   const cancelRename = useCallback(() => {
     setRenamingId(null);
@@ -994,7 +1021,7 @@ export function FileManagerClient(): React.JSX.Element {
   const handleDelete = useCallback(async () => {
     setMutating(true);
     try {
-      await apiDelete(deleteIds);
+      await apiDelete(deleteIds, fsRoot);
       setDeleteDialogOpen(false);
       setDeleteIds([]);
       toast.success(`Deleted ${deleteIds.length} item${deleteIds.length > 1 ? "s" : ""}`);
@@ -1004,7 +1031,7 @@ export function FileManagerClient(): React.JSX.Element {
     } finally {
       setMutating(false);
     }
-  }, [deleteIds, refresh]);
+  }, [deleteIds, fsRoot, refresh]);
 
   // ─── Move / Copy ──────────────────────────────────────────────────────────
 
@@ -1019,7 +1046,7 @@ export function FileManagerClient(): React.JSX.Element {
     if (!moveCopyTarget) return;
     setMutating(true);
     try {
-      const result = await apiMoveOrCopy(moveCopyAction, moveCopyIds, moveCopyTarget);
+      const result = await apiMoveOrCopy(moveCopyAction, moveCopyIds, moveCopyTarget, fsRoot);
       if (!result.ok && "conflicts" in result) {
         // Conflicts detected — show resolution dialog
         setMoveCopyDialogOpen(false);
@@ -1036,7 +1063,7 @@ export function FileManagerClient(): React.JSX.Element {
     } finally {
       setMutating(false);
     }
-  }, [moveCopyAction, moveCopyIds, moveCopyTarget, refresh]);
+  }, [moveCopyAction, moveCopyIds, moveCopyTarget, fsRoot, refresh]);
 
   // Execute move/copy/upload with a conflict resolution
   const handleConflictResolve = useCallback(async (resolution: "replace" | "keep-both") => {
@@ -1044,10 +1071,10 @@ export function FileManagerClient(): React.JSX.Element {
     setMutating(true);
     try {
       if (conflictContext?.type === "movecopy") {
-        await apiMoveOrCopy(conflictContext.action, conflictContext.ids, conflictContext.targetId, resolution);
+        await apiMoveOrCopy(conflictContext.action, conflictContext.ids, conflictContext.targetId, fsRoot, resolution);
         toast.success(`${conflictContext.action === "move" ? "Moved" : "Copied"} ${conflictContext.ids.length} item${conflictContext.ids.length > 1 ? "s" : ""}`);
       } else if (conflictContext?.type === "upload") {
-        await apiUpload(conflictContext.parentId, conflictContext.files, resolution);
+        await apiUpload(conflictContext.parentId, conflictContext.files, fsRoot, resolution);
         toast.success(`Uploaded ${conflictContext.files.length} file${conflictContext.files.length > 1 ? "s" : ""}`);
       }
       refresh();
@@ -1058,7 +1085,7 @@ export function FileManagerClient(): React.JSX.Element {
       setConflictContext(null);
       setConflictFiles([]);
     }
-  }, [conflictContext, refresh]);
+  }, [conflictContext, fsRoot, refresh]);
 
   const handleConflictCancel = useCallback(() => {
     setConflictDialogOpen(false);
@@ -1070,19 +1097,20 @@ export function FileManagerClient(): React.JSX.Element {
 
   const handleDownload = useCallback((id: string) => {
     const a = document.createElement("a");
-    a.href = `/api/file-manager?download=true&id=${encodeURIComponent(id)}`;
+    const base = `/api/file-manager?download=true&id=${encodeURIComponent(id)}`;
+    a.href = fsRoot === "artifacts" ? `${base}&root=artifacts` : base;
     a.download = "";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }, []);
+  }, [fsRoot]);
 
   // ─── Upload (real file content) ────────────────────────────────────────────
 
   const uploadFiles = useCallback(async (files: globalThis.File[]) => {
     if (files.length === 0) return;
     try {
-      const result = await apiUpload(currentPath, files);
+      const result = await apiUpload(currentPath, files, fsRoot);
       if (!result.ok && "conflicts" in result) {
         setConflictFiles(result.conflicts);
         setConflictContext({ type: "upload", parentId: currentPath, files });
@@ -1094,7 +1122,7 @@ export function FileManagerClient(): React.JSX.Element {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Upload failed");
     }
-  }, [currentPath, refresh]);
+  }, [currentPath, fsRoot, refresh]);
 
   const handleUpload = useCallback((fileList: FileList | globalThis.File[] | null) => {
     if (!fileList || (fileList instanceof FileList && fileList.length === 0)) return;
@@ -1122,7 +1150,7 @@ export function FileManagerClient(): React.JSX.Element {
   const handleZipExtract = useCallback(async () => {
     setZipExtracting(true);
     try {
-      const { extracted } = await apiExtractZip(currentPath, pendingZipFiles);
+      const { extracted } = await apiExtractZip(currentPath, pendingZipFiles, fsRoot);
       setZipModalOpen(false);
       setPendingZipFiles([]);
       toast.success(`Extracted ${extracted} file${extracted !== 1 ? "s" : ""} to ${currentPath === "/" ? "/" : currentPath.split("/").pop()}`);
@@ -1132,7 +1160,7 @@ export function FileManagerClient(): React.JSX.Element {
     } finally {
       setZipExtracting(false);
     }
-  }, [currentPath, pendingZipFiles, refresh]);
+  }, [currentPath, fsRoot, pendingZipFiles, refresh]);
 
   // ─── External drag-and-drop (file upload from desktop) ───────────────────
 
@@ -1213,7 +1241,7 @@ export function FileManagerClient(): React.JSX.Element {
 
     setMutating(true);
     try {
-      const result = await apiMoveOrCopy("move", ids, folderId);
+      const result = await apiMoveOrCopy("move", ids, folderId, fsRoot);
       if (!result.ok && "conflicts" in result) {
         setConflictFiles(result.conflicts);
         setConflictContext({ type: "movecopy", action: "move", ids, targetId: folderId });
@@ -1228,7 +1256,7 @@ export function FileManagerClient(): React.JSX.Element {
       setMutating(false);
       internalDragIdsRef.current = [];
     }
-  }, [refresh]);
+  }, [fsRoot, refresh]);
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -1785,7 +1813,7 @@ export function FileManagerClient(): React.JSX.Element {
                         <div className="aspect-square w-full max-w-[100px] mx-auto overflow-hidden rounded-md bg-muted/20">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={`/api/file-manager?serve=true&id=${encodeURIComponent(item.id)}`}
+                            src={urlWithRoot(`/api/file-manager?serve=true&id=${encodeURIComponent(item.id)}`, fsRoot)}
                             alt={item.name}
                             className="w-full h-full object-cover"
                             loading="lazy"
@@ -2112,7 +2140,7 @@ export function FileManagerClient(): React.JSX.Element {
                     <div className="p-5 flex justify-center">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`/api/file-manager?serve=true&id=${encodeURIComponent(previewItem.id)}`}
+                        src={urlWithRoot(`/api/file-manager?serve=true&id=${encodeURIComponent(previewItem.id)}`, fsRoot)}
                         alt={previewItem.name}
                         onLoad={(e) => {
                           const img = e.currentTarget;
@@ -2324,6 +2352,7 @@ export function FileManagerClient(): React.JSX.Element {
           <FolderPicker
             selectedId={moveCopyTarget}
             onSelect={setMoveCopyTarget}
+            fsRoot={fsRoot}
           />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setMoveCopyDialogOpen(false)}>

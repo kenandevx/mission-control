@@ -4,7 +4,15 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import AdmZip from "adm-zip";
 
-const ROOT = "/home/clawdbot/.openclaw";
+const HOME_ROOT = "/home/clawdbot/.openclaw";
+const ARTIFACTS_ROOT = path.resolve(process.cwd(), "runtime-artifacts");
+
+/** Resolve which filesystem root the request is addressing (?root=artifacts|home). */
+function getRoot(request: NextRequest): string {
+  return request.nextUrl.searchParams.get("root") === "artifacts"
+    ? ARTIFACTS_ROOT
+    : HOME_ROOT;
+}
 
 // ─── Ownership helpers ───────────────────────────────────────────────────────
 
@@ -80,11 +88,11 @@ type RouteContext = { params: Promise<{ path?: string[] | undefined }> };
 
 // ─── Safety ──────────────────────────────────────────────────────────────────
 
-function resolveSafe(id: string): string {
-  if (id === "/" || id === "") return ROOT;
+function resolveSafe(id: string, root: string): string {
+  if (id === "/" || id === "") return root;
   const cleaned = id.startsWith("/") ? id.slice(1) : id;
-  const resolved = path.resolve(ROOT, cleaned);
-  if (resolved !== ROOT && !resolved.startsWith(ROOT + "/")) {
+  const resolved = path.resolve(root, cleaned);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new Error("Access denied");
   }
   return resolved;
@@ -359,12 +367,18 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const { searchParams } = request.nextUrl;
+    const root = getRoot(request);
+
+    // Ensure the artifacts root exists so GET doesn't 404 on a fresh install
+    if (root === ARTIFACTS_ROOT && !fs.existsSync(root)) {
+      try { fs.mkdirSync(root, { recursive: true }); } catch { /* best effort */ }
+    }
 
     // Download file
     if (searchParams.get("download") === "true") {
       const id = searchParams.get("id");
       if (!id) return err("Missing id");
-      const resolved = resolveSafe(id);
+      const resolved = resolveSafe(id, root);
       if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
         return err("Not a file", 404);
       }
@@ -382,7 +396,7 @@ export async function GET(
     if (searchParams.get("serve") === "true") {
       const id = searchParams.get("id");
       if (!id) return err("Missing id");
-      const resolved = resolveSafe(id);
+      const resolved = resolveSafe(id, root);
       if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
         return err("Not a file", 404);
       }
@@ -402,7 +416,7 @@ export async function GET(
     if (searchParams.get("preview") === "true") {
       const id = searchParams.get("id");
       if (!id) return err("Missing id");
-      const resolved = resolveSafe(id);
+      const resolved = resolveSafe(id, root);
       if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
         return err("Not a file", 404);
       }
@@ -428,7 +442,7 @@ export async function GET(
     if (searchParams.get("dirsize") === "true") {
       const id = searchParams.get("id");
       if (!id) return err("Missing id");
-      const resolved = resolveSafe(id);
+      const resolved = resolveSafe(id, root);
       if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return err("Not a directory", 400);
       }
@@ -442,7 +456,7 @@ export async function GET(
       const query = (searchParams.get("search") ?? "").toLowerCase().trim();
       if (!query) return ok({ items: [] });
       const results: FileItem[] = [];
-      searchRecursive(ROOT, "/", query, results, 0);
+      searchRecursive(root, "/", query, results, 0);
       return ok({ items: sortItems(results) });
     }
 
@@ -453,7 +467,7 @@ export async function GET(
       dirId = "/" + segments.join("/");
     }
 
-    const resolved = resolveSafe(dirId);
+    const resolved = resolveSafe(dirId, root);
     if (!fs.existsSync(resolved)) return err("Not found", 404);
     if (!fs.statSync(resolved).isDirectory()) return err("Not a directory", 400);
 
@@ -481,6 +495,7 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const contentType = request.headers.get("content-type") ?? "";
+    const root = getRoot(request);
 
     // Multipart upload (and zip extraction)
     if (contentType.includes("multipart/form-data")) {
@@ -492,7 +507,7 @@ export async function POST(
 
       // ── Zip extraction mode ─────────────────────────────────────────────────
       if (mode === "extract") {
-        const parentPath = resolveSafe(parentId);
+        const parentPath = resolveSafe(parentId, root);
         if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
           return err("Parent is not a directory");
         }
@@ -512,7 +527,7 @@ export async function POST(
             const entryName = entry.entryName.replace(/\\/g, "/");
             const destPath = path.resolve(parentPath, entryName);
             if (!destPath.startsWith(parentPath + path.sep) && destPath !== parentPath) continue;
-            if (!destPath.startsWith(ROOT)) continue;
+            if (!destPath.startsWith(root)) continue;
 
             if (entry.isDirectory) {
               fs.mkdirSync(destPath, { recursive: true });
@@ -531,7 +546,7 @@ export async function POST(
 
       if (files.length === 0) return err("No files provided");
 
-      const parentPath = resolveSafe(parentId);
+      const parentPath = resolveSafe(parentId, root);
       if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
         return err("Parent is not a directory");
       }
@@ -569,7 +584,7 @@ export async function POST(
         }
 
         const filePath = path.join(parentPath, fileName);
-        if (!filePath.startsWith(ROOT)) continue;
+        if (!filePath.startsWith(root)) continue;
 
         const buf = Buffer.from(await file.arrayBuffer());
         fs.writeFileSync(filePath, buf);
@@ -599,13 +614,13 @@ export async function POST(
       const nameErr = validateName(name);
       if (nameErr) return err(nameErr);
 
-      const parentPath = resolveSafe(parentId);
+      const parentPath = resolveSafe(parentId, root);
       if (!fs.existsSync(parentPath) || !fs.statSync(parentPath).isDirectory()) {
         return err("Parent is not a directory");
       }
 
       const newId = (parentId === "/" ? "" : parentId) + "/" + name;
-      const newPath = resolveSafe(newId);
+      const newPath = resolveSafe(newId, root);
 
       if (fs.existsSync(newPath)) return err("Already exists");
 
@@ -634,6 +649,7 @@ export async function PUT(
   request: NextRequest,
 ): Promise<NextResponse> {
   try {
+    const root = getRoot(request);
     const body = await request.json();
     const { action, id, newName, ids, targetId, content } = body as {
       action?: string;
@@ -646,10 +662,10 @@ export async function PUT(
 
     if (action === "save" && id && typeof content === "string") {
       if (content.length > MAX_SAVE_BYTES) return err("Content too large (max 1MB)");
-      const resolved = resolveSafe(id);
+      const resolved = resolveSafe(id, root);
       if (!fs.existsSync(resolved)) return err("Not found", 404);
       if (fs.statSync(resolved).isDirectory()) return err("Cannot save to a directory");
-      if (!resolved.startsWith(ROOT + "/")) return err("Access denied", 403);
+      if (!resolved.startsWith(root + path.sep)) return err("Access denied", 403);
       fs.writeFileSync(resolved, content, "utf-8");
       ensureOwnership(resolved);
       return ok({});
@@ -660,22 +676,22 @@ export async function PUT(
       const nameErr = validateName(newName);
       if (nameErr) return err(nameErr);
 
-      const oldPath = resolveSafe(id);
+      const oldPath = resolveSafe(id, root);
       if (!fs.existsSync(oldPath)) return err("Not found", 404);
       const parentDir = path.dirname(oldPath);
       const dest = path.join(parentDir, newName);
-      if (!dest.startsWith(ROOT)) return err("Access denied", 403);
+      if (!dest.startsWith(root)) return err("Access denied", 403);
       if (fs.existsSync(dest)) return err("A file with that name already exists");
       fs.renameSync(oldPath, dest);
       ensureOwnership(dest);
-      const renamedId = "/" + path.relative(ROOT, dest).replace(/\\/g, "/");
+      const renamedId = "/" + path.relative(root, dest).replace(/\\/g, "/");
       const item = toItem(dest, renamedId);
       return ok({ item });
     }
 
     if ((action === "move" || action === "copy") && ids && targetId) {
       const { onConflict } = body as { onConflict?: "replace" | "keep-both" | "skip" };
-      const targetPath = resolveSafe(targetId);
+      const targetPath = resolveSafe(targetId, root);
       if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isDirectory()) {
         return err("Target is not a directory");
       }
@@ -688,7 +704,7 @@ export async function PUT(
       // Detect conflicts
       const conflicts: string[] = [];
       for (const fileId of ids) {
-        const src = resolveSafe(fileId);
+        const src = resolveSafe(fileId, root);
         if (!fs.existsSync(src)) continue;
         const rawName = path.basename(src);
         const dest = path.join(targetPath, rawName);
@@ -704,19 +720,19 @@ export async function PUT(
 
       const results: FileItem[] = [];
       for (const fileId of ids) {
-        const src = resolveSafe(fileId);
+        const src = resolveSafe(fileId, root);
         if (!fs.existsSync(src)) continue;
 
         if (fs.statSync(src).isDirectory()) {
-          const targetAbs = resolveSafe(targetId);
-          if (targetAbs === src || targetAbs.startsWith(src + "/")) {
+          const targetAbs = resolveSafe(targetId, root);
+          if (targetAbs === src || targetAbs.startsWith(src + path.sep)) {
             continue;
           }
         }
 
         const rawName = path.basename(src);
         const dest = path.join(targetPath, rawName);
-        if (!dest.startsWith(ROOT)) continue;
+        if (!dest.startsWith(root)) continue;
 
         const destExists = fs.existsSync(dest) && dest !== src;
 
@@ -760,7 +776,7 @@ export async function PUT(
             ensureOwnership(finalDest);
           }
         }
-        const newId = "/" + path.relative(ROOT, finalDest).replace(/\\/g, "/");
+        const newId = "/" + path.relative(root, finalDest).replace(/\\/g, "/");
         const item = toItem(finalDest, newId);
         if (item) results.push(item);
       }
@@ -781,6 +797,7 @@ export async function DELETE(
   request: NextRequest,
 ): Promise<NextResponse> {
   try {
+    const root = getRoot(request);
     const body = await request.json();
     const { ids } = body as { ids?: string[] };
 
@@ -791,9 +808,9 @@ export async function DELETE(
 
     const deleted: string[] = [];
     for (const id of ids) {
-      const p = resolveSafe(id);
+      const p = resolveSafe(id, root);
       if (!fs.existsSync(p)) continue;
-      if (p === ROOT) continue;
+      if (p === root) continue;
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
         fs.rmSync(p, { recursive: true });
