@@ -1,5 +1,9 @@
 /**
- * Prompt template v2.1 — unified task message renderer.
+ * Prompt template v2.2 — unified task message renderer.
+ * v2.2 changes: tightened artifact-directory rules — downloaded and reference
+ * files must also go into the artifact directory, and the final written
+ * response is written to `response.md` so bridge-logger can capture it
+ * deterministically without scraping the session transcript.
  * v2.1 changes: restored explicit skill-reference instruction to prevent meta-commentary.
  *
  * When you modify these rules, existing events continue using whatever
@@ -68,11 +72,15 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
     "- Do not invent missing facts.",
   ];
   if (ad) {
-    outputRules.push(`- If you create any output files, save them to: ${ad} (unless the request specifies a different path).`);
+    outputRules.push(`- Artifact directory for this task: ${ad}`);
+    outputRules.push("- Save all output files (anything you create) into the artifact directory above.");
+    outputRules.push("- Save all downloaded or reference files (assets, guides, examples, images, PDFs — anything you fetch, download, or copy from another location) into the artifact directory as well.");
+    outputRules.push("- Do not create, download, or save files anywhere else in the workspace.");
+    outputRules.push("- Write your final written response (the text you would otherwise return inline) to `response.md` inside the artifact directory. This is how Mission Control captures it — still produce the response as normal, but also save it there.");
   }
   sections.push(`Output rules:\n${outputRules.join("\n")}`);
 
   return sections.filter((s) => clean(s)).join("\n\n");
 }
 
-export const TEMPLATE_VERSION = 2.1;
+export const TEMPLATE_VERSION = 2.2;

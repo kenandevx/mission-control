@@ -815,6 +815,35 @@ function looksLikePromptEcho(candidate, renderedPrompt, summaryText) {
   return false;
 }
 
+/**
+ * Read the agent's response from the contract file {artifactDir}/response.md.
+ * The output-rules block in prompt-renderer instructs the agent to write its
+ * final written response there, giving bridge-logger a deterministic source
+ * instead of scraping the session transcript. Returns null if the file is
+ * missing or empty.
+ */
+async function readResponseFile(eventId, occurrenceId, maxChars = 8000) {
+  try {
+    const canonicalDir = getOccurrenceArtifactDir({ eventId, occurrenceId });
+    const responsePath = path.join(canonicalDir, 'response.md');
+    const stat = await fs.promises.stat(responsePath).catch(() => null);
+    if (!stat?.isFile()) return null;
+    if (stat.size > 512 * 1024) return null;
+    const raw = await fs.promises.readFile(responsePath, 'utf8');
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    return {
+      text: text.slice(0, maxChars),
+      path: responsePath,
+      name: 'response.md',
+      size: stat.size,
+    };
+  } catch (err) {
+    console.warn('[bridge-logger] readResponseFile failed (non-fatal):', err?.message);
+    return null;
+  }
+}
+
 async function readBestArtifactText(eventId, occurrenceId, maxChars = 8000) {
   try {
     const canonicalDir = getOccurrenceArtifactDir({ eventId, occurrenceId });
@@ -870,6 +899,29 @@ async function resolveAgendaOutput({ sessionTarget, sessionId, eventId, occurren
       artifactSize: null,
     },
   };
+
+  // ── Primary capture: the `response.md` contract ────────────────────────────
+  // The output-rules block in prompt-renderer instructs the agent to write its
+  // final written response to {artifactDir}/response.md. When present, this is
+  // the deterministic source and sidesteps session-transcript scraping, prompt
+  // echo heuristics, and retry-with-backoff races entirely.
+  // Note: `response.md` is flushed synchronously by the agent, so we give it
+  // one short grace-period retry in case the cron run finished slightly ahead
+  // of the file flush.
+  let responseFile = await readResponseFile(eventId, occurrenceId);
+  if (!responseFile) {
+    await new Promise(r => setTimeout(r, 1500));
+    responseFile = await readResponseFile(eventId, occurrenceId);
+  }
+  if (responseFile && !looksLikePromptEcho(responseFile.text, renderedPrompt, summaryText)) {
+    result.output = responseFile.text;
+    result.outputSource = 'response_file';
+    result.outputMeta.artifactUsed = true;
+    result.outputMeta.artifactPath = responseFile.path;
+    result.outputMeta.artifactName = responseFile.name;
+    result.outputMeta.artifactSize = responseFile.size;
+    return result;
+  }
 
   if (sessionTarget === 'main') {
     // Pass fromLineOffset and occurrenceId. The occurrenceId enables marker-based
@@ -1313,7 +1365,7 @@ async function handleCronRunLine(getSql, jobId, line) {
           (run_attempt_id, step_order, agent_id, input_payload, output_payload, artifact_payload, status, started_at, finished_at)
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
-           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
+           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '') })},
            ${sql.json({ output: agentOutput, outputSource: outputResolution.outputSource, outputMeta: outputResolution.outputMeta })},
            ${artifactPayload ? sql.json(artifactPayload) : null},
            'succeeded', ${startedAt}, ${finishedAt})
@@ -1404,7 +1456,7 @@ async function handleCronRunLine(getSql, jobId, line) {
            started_at, finished_at, error_message)
         VALUES
           (${attempt.id}, 0, ${occ.default_agent_id || 'main'},
-           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '').slice(0, 2000) })},
+           ${sql.json({ cronJobId: jobId, prompt: String(occ.rendered_prompt || '') })},
            ${sql.json({ output: agentOutput, outputSource: outputResolution.outputSource, outputMeta: outputResolution.outputMeta })},
            ${artifactPayloadFail ? sql.json(artifactPayloadFail) : null},
            'failed', ${startedAt}, ${finishedAt}, ${failureReason})
