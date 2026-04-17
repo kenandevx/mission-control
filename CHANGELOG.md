@@ -2,6 +2,16 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.4.4] - 2026-04-17
+
+### Added
+- **Agenda detail sheet — "Identifiers" card in Overview.** New card shows the Event ID, plus the Occurrence ID for recurring series, each with an inline copy-to-clipboard button and a sonner toast confirmation. Replaces the small ID pill that previously lived next to the title, which was easy to miss and only exposed a truncated 8-char prefix.
+- **Agenda detail sheet — "Output folder" card in Overview.** New card surfaces the on-disk artifact folder for the selected occurrence (computed from the first artifact file's parent path, so no extra round-trip to the server). Shows the folder basename as the card title, the full path below, and a "Copy path" button so the user can paste it into their OS file explorer. Hidden until the occurrence produces at least one file.
+
+### Changed
+- **Agenda detail sheet — ID removed from the title area.** The inline 8-char ID button next to the title/status badges is gone. IDs are now exposed through the dedicated Identifiers card where the full value is visible and copyable.
+- **Version bump** to 3.4.4.
+
 ## [3.4.3] - 2026-04-17
 
 ### Fixed

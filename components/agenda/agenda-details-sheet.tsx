@@ -57,9 +57,12 @@ import {
   IconDownload,
   IconPhoto,
   IconFile,
+  IconFolder,
+  IconHash,
   IconLock,
   IconCopy,
 } from "@tabler/icons-react";
+import { toast } from "sonner";
 import { STATUS_BADGE_MAP, STATUS_BADGE_FALLBACK, STATUS_HEX } from "@/lib/status-colors";
 
 
@@ -695,6 +698,30 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
   const selectedAttempt = attempts.find((a) => a.id === selectedAttemptId);
   const attemptSteps = steps.filter((s) => s.run_attempt_id === selectedAttemptId);
 
+  // Derive the artifact folder from the first step that produced files.
+  // All files for an occurrence share the same parent dir (runtime-artifacts/agenda/<eventId>/occurrences/<occId>/artifacts).
+  const outputFolder = (() => {
+    for (const step of attemptSteps) {
+      const raw = step.artifact_payload;
+      let payload: { files?: ArtifactFile[] } | null = null;
+      if (typeof raw === "string") { try { payload = JSON.parse(raw); } catch { payload = null; } }
+      else if (typeof raw === "object" && raw !== null) { payload = raw as { files: ArtifactFile[] }; }
+      const firstPath = payload?.files?.[0]?.path;
+      if (firstPath) {
+        const idx = Math.max(firstPath.lastIndexOf("/"), firstPath.lastIndexOf("\\"));
+        if (idx > 0) return firstPath.slice(0, idx);
+      }
+    }
+    return null;
+  })();
+
+  const copyToClipboard = (value: string, label: string) => {
+    void navigator.clipboard.writeText(value).then(
+      () => toast.success(`${label} copied`),
+      () => toast.error(`Failed to copy ${label.toLowerCase()}`),
+    );
+  };
+
   const taskSummary = ((event.request ?? event.freePrompt) || "").trim()
     ? ((event.request ?? event.freePrompt) || "").trim()
     : event.processNames.length > 0
@@ -745,18 +772,6 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                         </Badge>
                       </Tip>
                     )}
-                    {/* Event ID — inline, copyable */}
-                    <button
-                      className="text-[10px] font-mono text-muted-foreground/40 hover:text-muted-foreground transition-colors cursor-pointer"
-                      title={isRecurring && selectedOccurrenceId ? "Click to copy occurrence ID" : "Click to copy event ID"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const idToCopy = (isRecurring && selectedOccurrenceId) ? selectedOccurrenceId : event.id;
-                        void navigator.clipboard.writeText(idToCopy);
-                      }}
-                    >
-                      {(isRecurring && selectedOccurrenceId) ? selectedOccurrenceId.slice(0, 8) : event.id.slice(0, 8)}
-                    </button>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -1103,6 +1118,84 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
                             </Badge>
                           ))}
                         </div>
+                      </CardFooter>
+                    </Card>
+                  )}
+
+                  {/* Identifiers — event ID and, for recurring series, the occurrence ID */}
+                  <Card data-slot="card" className={overviewCardClassName}>
+                    <CardHeader>
+                      <CardDescription>Identifiers</CardDescription>
+                      <CardTitle className="text-sm font-semibold truncate">
+                        {isRecurring && selectedOccurrenceId ? "Occurrence" : "Event"}
+                      </CardTitle>
+                      <CardAction>
+                        <Badge variant="outline">
+                          <IconHash className="size-3" />
+                          ID
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardFooter className="mt-auto flex-col items-start gap-2 text-sm">
+                      <div className="flex items-center gap-1.5 w-full min-w-0">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground w-14 shrink-0">Event</span>
+                        <code className="flex-1 min-w-0 truncate text-[11px] font-mono text-foreground/80">{event.id}</code>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 shrink-0 cursor-pointer"
+                          onClick={() => copyToClipboard(event.id, "Event ID")}
+                          title="Copy event ID"
+                        >
+                          <IconCopy className="size-3" />
+                        </Button>
+                      </div>
+                      {isRecurring && selectedOccurrenceId && (
+                        <div className="flex items-center gap-1.5 w-full min-w-0">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground w-14 shrink-0">Occ.</span>
+                          <code className="flex-1 min-w-0 truncate text-[11px] font-mono text-foreground/80">{selectedOccurrenceId}</code>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 w-6 p-0 shrink-0 cursor-pointer"
+                            onClick={() => copyToClipboard(selectedOccurrenceId, "Occurrence ID")}
+                            title="Copy occurrence ID"
+                          >
+                            <IconCopy className="size-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </CardFooter>
+                  </Card>
+
+                  {/* Output folder — path where this occurrence's artifacts are saved on disk */}
+                  {outputFolder && (
+                    <Card data-slot="card" className={overviewCardClassName}>
+                      <CardHeader>
+                        <CardDescription>Output folder</CardDescription>
+                        <CardTitle className="text-sm font-semibold truncate" title={outputFolder}>
+                          {outputFolder.split(/[\\/]/).pop() || outputFolder}
+                        </CardTitle>
+                        <CardAction>
+                          <Badge variant="outline">
+                            <IconFolder className="size-3" />
+                            Artifacts
+                          </Badge>
+                        </CardAction>
+                      </CardHeader>
+                      <CardFooter className="mt-auto flex-col items-start gap-2 text-sm">
+                        <code className="w-full truncate text-[11px] font-mono text-muted-foreground" title={outputFolder}>
+                          {outputFolder}
+                        </code>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 h-7 text-xs cursor-pointer"
+                          onClick={() => copyToClipboard(outputFolder, "Folder path")}
+                        >
+                          <IconCopy className="size-3" />
+                          Copy path
+                        </Button>
                       </CardFooter>
                     </Card>
                   )}
