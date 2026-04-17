@@ -2,6 +2,18 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.4.3] - 2026-04-17
+
+### Fixed
+- **Broken image previews in agenda detail sheet** — the artifacts API route served images with `Content-Disposition: attachment`, which combined with Next.js `<Image>` optimizer proxying made previews render as broken icons. Switched to `inline` disposition with a `private, max-age=60` cache header, replaced `<Image>` with a plain `<img>` (new `ArtifactImagePreview` component with graceful error fallback), and added `Uint8Array` body wrapping for Next 16 compatibility. Download button integrity preserved via the `<a download>` attribute which forces download on same-origin regardless of disposition.
+
+### Added
+- **File manager — image dimensions in preview details.** When previewing an image, the Details panel now shows a "Dimensions" row (e.g., `1920 × 1080`) alongside Size/Location/Created. Captured from `HTMLImageElement.naturalWidth`/`naturalHeight` via the existing `onLoad` handler; resets on preview close and hides for non-image files.
+
+### Changed
+- **Prompt template v2.3 — consolidated execution rules for clearer LLM comprehension.** The seven overlapping "don't do meta-commentary" bullets in `prompt-renderer.mjs` collapsed to three focused rules (start with the deliverable / skills and tools are silent implementation guidance / produce content directly). Output rules tightened similarly: merged the redundant "no labels" bullets and compressed the artifact-directory and `response.md` contract to one clear line each. Same semantics as v2.2, noticeably shorter and easier for the agent to parse.
+- **Version bump** to 3.4.3.
+
 ## [3.4.2] - 2026-04-17
 
 ### Fixed

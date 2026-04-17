@@ -34,11 +34,17 @@ export async function GET(
     }
 
     const data = await readFile(file.path);
-    return new NextResponse(data, {
+    // Serve inline so <img>/Next Image can render previews.
+    // The detail sheet's download link uses <a download={...}> which forces the
+    // browser to download same-origin files regardless of Content-Disposition,
+    // so switching away from "attachment" doesn't break the download button.
+    const safeFilename = file.name.replace(/"/g, '');
+    return new NextResponse(new Uint8Array(data), {
       headers: {
         "Content-Type": file.mimeType || "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${file.name}"`,
+        "Content-Disposition": `inline; filename="${safeFilename}"`,
         "Content-Length": String(data.length),
+        "Cache-Control": "private, max-age=60",
       },
     });
   } catch (error) {

@@ -540,6 +540,7 @@ export function FileManagerClient(): React.JSX.Element {
   const [previewItem, setPreviewItem] = useState<FileItem | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewImageSize, setPreviewImageSize] = useState<{ width: number; height: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [globalSearch, setGlobalSearch] = useState(false);
   const [globalResults, setGlobalResults] = useState<FileItem[] | null>(null);
@@ -832,6 +833,7 @@ export function FileManagerClient(): React.JSX.Element {
     setDirSizeInfo(null);
     setDirSizeLoading(false);
 
+    setPreviewImageSize(null);
     if (item.type === "folder") {
       // Load dir size
       setDirSizeLoading(true);
@@ -2112,6 +2114,13 @@ export function FileManagerClient(): React.JSX.Element {
                       <img
                         src={`/api/file-manager?serve=true&id=${encodeURIComponent(previewItem.id)}`}
                         alt={previewItem.name}
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          if (img.naturalWidth && img.naturalHeight) {
+                            setPreviewImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+                          }
+                        }}
+                        onError={() => setPreviewImageSize(null)}
                         className="max-w-full max-h-[50vh] rounded-lg border object-contain bg-muted/20"
                       />
                     </div>
@@ -2156,6 +2165,18 @@ export function FileManagerClient(): React.JSX.Element {
                         <span>Size</span>
                       </div>
                       <span className="text-foreground">{formatSize(previewItem.size)}{previewItem.size > 1024 ? ` (${previewItem.size.toLocaleString()} bytes)` : ""}</span>
+
+                      {previewImageSize && isImageFile(previewItem.name) && (
+                        <>
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <ImageIcon className="h-3 w-3" />
+                            <span>Dimensions</span>
+                          </div>
+                          <span className="text-foreground font-mono text-[11px]">
+                            {previewImageSize.width} × {previewImageSize.height}
+                          </span>
+                        </>
+                      )}
 
                       <div className="flex items-center gap-1.5 text-muted-foreground">
                         <Folder className="h-3 w-3" />

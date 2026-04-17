@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -489,6 +488,44 @@ function fileIcon(mimeType: string | undefined) {
   return <IconFile className="size-5 text-primary" />;
 }
 
+function ArtifactImagePreview({ stepId, file }: { stepId: string; file: ArtifactFile }) {
+  const [failed, setFailed] = useState(false);
+  const src = `/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`;
+
+  return (
+    <div className="rounded-lg border bg-muted/10 p-3">
+      <div className="flex flex-col gap-3">
+        <p className="text-[10px] text-muted-foreground font-medium leading-none">{file.name}</p>
+        <div className="rounded-md overflow-hidden bg-background/60">
+          {failed ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground text-xs">
+              <IconPhoto className="size-4" />
+              <span>Preview unavailable</span>
+              <a href={src} download={file.name} className="underline hover:text-foreground">
+                download instead
+              </a>
+            </div>
+          ) : (
+            // Use plain <img> + unoptimized semantics: the Next image optimizer
+            // proxies /_next/image → the artifact API, which in dev frequently
+            // 500s or chokes on dynamic bytes. Serving the raw API response via
+            // <img> is deterministic and matches the rest of the download flow.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={file.name}
+              loading="lazy"
+              decoding="async"
+              onError={() => setFailed(true)}
+              className="max-h-[300px] w-full object-contain"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[] }) {
   if (!files || files.length === 0) return null;
 
@@ -539,21 +576,7 @@ function ArtifactFiles({ stepId, files }: { stepId: string; files: ArtifactFile[
       {files.some((f) => f.mimeType?.startsWith("image/")) && (
         <div className="flex flex-col gap-2 mt-1">
           {files.filter((f) => f.mimeType?.startsWith("image/")).map((file) => (
-            <div key={`preview-${file.name}`} className="rounded-lg border bg-muted/10 p-3">
-              <div className="flex flex-col gap-3">
-                <p className="text-[10px] text-muted-foreground font-medium leading-none">{file.name}</p>
-                <div className="rounded-md overflow-hidden bg-background/60">
-                  <Image
-                    src={`/api/agenda/artifacts/${stepId}/${encodeURIComponent(file.name)}`}
-                    alt={file.name}
-                    width={1200}
-                    height={900}
-                    sizes="100vw"
-                    className="max-h-[300px] w-full object-contain"
-                  />
-                </div>
-              </div>
-            </div>
+            <ArtifactImagePreview key={`preview-${file.name}`} stepId={stepId} file={file} />
           ))}
         </div>
       )}

@@ -1,10 +1,9 @@
 /**
- * Prompt template v2.2 — unified task message renderer.
- * v2.2 changes: tightened artifact-directory rules — downloaded and reference
- * files must also go into the artifact directory, and the final written
- * response is written to `response.md` so bridge-logger can capture it
- * deterministically without scraping the session transcript.
- * v2.1 changes: restored explicit skill-reference instruction to prevent meta-commentary.
+ * Prompt template v2.3 — unified task message renderer.
+ * v2.3 changes: consolidated execution rules (7 near-duplicate bullets → 3
+ * focused ones) and tightened output rules for clearer LLM comprehension.
+ * Same semantics as v2.2: no meta-commentary, artifacts go in the artifact
+ * directory, final response goes in `response.md`.
  *
  * When you modify these rules, existing events continue using whatever
  * rendered_prompt they already have (persisted at schedule time).
@@ -51,36 +50,28 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
   const r = clean(request);
   if (r) sections.push(`Request:\n${r}`);
 
-  // Execution rules — always included, regardless of session target.
+  // Execution rules — how to approach the task.
   const executionRules = [
-    "- Treat any mentioned skills, tools, or models as implementation guidance unless the request explicitly asks you to talk about them.",
-    "- Do not respond with meta acknowledgements like 'I will', 'Using...', or tool-selection commentary unless the request explicitly asks for a plan.",
-    "- Never announce which skill, tool, or method you're about to use. Just do the work.",
-    "- If the request mentions a skill or tool by name, silently use it — do not describe your tool choice.",
-    "- Start your response with the deliverable, not with commentary about how you'll produce it.",
-    "- If you're generating content (text, code, images, etc.), output the content directly.",
-    "- If the user asks for a deliverable, produce the deliverable directly.",
+    "- Start with the deliverable. No preamble, plans, or meta-commentary ('I will...', 'Using X...', 'Let me...').",
+    "- Any skills, tools, or models named in the request are implementation guidance — use them silently. Don't announce or describe your tool choice.",
+    "- Produce content directly (text, code, images, files). Don't describe what you're about to do — do it.",
   ];
   sections.push(`Execution rules:\n${executionRules.join("\n")}`);
 
-  // Output rules — always included, regardless of session target.
+  // Output rules — what the final output must contain.
   const ad = clean(artifactDir);
   const outputRules = [
-    "- Return only the requested deliverable.",
-    "- Do not include internal labels, IDs, or system metadata.",
-    "- Do not repeat section labels unless they help the final result.",
-    "- Do not invent missing facts.",
+    "- Return only the requested deliverable. No internal labels, IDs, section headers, or system metadata echoed back.",
+    "- Don't fabricate facts. If something required is missing, state what's missing rather than inventing it.",
   ];
   if (ad) {
-    outputRules.push(`- Artifact directory for this task: ${ad}`);
-    outputRules.push("- Save all output files (anything you create) into the artifact directory above.");
-    outputRules.push("- Save all downloaded or reference files (assets, guides, examples, images, PDFs — anything you fetch, download, or copy from another location) into the artifact directory as well.");
-    outputRules.push("- Do not create, download, or save files anywhere else in the workspace.");
-    outputRules.push("- Write your final written response (the text you would otherwise return inline) to `response.md` inside the artifact directory. This is how Mission Control captures it — still produce the response as normal, but also save it there.");
+    outputRules.push(`- Artifact directory: ${ad}`);
+    outputRules.push("- Save every file you create, download, fetch, or reference (assets, images, PDFs, guides — anything) into the artifact directory above. Never save files anywhere else in the workspace.");
+    outputRules.push("- Also write your final written response to `response.md` inside the artifact directory. Produce the response inline as normal — `response.md` is how Mission Control captures it.");
   }
   sections.push(`Output rules:\n${outputRules.join("\n")}`);
 
   return sections.filter((s) => clean(s)).join("\n\n");
 }
 
-export const TEMPLATE_VERSION = 2.2;
+export const TEMPLATE_VERSION = 2.3;
