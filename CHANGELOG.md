@@ -2,6 +2,16 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.4.2] - 2026-04-17
+
+### Fixed
+- **Agenda step request cut off at ~2000 characters in the Output tab** — both the success and failure write paths in `bridge-logger.mjs` sliced `rendered_prompt` to 2000 chars before persisting it into `agenda_run_steps.input_payload`. For long free-form prompts (multi-section instructions, guide references, bilingual captions, etc.) the detail sheet displayed a truncated copy even though `agenda_occurrences.rendered_prompt` held the full text. The slice is removed on both paths; the full prompt is now stored and rendered verbatim.
+
+### Changed
+- **Prompt template v2.2 — artifact-directory rules tightened.** The output-rules block in `prompt-renderer.mjs` now explicitly requires the agent to save, inside the occurrence's artifact directory: all output files it creates, and all downloaded or reference files it pulls in (assets, guides, examples, images, PDFs — anything fetched, downloaded, or copied from another location). Creating, downloading, or saving files anywhere else in the workspace is forbidden. Existing events keep their persisted `rendered_prompt`; only new cron runs and manual retries pick up the new template.
+- **Deterministic agent-output capture via `response.md` contract.** The output-rules block also instructs the agent to write its final written response to `{artifactDir}/response.md`. `bridge-logger.mjs` now reads that file first in `resolveAgendaOutput` (with a 1.5s grace retry) and uses it as the authoritative output (`outputSource: 'response_file'`) when present. This sidesteps session-transcript scraping, AGENDA_MARKER scans, prompt-echo heuristics, and 3/5/7s retry-with-backoff for every run that honours the contract. The existing session-scrape path stays in place as a fallback for older runs and agents that skip the contract.
+- **Version bump** to 3.4.2.
+
 ## [3.4.0] - 2026-04-14
 
 ### Fixed
