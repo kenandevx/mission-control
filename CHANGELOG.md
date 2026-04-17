@@ -2,6 +2,12 @@
 
 All notable changes to Mission Control are documented here.
 
+## [3.4.5] - 2026-04-17
+
+### Changed
+- **Prompt template v2.4 — no-extra-files rule added.** A single new rule in the output-rules block instructs the agent to create only the files the request explicitly asks for — no scratch files, intermediate drafts, readmes, notes, or summary documents on its own initiative. The `response.md` contract line is reworded to make explicit that `response.md` is the single permitted extra file beyond what the request names. Motivated by a Match Day banner task where the agent was asked for four banners and produced ~20 ancillary files alongside them.
+- **Version bump** to 3.4.5.
+
 ## [3.4.4] - 2026-04-17
 
 ### Added

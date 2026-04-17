@@ -1,9 +1,9 @@
 /**
- * Prompt template v2.3 — unified task message renderer.
+ * Prompt template v2.4 — unified task message renderer.
+ * v2.4 changes: added a no-extra-files rule so the agent creates only what
+ * was requested, not intermediate drafts, scratch notes, or summary docs.
  * v2.3 changes: consolidated execution rules (7 near-duplicate bullets → 3
  * focused ones) and tightened output rules for clearer LLM comprehension.
- * Same semantics as v2.2: no meta-commentary, artifacts go in the artifact
- * directory, final response goes in `response.md`.
  *
  * When you modify these rules, existing events continue using whatever
  * rendered_prompt they already have (persisted at schedule time).
@@ -63,15 +63,16 @@ export function renderUnifiedTaskMessage({ title, context, request, instructions
   const outputRules = [
     "- Return only the requested deliverable. No internal labels, IDs, section headers, or system metadata echoed back.",
     "- Don't fabricate facts. If something required is missing, state what's missing rather than inventing it.",
+    "- Create only the files the request explicitly asks for. Do not produce extra scratch files, intermediate drafts, readmes, notes, or summary documents on your own initiative.",
   ];
   if (ad) {
     outputRules.push(`- Artifact directory: ${ad}`);
     outputRules.push("- Save every file you create, download, fetch, or reference (assets, images, PDFs, guides — anything) into the artifact directory above. Never save files anywhere else in the workspace.");
-    outputRules.push("- Also write your final written response to `response.md` inside the artifact directory. Produce the response inline as normal — `response.md` is how Mission Control captures it.");
+    outputRules.push("- Also write your final written response to `response.md` inside the artifact directory. Produce the response inline as normal — `response.md` is how Mission Control captures it. `response.md` is the only extra file you should add beyond the deliverables the request names.");
   }
   sections.push(`Output rules:\n${outputRules.join("\n")}`);
 
   return sections.filter((s) => clean(s)).join("\n\n");
 }
 
-export const TEMPLATE_VERSION = 2.3;
+export const TEMPLATE_VERSION = 2.4;
