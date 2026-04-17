@@ -1172,10 +1172,10 @@ export function AgendaDetailsSheet({ open, event, agents, onClose, onEdit, onCop
 
                   {/* Output folder — path where this occurrence's artifacts are saved on disk */}
                   {outputFolder && (() => {
-                    const rel = outputFolder
-                      .replace(/\\/g, "/")
-                      .replace(/^\/?runtime-artifacts\/?/, "");
-                    const fmHref = `/file-manager?root=artifacts&path=${encodeURIComponent("/" + rel)}`;
+                    const normalized = outputFolder.replace(/\\/g, "/");
+                    const rel = normalized.replace(/^\/home\/clawdbot\/\.openclaw\/?/, "/");
+                    const fmPath = rel.startsWith("/") ? rel : `/${rel}`;
+                    const fmHref = `/file-manager?path=${encodeURIComponent(fmPath)}`;
                     return (
                       <Card data-slot="card" className={overviewCardClassName}>
                         <CardHeader>
