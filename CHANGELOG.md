@@ -2,21 +2,8 @@
 
 All notable changes to Mission Control are documented here.
 
-## [3.4.8] - 2026-04-18
 
-### Changed
-- **Altinstar social post guides rewritten end to end.** Previous passes kept adding defensive scaffolding (hard gates, enumerated pre-flight checks, nested bullet lists) until the guides were bulletpoint-heavy and overengineered. Rewrote all six files (`00-how-to-use-guides.md` through `05-output.md`) in a tighter, more direct voice closer to the user's original operational handbook: shorter intro, less repetition across files, rules stated once in the file they belong to. Style, canvas, typography, branding, and output rules are preserved; the scaffolding is gone.
-
-- **Version bump** to 3.4.8.
-
-## [3.4.7] - 2026-04-18
-
-### Changed
-- **Altinstar prompt template simplified.** The verbose, heavily-scaffolded prompt template in `00-how-to-use-guides.md` was overengineered and made the agent stall on placeholder syntax. Replaced with a short, 10-line template covering only the essentials: read guides, enumerate assets, match example style, then fill in campaign + Turkish/English copy and output a 1024×1024 bilingual banner.
-
-- **Version bump** to 3.4.7.
-
-## [3.4.6] - 2026-04-18
+## [3.5.1] - 2026-04-18
 
 ### Fixed
 - **File manager "Open folder" link from Agenda was broken.** A previous attempt introduced a dual-root architecture (`home` vs `artifacts`) based on a mistaken assumption that `runtime-artifacts/` lived outside `~/.openclaw`. In reality the file manager's root is `/home/clawdbot/.openclaw` and `runtime-artifacts/` is already a subfolder inside it, so the dual-root plumbing produced "failed to load" errors when the agenda sheet linked to an artifact folder. Reverted the API route and the file-manager client back to a single-root model (`ROOT = /home/clawdbot/.openclaw`) and changed the agenda detail sheet to build its href by stripping the `/home/clawdbot/.openclaw` prefix from the artifact path, producing a relative link like `/file-manager?path=/runtime-artifacts/agenda/<evt>/occurrences/<occ>/artifacts`.
